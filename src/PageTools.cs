@@ -166,6 +166,20 @@ namespace ZapretManager
 
             View.Stack.Add(_linksCard);
         }
+        private void CleanOldCopies()
+        {
+            if (Shell.Install == null || !Shell.Install.IsValid) { Shell.Notify("Папка zapret не найдена.", LogLevel.Error); return; }
+            System.Collections.Generic.List<DirectoryInfo> copies = Cleanup.Backups(Shell.Install.Root);
+            if (copies.Count == 0) { Shell.Notify("Старых копий нет.", LogLevel.Ok); return; }
+            long total = 0;
+            foreach (DirectoryInfo d in copies) total += Cleanup.SizeOf(d.FullName);
+            if (!Dlg.Confirm(this.View.FindForm(), "Старые копии",
+                string.Format("Найдено копий: {0}, занято {1}.\\n\\nОставить самую свежую, остальные удалить?", copies.Count, Cleanup.FormatSize(total)),
+                "Удалить старые")) return;
+            long freed = Cleanup.PruneBackups(Shell.Install.Root, 1, delegate(string m) { Log.Info(m); });
+            Shell.Notify("Удалено старых копий, освобождено " + Cleanup.FormatSize(freed) + ".", LogLevel.Ok);
+        }
+
         private void BuildAboutCard()
         {
             _aboutCard = NewCard("О программе", 120);

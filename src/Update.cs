@@ -476,7 +476,10 @@ namespace ZapretManager
                 }
 
                 try { Directory.Delete(work, true); } catch { }
-                string summary = string.Format("Обновлено до версии {0}.{1}", rel.Tag, backupPath.Length > 0 ? "\nРезервная копия: " + backupPath : "");
+                // копии при обновлении создаются всегда — держим только две последние
+                long freed = Cleanup.PruneBackups(_install.Root, 2, delegate(string m) { Log.Info(m); });
+                string extra = freed > 0 ? "\nСтарые копии убраны, освобождено " + Cleanup.FormatSize(freed) : "";
+                string summary = string.Format("Обновлено до версии {0}.{1}{2}", rel.Tag, backupPath.Length > 0 ? "\nРезервная копия: " + backupPath : "", extra);
                 Finish(true, "", summary, backupPath);
                 return summary;
             }

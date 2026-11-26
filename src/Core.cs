@@ -706,6 +706,108 @@ namespace ZapretManager
         }
     }
 
+    /// <summary>
+    /// Уборка за обновлениями: старые резервные копии zapret и временные файлы обновлений.
+    /// Копии при обновлении создаются всегда, поэтому их нужно ограничивать.
+    /// </summary>
+    public static class Cleanup
+    {
+        /// <summary>Папки вида "<zapret>_backup_<тег>_<дата>" рядом с установкой, от новых к старым.</summary>
+        public static List<DirectoryInfo> Backups(string installRoot)
+        {
+            List<DirectoryInfo> list = new List<DirectoryInfo>();
+            try
+            {
+                if (string.IsNullOrEmpty(installRoot)) return list;
+                string root = installRoot.TrimEnd('\\');
+                string parent = Path.GetDirectoryName(root);
+                string name = Path.GetFileName(root);
+                if (string.IsNullOrEmpty(parent) || string.IsNullOrEmpty(name) || !Directory.Exists(parent)) return list;
+                foreach (string dir in Directory.GetDirectories(parent, name + "_backup_*"))
+                {
+                    try { list.Add(new DirectoryInfo(dir)); } catch { }
+                }
+                list.Sort(delegate(DirectoryInfo a, DirectoryInfo b) { return b.LastWriteTimeUtc.CompareTo(a.LastWriteTimeUtc); });
+            }
+            catch { }
+            return list;
+        }
+
+        /// <summary>Размер папки в байтах (без исключений).</summary>
+        public static long SizeOf(string path)
+        {
+            long size = 0;
+            try
+            {
+                foreach (string file in Directory.GetFiles(path, "*", SearchOption.AllDirectories))
+                {
+                    try { size += new FileInfo(file).Length; } catch { }
+                }
+            }
+            catch { }
+            return size;
+        }
+
+        /// <summary>Оставляет newest копий, остальные удаляет. Возвращает освобождённые байты.</summary>
+        public static long PruneBackups(string installRoot, int keep, Action<string> log)
+        {
+            long freed = 0;
+            List<DirectoryInfo> backups = Backups(installRoot);
+            for (int i = keep; i < backups.Count; i++)
+            {
+                try
+                {
+                    long size = SizeOf(backups[i].FullName);
+                    backups[i].Delete(true);
+                    freed += size;
+                    if (log != null) log("Удалена старая копия: " + backups[i].Name);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn("Не удалось удалить копию " + backups[i].Name + ": " + ex.Message);
+                }
+            }
+            return freed;
+        }
+
+        /// <summary>Чистит временные файлы обновлений старше указанного числа дней.</summary>
+        public static long CleanTemp(int days)
+        {
+            long freed = 0;
+            try
+            {
+                DateTime limit = DateTime.Now.AddDays(-Math.Max(1, days));
+                string[] dirs = new string[] { "ZapretManagerUpdate", "ZapretManager" };
+                foreach (string name in dirs)
+                {
+                    string dir = Path.Combine(Path.GetTempPath(), name);
+                    if (!Directory.Exists(dir)) continue;
+                    foreach (string file in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
+                    {
+                        try
+                        {
+                            FileInfo fi = new FileInfo(file);
+                            if (fi.LastWriteTime > limit) continue;
+                            long size = fi.Length;
+                            fi.Delete();
+                            freed += size;
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+            return freed;
+        }
+
+        public static string FormatSize(long bytes)
+        {
+            if (bytes >= 1024L * 1024 * 1024) return (bytes / (1024.0 * 1024 * 1024)).ToString("0.0") + " ГБ";
+            if (bytes >= 1024L * 1024) return (bytes / (1024.0 * 1024)).ToString("0.0") + " МБ";
+            if (bytes >= 1024) return (bytes / 1024.0).ToString("0") + " КБ";
+            return bytes + " Б";
+        }
+    }
     /// <summary>Работа с системными настройками UAC: только восстановление стандартных значений.</summary>
     public static class UacTools
     {

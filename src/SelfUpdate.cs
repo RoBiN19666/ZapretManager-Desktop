@@ -268,6 +268,7 @@ namespace ZapretManager
                 sb.AppendLine("  exit /b 1");
                 sb.AppendLine(")");
                 sb.AppendLine("start \"\" \"" + exePath + "\"");
+                sb.AppendLine("del \"" + newExe + "\" >nul 2>nul");
                 sb.AppendLine("del \"%~f0\"");
                 File.WriteAllText(script, sb.ToString(), Encoding.Default);
 

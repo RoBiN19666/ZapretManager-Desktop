@@ -39,6 +39,7 @@ namespace ZapretManager
             string msgBoxShot = FindArgValue(args, "--msgbox-shot");
             bool checkSelfMode = HasFlag(args, "--check-self");
             bool restoreUacMode = HasFlag(args, "--restore-uac");
+            bool cleanupMode = HasFlag(args, "--cleanup");
             string appWatch = FindArgValue(args, "--app-watch");
             AppInfo.TrayMode = HasFlag(args, "--tray");
             AppInfo.AutostartMode = HasFlag(args, "--autostart");
@@ -77,6 +78,12 @@ namespace ZapretManager
             }
             catch { }
             Log.FilePath = Path.Combine(AppPaths.DataDir, "manager.log");
+            try
+            {
+                long cleaned = Cleanup.CleanTemp(7);
+                if (cleaned > 0) Log.Info("Уборка временных файлов обновлений: " + Cleanup.FormatSize(cleaned));
+            }
+            catch { }
 
             Log.Info("=== Zapret Manager " + AppInfo.Version + " запуск ===");
             if (selfUpdateMode)
@@ -114,6 +121,19 @@ namespace ZapretManager
                 System.Collections.Generic.List<string> guardAdded = SiteGuard.Process(guardInstall, guardConfig, guardHosts, true,
                     delegate(string message) { Log.Warn("Сторож: " + message); });
                 Log.Info("Сторож: добавлено доменов — " + guardAdded.Count + ".");
+                return;
+            }
+            if (cleanupMode)
+            {
+                AppConfig cleanConfig = AppConfig.Load(AppConfig.DefaultPath());
+                ZapretInstall cleanInstall = ZapretInstall.Detect(string.IsNullOrEmpty(rootArg) ? cleanConfig.Get("Root", "") : rootArg);
+                System.Collections.Generic.List<DirectoryInfo> copies = Cleanup.Backups(cleanInstall == null ? "" : cleanInstall.Root);
+                long total = 0;
+                foreach (DirectoryInfo d in copies) total += Cleanup.SizeOf(d.FullName);
+                Log.Info(string.Format("Уборка: копий {0}, занято {1}", copies.Count, Cleanup.FormatSize(total)));
+                long freed = Cleanup.PruneBackups(cleanInstall == null ? "" : cleanInstall.Root, 1, delegate(string m) { Log.Info(m); });
+                long temp = Cleanup.CleanTemp(1);
+                Log.Info(string.Format("Уборка: освобождено {0} (копии) + {1} (временные файлы)", Cleanup.FormatSize(freed), Cleanup.FormatSize(temp)));
                 return;
             }
             if (restoreUacMode)
