@@ -63,7 +63,7 @@ cargo build --release
 ## Запуск
 
 ```
-ZapretManager.exe                 — обычный запуск (при необходимости попросит UAC)
+ZapretManager.exe                 — обычный запуск (UAC запросится, если нужно)
 ZapretManager.exe --tray          — свернуться в трей
 ZapretManager.exe --autostart     — тихий старт (задача планировщика)
 ZapretManager.exe --root=<папка>  — указать папку zapret вручную
