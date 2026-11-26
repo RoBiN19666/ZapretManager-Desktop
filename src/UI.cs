@@ -1194,12 +1194,13 @@ namespace ZapretManager
         public string ActiveName = "";
         public event EventHandler SelectedIndexChanged;
         public event EventHandler ItemActivated;
+        public event EventHandler HoverChanged;
 
         private int _selected = -1;
         private int _scroll;
         private int _hover = -1;
         private bool _dragBar;
-        private static int RowH { get { return Math.Max(56, (int)Math.Round(56 * Theme.S)); } }
+        private static int RowH { get { return Math.Max(34, (int)Math.Round(38 * Theme.S)); } }
         private const int BarW = 6;
 
         public StrategyList()
@@ -1229,6 +1230,8 @@ namespace ZapretManager
         {
             get { return (_selected >= 0 && _selected < Items2.Count) ? Items2[_selected] : null; }
         }
+
+        public int HoverIndex { get { return _hover; } }
 
         public void SetItems(List<StrategyDef> items)
         {
@@ -1278,7 +1281,13 @@ namespace ZapretManager
         {
             base.OnMouseMove(e);
             int idx = IndexAt(e.Y);
-            if (idx != _hover) { _hover = idx; Invalidate(); }
+            if (idx != _hover)
+            {
+                _hover = idx;
+                Invalidate();
+                EventHandler h = HoverChanged;
+                if (h != null) h(this, EventArgs.Empty);
+            }
             if (_dragBar) ScrollToThumb(e.Y);
         }
 
@@ -1287,6 +1296,8 @@ namespace ZapretManager
             base.OnMouseLeave(e);
             _hover = -1;
             Invalidate();
+            EventHandler h = HoverChanged;
+            if (h != null) h(this, EventArgs.Empty);
         }
 
         private int IndexAt(int y)
@@ -1384,15 +1395,9 @@ namespace ZapretManager
 
                 int x = r.X + 14;
                 int badgeW = Theme.Px(84);
-                TextRenderer.DrawText(g, s.Name, Theme.Bold, new Rectangle(x, r.Y + Theme.Px(9), r.Width - badgeW - 30, Theme.Px(20)),
-                    selected || active ? Theme.Text : Theme.Text, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
-                // длинное описание показываем только у первой стратегии группы
-                bool showDesc = (i == FirstAlt()) || (i == 0) || !string.Equals(Items2[i - 1].Description, s.Description, StringComparison.Ordinal);
-                if (showDesc)
-                {
-                    TextRenderer.DrawText(g, s.Description, Theme.Small, new Rectangle(x, r.Y + Theme.Px(28), r.Width - badgeW - 30, Theme.Px(18)),
-                        Theme.TextMuted, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
-                }
+                int nameH = Theme.Px(20);
+                TextRenderer.DrawText(g, s.Name, Theme.Bold, new Rectangle(x, r.Y + (r.Height - nameH) / 2, r.Width - badgeW - 30, nameH),
+                    selected || active ? Theme.Text : Theme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
                 string badge = s.ShortName;
                 int bw = Math.Min(badgeW, TextRenderer.MeasureText(badge, Theme.Small).Width + Theme.Px(18));
                 Rectangle badgeRect = new Rectangle(r.Right - bw - Theme.Px(12), r.Y + (r.Height - Theme.Px(20)) / 2, bw, Theme.Px(20));

@@ -9,6 +9,7 @@ namespace ZapretManager
         private Card _listCard;
         private Card _cmdCard;
         private StrategyList _list;
+        private Label _listDesc;
         private Label _preview;
         private Label _hint;
         private Label _cmdTitle;
@@ -27,16 +28,26 @@ namespace ZapretManager
         public override void Build()
         {
             _listCard = NewCard("Доступные стратегии", 504);
+            _listDesc = L("", Theme.Small, Theme.TextMuted, 22, 40);
+            _listDesc.AutoSize = false;
+            _listDesc.AutoEllipsis = true;
+            _listDesc.Size = new Size(DesignWidth - 44, Theme.Px(22));
+            _listDesc.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            _listCard.Controls.Add(_listDesc);
+
             _list = new StrategyList();
-            _list.Location = new Point(20, 44);
-            _list.Size = new Size(DesignWidth - 40, 378);
+            _list.Location = new Point(20, 68);
+            _list.Size = new Size(DesignWidth - 40, 354);
             _list.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
-            _list.SelectedIndexChanged += delegate { UpdatePreview(); };
+            _list.SelectedIndexChanged += delegate { UpdatePreview(); UpdateListDescription(); };
+            _list.HoverChanged += delegate { UpdateListDescription(); };
             _list.ItemActivated += delegate { StartSelected(true); };
             _listCard.Controls.Add(_list);
             _listCard.Resize += delegate
             {
-                _list.Size = new Size(_listCard.ClientSize.Width - 40, Math.Max(80, _listCard.ClientSize.Height - 126));
+                _listDesc.Width = Math.Max(100, _listCard.ClientSize.Width - Theme.Px(44));
+                _list.Size = new Size(_listCard.ClientSize.Width - 40,
+                    Math.Max(80, _listCard.ClientSize.Height - Theme.Px(68) - Theme.Px(82)));
             };
 
             _hint = L("", Theme.Small, Theme.Warn, 22, 430);
@@ -114,6 +125,7 @@ namespace ZapretManager
                 if (_list.SelectedIndex < 0 && _list.Items2.Count > 0) _list.SelectedIndex = 0;
             }
             UpdatePreview();
+            UpdateListDescription();
         }
 
         public override void RefreshState()
@@ -127,6 +139,15 @@ namespace ZapretManager
                 _list.Invalidate();
             }
             UpdatePreview();
+            UpdateListDescription();
+        }
+
+        private void UpdateListDescription()
+        {
+            if (_listDesc == null || _list == null) return;
+            int i = _list.HoverIndex;
+            if (i < 0) i = _list.SelectedIndex;
+            _listDesc.Text = (i >= 0 && i < _list.Items2.Count) ? _list.Items2[i].Description : "";
         }
 
         private void UpdatePreview()
