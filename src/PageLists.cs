@@ -26,6 +26,8 @@ namespace ZapretManager
         private Label _pathLabel;
         private RoundButton _btnSave;
         private RoundButton _btnDedupe;
+        private RoundButton _btnPaste;
+        private RoundButton _btnTidy;
         private RoundButton _btnAdd;
         private RoundButton _btnNotepad;
         private RoundButton _btnReset;
@@ -128,8 +130,20 @@ namespace ZapretManager
             _info = L("", Theme.Small, Theme.TextMuted, 268, y + 38);
             _card.Controls.Add(_info);
 
+            _btnPaste = Btn("Вставить список", ButtonKind.Link, 150);
+            _btnPaste.Location = new Point(268, y + 64);
+            _btnPaste.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+            _btnPaste.Click += delegate { PasteBatch(); };
+            _card.Controls.Add(_btnPaste);
+
+            _btnTidy = Btn("Причесать строки", ButtonKind.Link, 170);
+            _btnTidy.Location = new Point(430, y + 64);
+            _btnTidy.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+            _btnTidy.Click += delegate { TidyList(); };
+            _card.Controls.Add(_btnTidy);
+
             _btnDedupe = Btn("Убрать дубликаты", ButtonKind.Link, 160);
-            _btnDedupe.Location = new Point(268, y + 64);
+            _btnDedupe.Location = new Point(612, y + 64);
             _btnDedupe.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
             _btnDedupe.Visible = false;
             _btnDedupe.Click += delegate { DedupeNow(); };
@@ -569,6 +583,117 @@ namespace ZapretManager
             Shell.Notify("Текущее содержимое зафиксировано как официальное.", LogLevel.Ok);
         }
 
+        // ---------- массовая вставка и чистка ----------
+
+        private void PasteBatch()
+        {
+            string text = PromptPaste();
+            if (text == null) return;
+            int skipped;
+            List<string> hosts = ListAudit.ParseBatch(text, out skipped);
+            if (hosts.Count == 0)
+            {
+                Shell.Notify("Не нашёл ни одного домена во вставленном тексте (пропущено " + skipped + ").", LogLevel.Warn);
+                return;
+            }
+            List<string> existing = new List<string>();
+            foreach (string line in _editor.Text.Replace("\r\n", "\n").Split('\n'))
+            {
+                string norm = ListAudit.Normalize(line);
+                if (norm.Length > 0) existing.Add(norm);
+            }
+            int added = 0;
+            StringBuilder sb = new StringBuilder(_editor.Text.Replace("\r\n", "\n"));
+            if (sb.Length > 0 && !sb.ToString().EndsWith("\n")) sb.Append("\n");
+            foreach (string host in hosts)
+            {
+                bool dup = false;
+                foreach (string e in existing)
+                {
+                    if (string.Equals(e, host, StringComparison.OrdinalIgnoreCase)) { dup = true; break; }
+                }
+                if (dup) { skipped++; continue; }
+                existing.Add(host);
+                sb.Append(host).Append("\n");
+                added++;
+            }
+            if (added == 0)
+            {
+                Shell.Notify("Все эти домены уже есть в списке (пропущено " + skipped + ").", LogLevel.Warn);
+                return;
+            }
+            _loading = true;
+            _editor.Text = sb.ToString();
+            _loading = false;
+            _dirty = true;
+            UpdateInfo();
+            ApplyMarks();
+            Shell.Notify(string.Format("Добавлено доменов: {0}, пропущено: {1}. Не забудьте сохранить.", added, skipped), LogLevel.Ok);
+        }
+
+        private void TidyList()
+        {
+            int changed, removed;
+            string text = ListAudit.Tidy(_editor.Text, out changed, out removed);
+            if (changed == 0 && removed == 0)
+            {
+                Shell.Notify("Список и так в порядке: ничего чистить не нужно.", LogLevel.Ok);
+                return;
+            }
+            _loading = true;
+            _editor.Text = text.Replace("\r\n", "\n").Replace("\n", "\r\n");
+            _loading = false;
+            _dirty = true;
+            UpdateInfo();
+            ApplyMarks();
+            Shell.Notify(string.Format("Причёсано строк: {0}, удалено мусора и повторов: {1}. Не забудьте сохранить.", changed, removed), LogLevel.Ok);
+        }
+
+        private string PromptPaste()
+        {
+            using (Form f = new Form())
+            {
+                f.Text = "Вставить домены";
+                f.ClientSize = new Size(680, 460);
+                f.StartPosition = FormStartPosition.CenterParent;
+                f.FormBorderStyle = FormBorderStyle.FixedDialog;
+                f.MaximizeBox = false;
+                f.MinimizeBox = false;
+                f.BackColor = Theme.Bg;
+                f.ForeColor = Theme.Text;
+
+                Label hint = L("Вставьте домены в любом виде: через запятую, пробел, точку с запятой или с новой строки.\nСсылки, «*.», пути, порты и кавычки будут убраны автоматически.", Theme.Small, Theme.TextDim, 20, 14);
+                hint.AutoSize = false;
+                hint.Size = new Size(640, 38);
+                f.Controls.Add(hint);
+
+                DarkEditor box = new DarkEditor();
+                box.Location = new Point(20, 56);
+                box.Size = new Size(640, 320);
+                f.Controls.Add(box);
+
+                RoundButton ok = new RoundButton();
+                ok.Text = "Добавить";
+                ok.Kind = ButtonKind.Primary;
+                ok.Size = new Size(140, 32);
+                ok.Location = new Point(f.ClientSize.Width - 20 - 140, 392);
+                ok.DialogResult = DialogResult.OK;
+                f.Controls.Add(ok);
+
+                RoundButton cancel = new RoundButton();
+                cancel.Text = "Отмена";
+                cancel.Kind = ButtonKind.Secondary;
+                cancel.Size = new Size(120, 32);
+                cancel.Location = new Point(f.ClientSize.Width - 20 - 140 - 12 - 120, 392);
+                cancel.DialogResult = DialogResult.Cancel;
+                f.Controls.Add(cancel);
+
+                f.AcceptButton = ok;
+                f.CancelButton = cancel;
+                f.ActiveControl = box;
+                return f.ShowDialog(this.View.FindForm()) == DialogResult.OK ? box.Text : null;
+            }
+        }
         private void DedupeNow()
         {
             int removed;

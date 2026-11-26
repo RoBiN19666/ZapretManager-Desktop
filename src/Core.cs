@@ -677,6 +677,7 @@ namespace ZapretManager
         public static string ShotPath;
         public static string ShotPage;
         public static string ShotList;
+        public static string ShotSite;
         public static int ShotScroll;
 
         /// <summary>Запуск свёрнутым в трей (--tray / --autostart).</summary>

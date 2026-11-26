@@ -26,6 +26,7 @@ namespace ZapretManager
             AppInfo.ShotPath = FindArgValue(args, "--shot");
             AppInfo.ShotPage = FindArgValue(args, "--shot-page");
             AppInfo.ShotList = FindArgValue(args, "--shot-list");
+            AppInfo.ShotSite = FindArgValue(args, "--shot-site");
             int shotScroll;
             if (int.TryParse(FindArgValue(args, "--shot-scroll"), out shotScroll)) AppInfo.ShotScroll = shotScroll;
             bool shotMode = !string.IsNullOrEmpty(AppInfo.ShotPath);

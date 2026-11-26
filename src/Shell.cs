@@ -982,6 +982,7 @@ namespace ZapretManager
             pages.Add(new OverviewPage(_shell));
             pages.Add(new StrategiesPage(_shell));
             pages.Add(new TestPage(_shell));
+            pages.Add(new SitesPage(_shell));
             pages.Add(new TgProxyPage(_shell));
             pages.Add(new SettingsPage(_shell));
             pages.Add(new ListsPage(_shell));
