@@ -19,6 +19,24 @@ impl App {
                 ));
             }
         }
+        if self.about_boosty.is_none() {
+            if let Some(image) = crate::ui::assets::boosty_icon() {
+                self.about_boosty = Some(ui.ctx().load_texture(
+                    "about-boosty",
+                    image,
+                    egui::TextureOptions::LINEAR,
+                ));
+            }
+        }
+        if self.about_donation.is_none() {
+            if let Some(image) = crate::ui::assets::donation_alerts_icon() {
+                self.about_donation = Some(ui.ctx().load_texture(
+                    "about-donation-alerts",
+                    image,
+                    egui::TextureOptions::LINEAR,
+                ));
+            }
+        }
 
         w::card(ui, &p, "", |ui| {
             ui.vertical_centered(|ui| {
@@ -119,11 +137,40 @@ impl App {
             );
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if w::primary(ui, &p, "Boosty").clicked() {
-                    sys::open_url("https://boosty.to/robin19666");
+                ui.spacing_mut().item_spacing.x = 14.0;
+                if let Some(texture) = &self.about_boosty {
+                    let response = ui.add(
+                        egui::ImageButton::new(egui::Image::from_texture(
+                            egui::load::SizedTexture::new(
+                                texture.id(),
+                                egui::vec2(56.0, 56.0),
+                            ),
+                        ))
+                        .frame(false),
+                    );
+                    if response
+                        .on_hover_text("Поддержать проект на Boosty")
+                        .clicked()
+                    {
+                        sys::open_url("https://boosty.to/robin19666");
+                    }
                 }
-                if w::secondary(ui, &p, "DonationAlerts").clicked() {
-                    sys::open_url("https://www.donationalerts.com/r/robin19666");
+                if let Some(texture) = &self.about_donation {
+                    let response = ui.add(
+                        egui::ImageButton::new(egui::Image::from_texture(
+                            egui::load::SizedTexture::new(
+                                texture.id(),
+                                egui::vec2(56.0, 56.0),
+                            ),
+                        ))
+                        .frame(false),
+                    );
+                    if response
+                        .on_hover_text("Поддержать проект на DonationAlerts")
+                        .clicked()
+                    {
+                        sys::open_url("https://www.donationalerts.com/r/robin19666");
+                    }
                 }
             });
         });

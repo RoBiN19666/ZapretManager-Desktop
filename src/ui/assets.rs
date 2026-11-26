@@ -6,6 +6,8 @@ use eframe::egui::{Color32, ColorImage};
 
 const APP_ICON_PNG: &[u8] = include_bytes!("../../assets/app-icon.png");
 const LOGO_WIDE_PNG: &[u8] = include_bytes!("../../assets/logo-wide.png");
+const BOOSTY_PNG: &[u8] = include_bytes!("../../assets/boosty.png");
+const DONATION_ALERTS_PNG: &[u8] = include_bytes!("../../assets/donationalerts.png");
 const TRAY_ICON_ICO: &[u8] = include_bytes!("../../assets/tray.ico");
 
 /// Декодировать PNG в RGBA.
@@ -59,6 +61,16 @@ pub fn window_icon() -> Option<egui::IconData> {
 /// Широкий логотип «Zapret Manager» для страницы «О программе».
 pub fn logo_wide() -> Option<ColorImage> {
     decode_png(LOGO_WIDE_PNG)
+}
+
+/// Иконка Boosty для страницы поддержки.
+pub fn boosty_icon() -> Option<ColorImage> {
+    decode_png(BOOSTY_PNG)
+}
+
+/// Иконка DonationAlerts для страницы поддержки.
+pub fn donation_alerts_icon() -> Option<ColorImage> {
+    decode_png(DONATION_ALERTS_PNG)
 }
 
 pub fn tray_icon_bytes() -> Option<Vec<u8>> {
