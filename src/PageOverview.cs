@@ -67,7 +67,7 @@ namespace ZapretManager
 
         private void BuildWarnCard()
         {
-            _warnCard = NewCard("Внимание: служба zapret установлена из другой папки", 132);
+            _warnCard = NewCard("Внимание: служба zapret установлена из другой папки", 150);
             _warnCard.AccentStripe = Theme.Warn;
             _warnText = WrapLabel("", Theme.Small, Theme.TextDim, 22, 40, DesignWidth - 60);
             _warnCard.Controls.Add(_warnText);
@@ -351,6 +351,8 @@ namespace ZapretManager
                     _warnText.Text = string.Format("Служба zapret сейчас запущена из папки «{0}», а менеджер управляет папкой «{1}». Запуск стратегий и обновление затронут только вторую. Переустановите службу, чтобы переключиться.",
                         serviceRoot, Shell.Install.Root);
                 }
+                _warnText.Height = TextRenderer.MeasureText(_warnText.Text, _warnText.Font, new Size(Math.Max(100, _warnText.Width), 2000), TextFormatFlags.WordBreak).Height + 6;
+                _warnText.Width = DesignWidth - 60;
                 _warnCard.Invalidate();
             }
             View.Stack.PerformLayout();
@@ -415,7 +417,8 @@ namespace ZapretManager
                 _tgIpSet.Checked = st.IpsetMode == "loaded";
                 _tgAutoUpdate.Checked = st.CheckUpdates;
 
-                _updateTitle.Text = "Установлена версия zapret " + Shell.LocalVersion;
+                string localVersion = Shell.LocalVersion;
+                _updateTitle.Text = localVersion.Length > 0 ? "Установлена версия zapret " + localVersion : "Версия zapret не определена";
                 SelfUpdateInfo su = SelfUpdate.Last;
                 bool suAvail = su != null && su.Ok && su.Available;
                 _selfLine.Visible = suAvail;
@@ -436,6 +439,11 @@ namespace ZapretManager
                 {
                     string when = u.Release.Published > new DateTime(2000, 1, 1) ? string.Format(" (опубликована {0:dd.MM.yyyy})", u.Release.Published) : "";
                     _updateLine.Text = string.Format("Доступна новая версия {0}{1}. Ваши списки и настройки сохранятся.", u.RemoteVersion, when);
+                    _btnGoUpdate.Visible = true;
+                }
+                else if (u.LocalUnknown)
+                {
+                    _updateLine.Text = "Не удалось прочитать версию из service.bat — откройте «Обновление» и поставьте нужную версию вручную.";
                     _btnGoUpdate.Visible = true;
                 }
                 else

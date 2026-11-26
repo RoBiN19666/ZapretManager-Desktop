@@ -265,6 +265,8 @@ namespace ZapretManager
         public ReleaseInfo Release;
         public DateTime CheckedAt = DateTime.Now;
         public string Source = "";
+        /// <summary>Локальная версия не определена (нет LOCAL_VERSION в service.bat и т.п.).</summary>
+        public bool LocalUnknown;
     }
 
     public static class UpdateChecker
@@ -306,7 +308,9 @@ namespace ZapretManager
                 {
                     res.Release = rel;
                     res.RemoteVersion = rel.Tag;
-                    res.UpdateAvailable = Versions.Compare(rel.Tag, localVersion) > 0;
+                    string localCheck = (localVersion ?? "").Trim();
+                    res.LocalUnknown = localCheck.Length == 0 || localCheck == "?";
+                    res.UpdateAvailable = !res.LocalUnknown && Versions.Compare(rel.Tag, localCheck) > 0;
                     res.Ok = true;
                 }
                 catch (Exception ex)

@@ -949,25 +949,50 @@ namespace ZapretManager
 
         private string ReadVersion()
         {
+            VersionSource = "";
             try
             {
                 if (File.Exists(ServiceBat))
                 {
                     string text = File.ReadAllText(ServiceBat, Encoding.UTF8);
-                    Match m = Regex.Match(text, "LOCAL_VERSION=([0-9][0-9\\.]*)");
-                    if (m.Success) { VersionSource = "service.bat"; return m.Groups[1].Value.Trim(); }
+                    Match m = Regex.Match(text, "LOCAL_VERSION\\s*=\\s*\"?([0-9][0-9\\.a-zA-Z]*)");
+                    if (m.Success && m.Groups[1].Value.Length > 0)
+                    {
+                        VersionSource = "service.bat";
+                        return m.Groups[1].Value.Trim().TrimEnd('.');
+                    }
                 }
             }
             catch { }
+
+            foreach (string file in new string[] { Path.Combine(Root, "version.txt"), Path.Combine(Root, @".service\version.txt") })
+            {
+                try
+                {
+                    if (!File.Exists(file)) continue;
+                    Match m = Regex.Match(File.ReadAllText(file, Encoding.UTF8), "[0-9]+(\\.[0-9]+)+[a-zA-Z]?");
+                    if (m.Success)
+                    {
+                        VersionSource = Path.GetFileName(file);
+                        return m.Value;
+                    }
+                }
+                catch { }
+            }
+
             try
             {
-                Match m = Regex.Match(Root, @"zapret-discord-youtube-([0-9][0-9\.]*)", RegexOptions.IgnoreCase);
-                if (m.Success) { VersionSource = "имя папки"; return m.Groups[1].Value.Trim(); }
+                Match m = Regex.Match(Root, @"zapret-discord-youtube-([0-9][0-9\\.a-zA-Z]*)", RegexOptions.IgnoreCase);
+                if (m.Success)
+                {
+                    VersionSource = "имя папки";
+                    return m.Groups[1].Value.Trim().TrimEnd('.');
+                }
             }
             catch { }
-            VersionSource = "";
-            return "?";
+            return "";
         }
+
 
         public StrategyDef FindStrategy(string name)
         {

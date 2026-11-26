@@ -26,7 +26,7 @@ namespace ZapretManager
 
         public string LocalVersion
         {
-            get { return Install != null && Install.IsValid ? Install.Version : "?"; }
+            get { return Install != null && Install.IsValid ? (Install.Version ?? "") : ""; }
         }
 
         public void Notify(string message, LogLevel level)
