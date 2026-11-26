@@ -25,7 +25,6 @@ namespace ZapretManager
         private ToggleSwitch _tgGuard;
         private ToggleSwitch _tgGuardAuto;
         private Label _guardStatus;
-        private Label _guardInfo;
         private DarkSelect _procSelect;
         private Label _procStatus;
         private RoundButton _btnAppWatch;
@@ -159,6 +158,8 @@ namespace ZapretManager
             int index = _procSelect.SelectedIndex;
             if (index < 0 || index >= _apps.Count) { Shell.Notify("Сначала выберите приложение.", LogLevel.Warn); return; }
             if (Shell.Install == null || !Shell.Install.IsValid) { Shell.Notify("Папка zapret не найдена.", LogLevel.Error); return; }
+            if (_hostsEditor.Text.Trim().Length > 0 && !Dlg.Confirm(this.View.FindForm(), "Заменить список адресов?",
+                "Текущий список в поле «Адреса для обхода» будет заменён результатами наблюдения.", "Продолжить")) return;
 
             AppEntry app = _apps[index];
             _appBusy = true;
@@ -294,7 +295,7 @@ namespace ZapretManager
                 {
                     string message = SiteGuard.EnableLog();
                     SiteGuard.ResetCursor();
-                    Shell.Notify(message, LogLevel.Ok);
+                    Shell.Notify(message, message.StartsWith("Не удалось") ? LogLevel.Error : LogLevel.Ok);
                 }
                 else
                 {
@@ -324,7 +325,7 @@ namespace ZapretManager
             enable.Click += delegate
             {
                 string message = SiteGuard.EnableLog();
-                Shell.Notify(message, LogLevel.Ok);
+                Shell.Notify(message, message.StartsWith("Не удалось") ? LogLevel.Error : LogLevel.Ok);
                 RefreshGuard();
             };
             card.Controls.Add(enable);
@@ -342,7 +343,7 @@ namespace ZapretManager
             try
             {
                 _tgGuard.Checked = Shell.Config.GetBool("SiteGuard", false);
-                _tgGuardAuto.Checked = Shell.Config.GetBool("SiteGuardAutoAdd", true);
+                _tgGuardAuto.Checked = Shell.Config.GetBool("SiteGuardAutoAdd", false);
                 bool logOn = SiteGuard.LogEnabled();
                 if (!_tgGuard.Checked) _guardStatus.Text = "Сторож выключен.";
                 else if (!logOn) _guardStatus.Text = "Журнал DNS выключен — сторож не увидит запросы.";
@@ -492,6 +493,11 @@ namespace ZapretManager
                 string t = line.Trim();
                 if (t.Length == 0) continue;
                 if (t.StartsWith("#")) continue;
+                // «Проверить адреса» дописывает аннотации вида "host   # TLS: ...";
+                // в список должен попасть только сам адрес.
+                int hash = t.IndexOf('#');
+                if (hash > 0) t = t.Substring(0, hash).Trim();
+                if (t.Length == 0) continue;
                 list.Add(t);
             }
             return list;
@@ -576,13 +582,15 @@ namespace ZapretManager
                 "Менеджер определит IP для этих доменов и допишет их в системный файл hosts (с резервной копией).\n\nЭто помогает, когда провайдер подменяет адреса или сайт не открывается без привязки IP. Для CDN-сайтов может, наоборот, замедлить загрузку — при проблемах просто верните копию файла.",
                 "Записать")) return;
 
-            int added;
-            string backup;
-            string message = SiteDoctor.AddToHosts(hosts, out added, out backup);
-            Log.Info("Проверка сайта: " + message + (backup.Length > 0 ? " (копия: " + backup + ")" : ""));
-            Shell.Notify(message, added > 0 ? LogLevel.Ok : LogLevel.Warn);
-            _status.Text = message + (backup.Length > 0 ? "  Резервная копия: " + backup : "");
-            _status.ForeColor = added > 0 ? Theme.Success : Theme.TextMuted;
+            int added = 0;
+            string backup = "";
+            Shell.RunOperation(delegate() { return SiteDoctor.AddToHosts(hosts, out added, out backup); }, delegate(string message)
+            {
+                Log.Info("Проверка сайта: " + message + (backup.Length > 0 ? " (копия: " + backup + ")" : ""));
+                Shell.Notify(message, added > 0 ? LogLevel.Ok : LogLevel.Warn);
+                _status.Text = message + (backup.Length > 0 ? "  Резервная копия: " + backup : "");
+                _status.ForeColor = added > 0 ? Theme.Success : Theme.TextMuted;
+            });
         }
         public override void RefreshState()
         {

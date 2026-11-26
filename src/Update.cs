@@ -207,25 +207,44 @@ namespace ZapretManager
         public static string ZipUrl(ReleaseInfo rel)
         {
             AssetInfo zip = rel.FindZip();
-            if (zip != null) return zip.Url;
-            return string.Format("https://github.com/{0}/releases/download/{1}/zapret-discord-youtube-{1}.zip", OfficialRepo, rel.Tag);
+            string url = zip != null
+                ? zip.Url
+                : string.Format("https://github.com/{0}/releases/download/{1}/zapret-discord-youtube-{1}.zip", OfficialRepo, rel.Tag);
+            Uri uri;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out uri) || uri.Scheme != Uri.UriSchemeHttps)
+                throw new ApplicationException("Недоверенный адрес архива: " + url);
+            string host = uri.Host.ToLowerInvariant();
+            if (host != "github.com" && !host.EndsWith(".github.com", StringComparison.Ordinal)
+                && host != "objects.githubusercontent.com" && host != "codeload.github.com")
+                throw new ApplicationException("Архив должен скачиваться с GitHub, а не с " + host);
+            return url;
         }
     }
 
     public static class Versions
     {
+        private sealed class VersionKey
+        {
+            public int[] Numbers = new int[0];
+            public string Suffix = "";
+            public bool PreRelease;
+        }
+
         public static int Compare(string a, string b)
         {
-            int[] pa = Parts(a);
-            int[] pb = Parts(b);
-            int n = Math.Max(pa.Length, pb.Length);
+            VersionKey va = Parse(a);
+            VersionKey vb = Parse(b);
+            int n = Math.Max(va.Numbers.Length, vb.Numbers.Length);
             for (int i = 0; i < n; i++)
             {
-                int va = i < pa.Length ? pa[i] : 0;
-                int vb = i < pb.Length ? pb[i] : 0;
-                if (va != vb) return va < vb ? -1 : 1;
+                int x = i < va.Numbers.Length ? va.Numbers[i] : 0;
+                int y = i < vb.Numbers.Length ? vb.Numbers[i] : 0;
+                if (x != y) return x < y ? -1 : 1;
             }
-            return 0;
+            // 1.4.0-pre1 < 1.4.0, а 1.9.9d > 1.9.9 (буквенный патч Flowseal)
+            if (va.PreRelease != vb.PreRelease) return va.PreRelease ? -1 : 1;
+            int c = string.Compare(va.Suffix, vb.Suffix, StringComparison.OrdinalIgnoreCase);
+            return c < 0 ? -1 : (c > 0 ? 1 : 0);
         }
 
         /// <summary>Тег без префикса v: "v1.10.4" → "1.10.4".</summary>
@@ -237,21 +256,29 @@ namespace ZapretManager
             return t;
         }
 
-        private static int[] Parts(string v)
+        private static VersionKey Parse(string v)
         {
-            if (string.IsNullOrEmpty(v)) return new int[0];
+            VersionKey key = new VersionKey();
+            if (string.IsNullOrEmpty(v)) return key;
             v = v.Trim().TrimStart('v', 'V');
-            Match m = Regex.Match(v, "^[0-9]+(\\.[0-9]+)*");
-            if (!m.Success) return new int[0];
-            string[] raw = m.Value.Split('.');
-            int[] parts = new int[raw.Length];
+            Match m = Regex.Match(v, @"^(\d+(?:\.\d+)*)(.*)$");
+            if (!m.Success) return key;
+
+            string[] raw = m.Groups[1].Value.Split('.');
+            key.Numbers = new int[raw.Length];
             for (int i = 0; i < raw.Length; i++)
             {
                 int x;
-                int.TryParse(raw[i], out x);
-                parts[i] = x;
+                if (!int.TryParse(raw[i], out x)) x = 0;
+                key.Numbers[i] = x;
             }
-            return parts;
+
+            string suffix = m.Groups[2].Value.Trim();
+            suffix = suffix.TrimStart('-', '.', '_', '+');
+            key.Suffix = suffix;
+            key.PreRelease = Regex.IsMatch(suffix, @"^(pre|alpha|beta|rc|dev)\b", RegexOptions.IgnoreCase)
+                || Regex.IsMatch(suffix, @"^(pre|alpha|beta|rc|dev)\d", RegexOptions.IgnoreCase);
+            return key;
         }
     }
 
@@ -385,6 +412,11 @@ namespace ZapretManager
         {
             string backupPath = "";
             string work = Path.Combine(AppPaths.TempDir, "update-" + rel.Tag);
+            RuntimeState before = null;
+            bool serviceInstalled = false;
+            bool wasRunning = false;
+            string serviceStrategy = "";
+            string runStrategy = "";
             try
             {
                 if (rel == null) throw new ApplicationException("Нет данных о релизе.");
@@ -410,19 +442,19 @@ namespace ZapretManager
                 Log.Info("Обновление: распаковано в " + payload);
 
                 // Состояние до обновления
-                RuntimeState before = _ops.GetState();
+                before = _ops.GetState();
                 string ipsetMode = before.IpsetMode;
                 bool hadCheckUpdates = before.CheckUpdates;
-                string serviceStrategy = before.ServiceStrategy;
-                bool serviceInstalled = before.ServiceInstalled;
-                bool wasRunning = before.WinwsRunning;
-                string runStrategy = before.MatchedStrategy;
+                serviceStrategy = before.ServiceStrategy;
+                serviceInstalled = before.ServiceInstalled;
+                wasRunning = before.WinwsRunning;
+                runStrategy = before.MatchedStrategy;
 
                 Report(44, "Остановка bypass…");
                 try
                 {
                     if (serviceInstalled) Proc.Run("sc.exe", "stop zapret", 25000);
-                    Proc.KillAll("winws.exe");
+                    _ops.KillWinws();
                 }
                 catch (Exception ex) { Log.Warn("Не удалось остановить bypass перед обновлением: " + ex.Message); }
                 Thread.Sleep(600);
@@ -436,12 +468,28 @@ namespace ZapretManager
                 Report(58, "Установка файлов…");
                 int copied = 0;
                 int totalFiles = CountPayloadFiles(payload);
+                List<string> copyErrors = new List<string>();
                 CopyPayload(payload, _install.Root, opt, delegate(string file, int done)
                 {
                     copied = done;
                     int p = totalFiles > 0 ? 58 + (int)(done * 34.0 / totalFiles) : 75;
                     Report(p, "Установка файлов: " + Path.GetFileName(file));
-                });
+                }, copyErrors);
+                if (copyErrors.Count > 0)
+                {
+                    throw new ApplicationException(string.Format(
+                        "Не удалось скопировать файлов: {0} ({1}). Обновление остановлено, резервная копия: {2}",
+                        copyErrors.Count, string.Join(", ", copyErrors.GetRange(0, Math.Min(3, copyErrors.Count)).ToArray()),
+                        backupPath.Length > 0 ? backupPath : "не создавалась"));
+                }
+
+                // Файлы стратегий, которых нет в новой версии, не удаляем, но предупреждаем:
+                // иначе старые .bat остаются в списке и выглядят как актуальные.
+                List<string> stale = StaleStrategies(payload, _install.Root);
+                if (stale.Count > 0)
+                {
+                    Log.Warn("В новой версии нет файлов стратегий: " + string.Join(", ", stale.ToArray()) + " — они оставлены в папке.");
+                }
 
                 // Восстановление пользовательских состояний
                 RestoreState(ipsetMode, hadCheckUpdates, opt);
@@ -479,15 +527,49 @@ namespace ZapretManager
                 // копии при обновлении создаются всегда — держим только две последние
                 long freed = Cleanup.PruneBackups(_install.Root, 2, delegate(string m) { Log.Info(m); });
                 string extra = freed > 0 ? "\nСтарые копии убраны, освобождено " + Cleanup.FormatSize(freed) : "";
-                string summary = string.Format("Обновлено до версии {0}.{1}{2}", rel.Tag, backupPath.Length > 0 ? "\nРезервная копия: " + backupPath : "", extra);
+                string staleNote = stale.Count > 0 ? "\nВ новой версии нет стратегий: " + string.Join(", ", stale.ToArray()) + " (оставлены)" : "";
+                string summary = string.Format("Обновлено до версии {0}.{1}{2}{3}", rel.Tag, backupPath.Length > 0 ? "\nРезервная копия: " + backupPath : "", extra, staleNote);
                 Finish(true, "", summary, backupPath);
                 return summary;
             }
             catch (Exception ex)
             {
                 Log.Error("Ошибка обновления", ex);
-                Finish(false, ex.Message, "", backupPath);
-                return "Ошибка обновления: " + ex.Message;
+                // Пытаемся откатить файлы из резервной копии (data/manager.exe не трогаем).
+                string rollback = "";
+                if (backupPath.Length > 0 && Directory.Exists(backupPath))
+                {
+                    try
+                    {
+                        List<string> restoreErrors = new List<string>();
+                        RestoreDirectory(backupPath, _install.Root, restoreErrors);
+                        _install.Rescan();
+                        rollback = "\nВыполнен откат из резервной копии";
+                        if (restoreErrors.Count > 0) rollback += " (не восстановлено файлов: " + restoreErrors.Count + ")";
+                        Log.Ok("Обновление: откат из " + backupPath + " (" + restoreErrors.Count + " ошибок).");
+                    }
+                    catch (Exception rollbackEx)
+                    {
+                        rollback = "\nОткат не удался: " + rollbackEx.Message;
+                        Log.Warn("Не удалось откатить обновление: " + rollbackEx.Message);
+                    }
+                }
+
+                // Пытаемся вернуть bypass, даже если файлы обновились частично.
+                try
+                {
+                    if (serviceInstalled) Proc.Run("sc.exe", "start zapret", 30000);
+                    else if (wasRunning && before != null)
+                    {
+                        StrategyDef prev = _install.FindStrategy(runStrategy);
+                        if (prev != null) _ops.Start(prev);
+                    }
+                }
+                catch (Exception restartEx) { Log.Warn("Не удалось перезапустить bypass после ошибки обновления: " + restartEx.Message); }
+
+                string extra = backupPath.Length > 0 ? " Резервная копия: " + backupPath : "";
+                Finish(false, ex.Message + extra + rollback, "", backupPath);
+                return "Ошибка обновления: " + ex.Message + extra + rollback;
             }
         }
 
@@ -550,7 +632,49 @@ namespace ZapretManager
             }
         }
 
-        private void CopyPayload(string payload, string target, UpdateOptions opt, Action<string, int> progress)
+        /// <summary>Стратегии, которые есть в установке, но отсутствуют в новом payload.</summary>
+        private static List<string> StaleStrategies(string payload, string target)
+        {
+            List<string> result = new List<string>();
+            try
+            {
+                HashSet<string> fresh = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string f in Directory.GetFiles(payload, "*.bat", SearchOption.TopDirectoryOnly))
+                    fresh.Add(Path.GetFileName(f));
+                foreach (string f in Directory.GetFiles(target, "*.bat", SearchOption.TopDirectoryOnly))
+                {
+                    string name = Path.GetFileName(f);
+                    if (name.StartsWith("service", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!fresh.Contains(name)) result.Add(name);
+                }
+            }
+            catch { }
+            return result;
+        }
+
+        /// <summary>Восстановление из backup «по возможности»: ошибки отдельных файлов не прерывают откат.</summary>
+        private static void RestoreDirectory(string source, string dest, List<string> errors)
+        {
+            source = source.TrimEnd('\\');
+            Directory.CreateDirectory(dest);
+            string running = Path.GetFileName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+            foreach (string file in Directory.GetFiles(source))
+            {
+                string name = Path.GetFileName(file);
+                if (string.Equals(name, "manager.log", StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.Equals(name, running, StringComparison.OrdinalIgnoreCase)) continue;
+                try { File.Copy(file, Path.Combine(dest, name), true); }
+                catch (Exception ex) { errors.Add(name); Log.Warn("Откат: не удалось восстановить " + name + ": " + ex.Message); }
+            }
+            foreach (string dir in Directory.GetDirectories(source))
+            {
+                string name = Path.GetFileName(dir);
+                if (string.Equals(name, "data", StringComparison.OrdinalIgnoreCase)) continue;
+                RestoreDirectory(dir, Path.Combine(dest, name), errors);
+            }
+        }
+
+        private void CopyPayload(string payload, string target, UpdateOptions opt, Action<string, int> progress, List<string> errors)
         {
             int done = 0;
             string[] files = Directory.GetFiles(payload, "*", SearchOption.AllDirectories);
@@ -569,6 +693,7 @@ namespace ZapretManager
                 catch (Exception ex)
                 {
                     Log.Warn("Не удалось скопировать " + rel + ": " + ex.Message);
+                    errors.Add(rel);
                 }
                 if (progress != null) progress(rel, done);
             }
@@ -612,11 +737,11 @@ namespace ZapretManager
                 {
                     if (ipsetMode == "none")
                     {
-                        File.WriteAllText(_install.IpsetFile, "203.0.113.113/32\r\n", new UTF8Encoding(false));
+                        ZapretOps.WriteTextAtomic(_install.IpsetFile, "203.0.113.113/32\r\n");
                     }
                     else if (ipsetMode == "any")
                     {
-                        File.WriteAllText(_install.IpsetFile, "", new UTF8Encoding(false));
+                        ZapretOps.WriteTextAtomic(_install.IpsetFile, "");
                     }
                 }
                 // Флаг авто-проверки обновлений: уважаем выбор пользователя
@@ -626,7 +751,7 @@ namespace ZapretManager
                 }
                 else if (!File.Exists(_install.CheckUpdatesFile))
                 {
-                    File.WriteAllText(_install.CheckUpdatesFile, "ENABLED", new UTF8Encoding(false));
+                    ZapretOps.WriteTextAtomic(_install.CheckUpdatesFile, "ENABLED");
                 }
             }
             catch (Exception ex) { Log.Warn("Не удалось восстановить состояние после обновления: " + ex.Message); }

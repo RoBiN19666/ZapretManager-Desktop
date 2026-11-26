@@ -34,7 +34,9 @@ namespace ZapretManager
 
             StringBuilder args = new StringBuilder();
             args.Append("/Create /TN \"").Append(TaskName).Append("\"");
-            args.Append(" /TR \"\\\"").Append(exePath).Append("\\\" ").Append(AutostartArg).Append("\"");
+            args.Append(" /TR \"\\\"").Append(exePath).Append("\\\" ").Append(AutostartArg);
+            if (startMinimized) args.Append(" --tray");
+            args.Append("\"");
             args.Append(" /SC ONLOGON /RL HIGHEST /F");
             ProcResult r = Proc.Run("schtasks.exe", args.ToString(), 30000);
             if (r.ExitCode != 0)

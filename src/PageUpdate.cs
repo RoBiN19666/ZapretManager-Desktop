@@ -68,6 +68,11 @@ namespace ZapretManager
             Shell.UpdateStateChanged += RefreshState;
         }
 
+        public override void OnDispose()
+        {
+            Shell.UpdateStateChanged -= RefreshState;
+        }
+
         private void BuildVersionCard()
         {
             _versionCard = NewCard("Установленная версия", 148);
@@ -254,10 +259,18 @@ namespace ZapretManager
                 Shell.Notify("Тег выглядит некорректно: " + tag, LogLevel.Warn);
                 return;
             }
-            ReleaseInfo rel;
-            try { rel = GitHub.ReleaseByTag(GitHub.OfficialRepo, tag); }
-            catch (Exception ex) { Shell.Notify("Не удалось получить версию " + tag + ": " + ex.Message, LogLevel.Error); return; }
-            InstallRelease(rel);
+            ReleaseInfo rel = null;
+            string error = null;
+            Shell.RunBackground(delegate()
+            {
+                try { rel = GitHub.ReleaseByTag(GitHub.OfficialRepo, tag); }
+                catch (Exception ex) { error = ex.Message; }
+                Shell.Ui(delegate()
+                {
+                    if (error != null) { Shell.Notify("Не удалось получить версию " + tag + ": " + error, LogLevel.Error); return; }
+                    InstallRelease(rel);
+                });
+            }, null);
         }
 
         private void InstallRelease(ReleaseInfo rel)

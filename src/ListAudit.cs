@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Text;
 
 namespace ZapretManager
@@ -135,19 +136,36 @@ namespace ZapretManager
         /// </summary>
         public static System.Collections.Generic.List<string> ParseBatch(string text, out int skipped)
         {
+            return ParseBatch(text, false, out skipped);
+        }
+
+        /// <summary>Разбирает вставленный текст; ipMode сохраняет CIDR/IPv6 и не трогает «/».</summary>
+        public static System.Collections.Generic.List<string> ParseBatch(string text, bool ipMode, out int skipped)
+        {
             System.Collections.Generic.List<string> result = new System.Collections.Generic.List<string>();
             skipped = 0;
             if (string.IsNullOrEmpty(text)) return result;
             string[] tokens = System.Text.RegularExpressions.Regex.Split(text, "[\\s,;|\\t\\r\\n]+");
             foreach (string raw in tokens)
             {
-                string host = CleanToken(raw);
+                bool anchor = false;
+                string host;
+                if (ipMode)
+                {
+                    host = CleanIpToken(raw);
+                }
+                else
+                {
+                    anchor = (raw ?? "").TrimStart().StartsWith("^");
+                    host = CleanToken(raw);
+                    if (anchor && host.Length > 0) host = "^" + host;
+                }
                 if (host.Length == 0)
                 {
                     if ((raw ?? "").Trim().Length > 0) skipped++;
                     continue;
                 }
-                if (!IsHostLike(host))
+                if (!ipMode && !IsHostLike(anchor ? host.Substring(1) : host))
                 {
                     skipped++;
                     continue;
@@ -174,13 +192,13 @@ namespace ZapretManager
             if (scheme >= 0) t = t.Substring(scheme + 3);
             else if (t.StartsWith("//")) t = t.Substring(2);
             int slash = t.IndexOfAny(new char[] { '/', '?', '#' });
-            if (slash >= 0) t = t.Substring(0, slash);
+            if (slash >= 0) t = t.Substring(0, slash).Trim();
             int at = t.IndexOf('@');
             if (at >= 0) t = t.Substring(at + 1);
             if (t.StartsWith("*.")) t = t.Substring(2);
             if (t.StartsWith("^")) t = t.Substring(1);
             int colon = t.IndexOf(':');
-            if (colon > 0) t = t.Substring(0, colon);
+            if (colon > 0) t = t.Substring(0, colon).Trim();
             t = t.TrimEnd('.');
             t = t.ToLowerInvariant();
             return t;
@@ -218,6 +236,14 @@ namespace ZapretManager
         /// <summary>Чистит все строки текста; комментарии и пустые строки сохраняются.</summary>
         public static string Tidy(string text, out int changed, out int removed)
         {
+            return Tidy(text, false, out changed, out removed);
+        }
+
+        /// <summary>
+        /// Чистит строки с учётом формата: ipMode сохраняет CIDR/IPv6 (и «/»), иначе — домены и якорь «^».
+        /// </summary>
+        public static string Tidy(string text, bool ipMode, out int changed, out int removed)
+        {
             changed = 0;
             removed = 0;
             if (string.IsNullOrEmpty(text)) return text;
@@ -231,8 +257,8 @@ namespace ZapretManager
                     outLines.Add(line);
                     continue;
                 }
-                string host = CleanToken(line);
-                if (host.Length == 0 || !IsHostLike(host))
+                string host = ipMode ? CleanIpToken(line) : CleanHostToken(line);
+                if (host.Length == 0)
                 {
                     removed++;
                     continue;
@@ -246,6 +272,45 @@ namespace ZapretManager
                 outLines.Add(host);
             }
             return string.Join("\n", outLines.ToArray());
+        }
+
+        /// <summary>Доменная строка с сохранением якоря «^» (точное совпадение хоста).</summary>
+        private static string CleanHostToken(string line)
+        {
+            string trimmed = (line ?? "").Trim();
+            bool anchor = trimmed.StartsWith("^");
+            string host = CleanToken(trimmed);
+            if (host.Length == 0 || !IsHostLike(host)) return "";
+            return anchor ? "^" + host : host;
+        }
+
+        /// <summary>IP/CIDR-строка: сохраняет маску и IPv6, принимает только валидные адреса.</summary>
+        private static string CleanIpToken(string raw)
+        {
+            if (raw == null) return "";
+            string t = raw.Trim().Trim('"', '\'', '`', '<', '>', '(', ')', '[', ']', ',', ';', '|');
+            if (t.Length == 0) return "";
+            int hash = t.IndexOf('#');
+            if (hash >= 0) t = t.Substring(0, hash).Trim();
+            int space = t.IndexOfAny(new char[] { ' ', '\t' });
+            if (space > 0) t = t.Substring(0, space).Trim();
+            if (t.Length == 0) return "";
+
+            string ipPart = t;
+            int prefix = -1;
+            int slash = t.IndexOf('/');
+            if (slash >= 0)
+            {
+                ipPart = t.Substring(0, slash).Trim();
+                if (!int.TryParse(t.Substring(slash + 1).Trim(), out prefix)) return "";
+            }
+
+            IPAddress ip;
+            if (!IPAddress.TryParse(ipPart, out ip)) return "";
+            int max = ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork ? 32 : 128;
+            if (slash >= 0 && (prefix < 0 || prefix > max)) return "";
+            string canonical = ip.ToString();
+            return slash >= 0 ? canonical + "/" + prefix : canonical;
         }
     }
 }

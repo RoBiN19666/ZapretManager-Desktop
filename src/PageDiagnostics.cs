@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Text;
@@ -70,18 +70,32 @@ namespace ZapretManager
 
             Shell.RunBackground(delegate()
             {
-                List<CheckResult> results = Diagnostics.Run(Shell.Install, Shell.Ops, Shell.Config, delegate(string step)
+                try
                 {
-                    Shell.Ui(delegate() { _status.Text = step; });
-                });
-                Shell.Ui(delegate()
+                    List<CheckResult> results = Diagnostics.Run(Shell.Install, Shell.Ops, Shell.Config, delegate(string step)
+                    {
+                        Shell.Ui(delegate() { _status.Text = step; });
+                    });
+                    Shell.Ui(delegate()
+                    {
+                        _running = false;
+                        _btnRun.Enabled = true;
+                        _status.Text = "Готово: " + DateTime.Now.ToString("HH:mm:ss");
+                        Shell.Form.SetStatusHint("");
+                        ShowResults(results);
+                    });
+                }
+                finally
                 {
-                    _running = false;
-                    _btnRun.Enabled = true;
-                    _status.Text = "Готово: " + DateTime.Now.ToString("HH:mm:ss");
-                    Shell.Form.SetStatusHint("");
-                    ShowResults(results);
-                });
+                    Shell.Ui(delegate()
+                    {
+                        if (!_running) return;
+                        _running = false;
+                        _btnRun.Enabled = true;
+                        _status.Text = "Проверка прервана — подробности в журнале.";
+                        Shell.Form.SetStatusHint("");
+                    });
+                }
             }, null);
         }
 
@@ -131,9 +145,41 @@ namespace ZapretManager
                 Shell.Notify("Для этого действия нужны права администратора.", LogLevel.Warn);
                 return;
             }
-            string msg = Diagnostics.RunAction(actionId, Shell.Ops);
-            Shell.Notify(msg, LogLevel.Ok);
-            RunChecks();
+            string title = null;
+            string text = null;
+            switch (actionId)
+            {
+                case Diagnostics.ActionRemoveWinDivert:
+                    title = "Удалить драйвер WinDivert?";
+                    text = "Службы WinDivert и WinDivert14 будут остановлены и удалены. Это может затронуть другие программы, использующие WinDivert.";
+                    break;
+                case Diagnostics.ActionRemoveConflicts:
+                    title = "Удалить конфликтующие службы?";
+                    text = "Будут остановлены и удалены службы GoodbyeDPI, discordfix_zapret, winws1 и winws2. Если вы ими пользуетесь — они перестанут запускаться.";
+                    break;
+                case Diagnostics.ActionClearDiscord:
+                    title = "Очистить кэш Discord?";
+                    text = "Discord будет закрыт, а папки Cache, Code Cache и GPUCache удалены.";
+                    break;
+                case Diagnostics.ActionCleanHosts:
+                    title = "Убрать блок менеджера из hosts?";
+                    text = "Из файла hosts будет удалён блок, добавленный Zapret Manager. Остальные записи останутся.";
+                    break;
+                case Diagnostics.ActionEnableTcp:
+                    title = "Включить TCP timestamps?";
+                    text = "Параметр netsh interface tcp set global timestamps=enabled будет включён для всей системы.";
+                    break;
+            }
+            if (title != null && !Dlg.ConfirmDanger(this.View.FindForm(), title, text, "Выполнить")) return;
+
+            Shell.RunOperation(delegate() { return Diagnostics.RunAction(actionId, Shell.Ops); }, delegate(string msg)
+            {
+                bool failed = msg.IndexOf("Не удалось", StringComparison.OrdinalIgnoreCase) >= 0
+                    || msg.StartsWith("Ошибка", StringComparison.OrdinalIgnoreCase)
+                    || msg.IndexOf("нужны права", StringComparison.OrdinalIgnoreCase) >= 0;
+                Shell.Notify(msg, failed ? LogLevel.Error : LogLevel.Ok);
+                RunChecks();
+            });
         }
 
         private void CopyReport()

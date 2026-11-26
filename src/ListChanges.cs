@@ -12,6 +12,9 @@ namespace ZapretManager
     /// </summary>
     public sealed class ListChanges
     {
+        /// <summary>Общий замок для файлов списков: сторож, доктор сайтов и редактор не должны писать одновременно.</summary>
+        public static readonly object ListFileLock = new object();
+
         public const string BlockStart = "# >>> Zapret Manager: мои добавления (сохраняются при обновлении zapret)";
         public const string BlockEnd = "# <<< Zapret Manager: конец моих добавлений";
 
@@ -120,7 +123,7 @@ namespace ZapretManager
             lc.DataDir = dataDir;
             try
             {
-                string[] lines = File.Exists(filePath) ? File.ReadAllLines(filePath, Encoding.UTF8) : new string[0];
+                string[] lines = File.Exists(filePath) ? TextFile.ReadLines(filePath) : new string[0];
                 List<string> officialLines;
                 List<string> blockEntries;
                 SplitBlock(lines, out officialLines, out blockEntries);
@@ -130,14 +133,14 @@ namespace ZapretManager
                 string basePath = BaselinePath(dataDir, lc.FileName);
                 if (File.Exists(basePath))
                 {
-                    lc.BaselineEntries = ParseEntries(File.ReadAllLines(basePath, Encoding.UTF8));
+                    lc.BaselineEntries = ParseEntries(TextFile.ReadLines(basePath));
                     lc.HasBaseline = true;
                 }
 
                 string chPath = ChangesPath(dataDir, lc.FileName);
                 if (File.Exists(chPath))
                 {
-                    foreach (string raw in File.ReadAllLines(chPath, Encoding.UTF8))
+                    foreach (string raw in TextFile.ReadLines(chPath))
                     {
                         string line = raw.Trim();
                         if (line.Length < 2) continue;
@@ -167,7 +170,7 @@ namespace ZapretManager
                 }
 
                 string newsPath = NewsPath(dataDir, lc.FileName);
-                if (File.Exists(newsPath)) lc.News = ParseEntries(File.ReadAllLines(newsPath, Encoding.UTF8));
+                if (File.Exists(newsPath)) lc.News = ParseEntries(TextFile.ReadLines(newsPath));
 
                 // наши «добавления» не должны дублировать официальные строки
                 List<string> cleanAdded = new List<string>();
@@ -351,8 +354,23 @@ namespace ZapretManager
             List<string> officialLines;
             List<string> blockEntries;
             SplitBlock(lines, out officialLines, out blockEntries);
-            List<string> all = ParseEntries(officialLines);
+
+            List<string> officialEntries = ParseEntries(officialLines);
+            List<string> all = new List<string>(officialEntries);
             foreach (string b in blockEntries) AddUnique(all, b);
+
+            // «Принять как официальное» означает, что добавленные строки остаются в файле
+            // обычными записями (а не исчезают и не превращаются в «удалённые вами»).
+            List<string> finalLines = new List<string>(officialLines);
+            foreach (string b in blockEntries)
+            {
+                if (!Contains(officialEntries, b))
+                {
+                    finalLines.Add(b);
+                    officialEntries.Add(b);
+                }
+            }
+
             BaselineEntries = all;
             Added = new List<string>();
             Removed = new List<string>();
@@ -360,8 +378,16 @@ namespace ZapretManager
             HasBaseline = true;
             SaveBaseline();
             SaveChangesFile();
-            string text = ComposeText(officialLines, new List<string>());
-            try { File.WriteAllText(FilePath, text, new UTF8Encoding(false)); } catch { }
+            string text = ComposeText(finalLines, new List<string>());
+            try
+            {
+                File.WriteAllText(FilePath, text, new UTF8Encoding(false));
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                Log.Error("Не удалось сохранить список " + FileName, ex);
+            }
         }
 
         /// <summary>
@@ -374,7 +400,7 @@ namespace ZapretManager
             try
             {
                 List<string> existing = File.Exists(userListPath)
-                    ? ParseEntries(File.ReadAllLines(userListPath, Encoding.UTF8))
+                    ? ParseEntries(TextFile.ReadLines(userListPath))
                     : new List<string>();
                 List<string> toWrite = new List<string>();
                 int moved = 0;
@@ -403,7 +429,7 @@ namespace ZapretManager
             catch (Exception ex)
             {
                 Log.Error("Не удалось перенести добавления в личный список", ex);
-                return 0;
+                return -1;
             }
         }
 
@@ -420,13 +446,13 @@ namespace ZapretManager
                 lc.DataDir = dataDir;
                 try
                 {
-                    string[] newLines = File.ReadAllLines(path, Encoding.UTF8);
+                    string[] newLines = TextFile.ReadLines(path);
                     List<string> newOfficial = ParseEntries(newLines);
 
                     // что нового принёс разработчик — фиксируем отдельно
                     List<string> oldBaseline = new List<string>();
                     string basePath = BaselinePath(dataDir, name);
-                    if (File.Exists(basePath)) oldBaseline = ParseEntries(File.ReadAllLines(basePath, Encoding.UTF8));
+                    if (File.Exists(basePath)) oldBaseline = ParseEntries(TextFile.ReadLines(basePath));
                     List<string> news = new List<string>();
                     if (oldBaseline.Count > 0)
                     {
@@ -442,7 +468,7 @@ namespace ZapretManager
                     string chPath = ChangesPath(dataDir, name);
                     if (File.Exists(chPath))
                     {
-                        foreach (string raw in File.ReadAllLines(chPath, Encoding.UTF8))
+                        foreach (string raw in TextFile.ReadLines(chPath))
                         {
                             string line = raw.Trim();
                             if (line.Length < 2) continue;

@@ -224,7 +224,7 @@ namespace ZapretManager
             if (!st.Running) return;
             Shell.RunBackground(delegate()
             {
-                TgProxy.Stop();
+                TgProxy.Stop(st.Dir);
                 System.Threading.Thread.Sleep(1200);
                 bool ok;
                 string message = TgProxy.Start(Shell.Config, out ok);
@@ -239,20 +239,12 @@ namespace ZapretManager
         private void PrepareQuiet()
         {
             if (_quietBusy) return;
-            string python = TgSource.FindPython();
-            if (python == null)
-            {
-                Shell.Notify("Python 3 не найден. Установите Python с python.org (галочка «Add python.exe to PATH»), затем повторите.", LogLevel.Error);
-                Dlg.Info(this.View.FindForm(), "Нужен Python",
-                    "Для тихого режима нужен Python 3.9 или новее.\n\nСкачайте установщик с python.org, при установке включите «Add python.exe to PATH», после этого нажмите «Подготовить» ещё раз.");
-                return;
-            }
 
             _quietBusy = true;
             _btnPrepare.Enabled = false;
             _quietProgress.Visible = true;
             _quietProgress.Value = 2;
-            _quietStatus.Text = "Подготовка: " + python;
+            _quietStatus.Text = "Подготовка: скачиваю портативный Python…";
             Shell.RunBackground(delegate()
             {
                 bool ok;
@@ -319,26 +311,40 @@ namespace ZapretManager
             }
             if (st.Running)
             {
-                Shell.Notify(TgProxy.Stop(), LogLevel.Info);
+                Shell.RunOperation(delegate() { return TgProxy.Stop(st.Dir); }, delegate(string msg)
+                {
+                    Shell.Notify(msg, LogLevel.Info);
+                    Shell.RefreshState(false);
+                    RefreshState();
+                });
             }
             else
             {
-                bool ok;
-                string msg = TgProxy.Start(Shell.Config, out ok);
-                Shell.Notify(msg, ok ? LogLevel.Ok : LogLevel.Error);
+                bool ok = false;
+                Shell.RunOperation(delegate() { return TgProxy.Start(Shell.Config, out ok); }, delegate(string msg)
+                {
+                    Shell.Notify(msg, ok ? LogLevel.Ok : LogLevel.Error);
+                    Shell.RefreshState(false);
+                    RefreshState();
+                });
             }
-            Shell.RefreshState(false);
-            RefreshState();
         }
 
         private void RestartProxy()
         {
-            Shell.Notify(TgProxy.Stop(), LogLevel.Info);
-            bool ok;
-            string msg = TgProxy.Start(Shell.Config, out ok);
-            Shell.Notify(msg, ok ? LogLevel.Ok : LogLevel.Error);
-            Shell.RefreshState(false);
-            RefreshState();
+            TgProxyState st = TgProxy.GetState(Shell.Config);
+            bool ok = false;
+            Shell.RunOperation(delegate()
+            {
+                TgProxy.Stop(st.Dir);
+                System.Threading.Thread.Sleep(800);
+                return TgProxy.Start(Shell.Config, out ok);
+            }, delegate(string msg)
+            {
+                Shell.Notify(msg, ok ? LogLevel.Ok : LogLevel.Error);
+                Shell.RefreshState(false);
+                RefreshState();
+            });
         }
 
         private void OpenInTelegram()
@@ -541,11 +547,8 @@ namespace ZapretManager
                 }
                 else
                 {
-                    string python = TgSource.FindPython();
-                    _quietStatus.Text = python != null
-                        ? "Python найден: " + python + " — нажмите «Подготовить»."
-                        : "Python 3 не найден: для тихого режима нужно установить Python с python.org.";
-                    _quietStatus.ForeColor = python != null ? Theme.TextMuted : Theme.Warn;
+                    _quietStatus.Text = "Тихий режим не подготовлен: нажмите «Подготовить» — портативный Python (≈10 МБ) скачается автоматически.";
+                    _quietStatus.ForeColor = Theme.TextMuted;
                 }
                 _autoInfo.Text = Shell.Config.GetBool("AutostartZapret", true)
                     ? "Менеджер при автозапуске поднимает и zapret, и TG WS Proxy."

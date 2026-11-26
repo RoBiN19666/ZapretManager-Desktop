@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -161,18 +161,26 @@ namespace ZapretManager
             if (s == null) return;
             if (!Shell.RequireAdmin("Запуск стратегии")) return;
             RuntimeState st = Shell.State;
-            if (st != null && st.ServiceInstalled && st.ServiceStatus == "работает")
+            bool stopService = st != null && st.ServiceInstalled && st.ServiceStatus == "работает";
+            if (stopService)
             {
                 if (!Dlg.Confirm(this.View.FindForm(), "Служба запущена",
                     "Стратегия сейчас работает как служба zapret. Остановить службу и запустить выбранную стратегию вручную?", "Остановить службу и запустить"))
                     return;
-                Shell.Ops.Stop();
             }
-            ZapretOps.StartResult r = Shell.Ops.Start(s);
-            Shell.Config.Set("LastStrategy", s.Name);
-            Shell.Config.Save();
-            Shell.Notify(r.Message, r.Ok ? LogLevel.Ok : LogLevel.Error);
-            Shell.RefreshState(false);
+            ZapretOps.StartResult r = null;
+            Shell.RunOperation(delegate()
+            {
+                if (stopService) Shell.Ops.Stop();
+                r = Shell.Ops.Start(s);
+                return r.Message;
+            }, delegate(string message)
+            {
+                Shell.Config.Set("LastStrategy", s.Name);
+                Shell.Config.Save();
+                Shell.Notify(message, r != null && r.Ok ? LogLevel.Ok : LogLevel.Error);
+                Shell.RefreshState(false);
+            });
         }
 
         private void InstallServiceSelected()
@@ -183,20 +191,29 @@ namespace ZapretManager
             if (!Dlg.Confirm(this.View.FindForm(), "Установить службу?",
                 string.Format("Стратегия «{0}» будет установлена как служба Windows «zapret» и будет запускаться автоматически при загрузке. Текущий запущенный bypass будет остановлен.", s.Name),
                 "Установить")) return;
-            bool ok;
-            string msg = Shell.Ops.InstallService(s, out ok);
-            Shell.Config.Set("LastStrategy", s.Name);
-            Shell.Config.Save();
-            Shell.Notify(msg, ok ? LogLevel.Ok : LogLevel.Error);
-            Shell.RefreshState(false);
-            if (!ok) Dlg.Info(this.View.FindForm(), "Не удалось установить службу", msg);
+
+            bool ok = false;
+            string msg = "";
+            Shell.RunOperation(delegate() { msg = Shell.Ops.InstallService(s, out ok); return msg; }, delegate(string message)
+            {
+                Shell.Config.Set("LastStrategy", s.Name);
+                Shell.Config.Save();
+                Shell.Notify(message, ok ? LogLevel.Ok : LogLevel.Error);
+                Shell.RefreshState(false);
+                if (!ok) Dlg.Info(this.View.FindForm(), "Не удалось установить службу", message);
+            });
         }
 
         private void OpenSelected()
         {
             StrategyDef s = SelectedStrategy();
             if (s == null) return;
-            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(s.File) { UseShellExecute = true }); }
+            try
+            {
+                // .bat через ShellExecute был бы ЗАПУСКОМ стратегии, а не просмотром.
+                using (System.Diagnostics.Process p = System.Diagnostics.Process.Start(
+                    new System.Diagnostics.ProcessStartInfo("notepad.exe", "\"" + s.File + "\"") { UseShellExecute = true })) { }
+            }
             catch (Exception ex) { Shell.Notify("Не удалось открыть файл: " + ex.Message, LogLevel.Error); }
         }
 

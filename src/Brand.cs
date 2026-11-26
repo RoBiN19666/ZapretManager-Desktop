@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -66,6 +66,7 @@ namespace ZapretManager
             Bitmap icon = Icon;
             if (icon == null) return;
             InterpolationMode old = g.InterpolationMode;
+            PixelOffsetMode oldP = g.PixelOffsetMode;
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             try
@@ -75,6 +76,7 @@ namespace ZapretManager
             finally
             {
                 g.InterpolationMode = old;
+                g.PixelOffsetMode = oldP;
             }
         }
 
@@ -84,6 +86,7 @@ namespace ZapretManager
             Bitmap img = Lock;
             if (img == null) return;
             InterpolationMode oldMode = g.InterpolationMode;
+            PixelOffsetMode oldP = g.PixelOffsetMode;
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             try
@@ -111,15 +114,17 @@ namespace ZapretManager
             finally
             {
                 g.InterpolationMode = oldMode;
+                g.PixelOffsetMode = oldP;
             }
         }
 
-        /// <summary>Рисует широкий логотип в указанных границах (с сохранением пропорций).</summary>'
+        /// <summary>Рисует широкий логотип в указанных границах (с сохранением пропорций).</summary>
         public static bool DrawLogo(Graphics g, Rectangle bounds, ContentAlignment align)
         {
             Bitmap logo = Logo;
             if (logo == null) return false;
             InterpolationMode old = g.InterpolationMode;
+            PixelOffsetMode oldP = g.PixelOffsetMode;
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             try
@@ -136,6 +141,7 @@ namespace ZapretManager
             finally
             {
                 g.InterpolationMode = old;
+                g.PixelOffsetMode = oldP;
             }
         }
     }

@@ -45,6 +45,8 @@ namespace ZapretManager
         private ListChanges _changes;
         private bool _loading;
         private bool _dirty;
+        private int _lastIndex = -1;
+        private bool _suppressSelection;
         private DateTime _ignoreTextUntil = DateTime.MinValue;
         private System.Windows.Forms.Timer _markTimer;
 
@@ -74,7 +76,7 @@ namespace ZapretManager
             _fileList.Location = new Point(20, 44);
             _fileList.Size = new Size(232, 292);
             _fileList.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Bottom;
-            _fileList.SelectedIndexChanged += delegate { LoadSelected(); };
+            _fileList.SelectedIndexChanged += delegate { OnFileSelectionChanged(); };
             _card.Controls.Add(_fileList);
 
             _pathLabel = new Label();
@@ -266,6 +268,50 @@ namespace ZapretManager
             return _files[i];
         }
 
+        private void OnFileSelectionChanged()
+        {
+            if (_suppressSelection || _loading) return;
+            int idx = _fileList.SelectedIndex;
+            if (idx < 0) return;
+            if (_dirty && _lastIndex >= 0 && idx != _lastIndex && _lastIndex < _files.Count)
+            {
+                string name = Path.GetFileName(_files[_lastIndex].Path);
+                int choice = Dlg.SaveChanges(this.View.FindForm(), "Несохранённые изменения",
+                    "В файле «" + name + "» есть несохранённые изменения.");
+                if (choice == 0 || (choice == 1 && !SaveSelected()))
+                {
+                    RestoreSelection();
+                    return;
+                }
+                _dirty = false;
+            }
+            LoadSelected();
+        }
+
+        private void RestoreSelection()
+        {
+            _suppressSelection = true;
+            try { if (_lastIndex >= 0) _fileList.SelectedIndex = _lastIndex; }
+            finally { _suppressSelection = false; }
+        }
+
+        public override bool ConfirmLeave()
+        {
+            if (!_dirty) return true;
+            ListFile f = SelectedFile();
+            string name = f != null ? Path.GetFileName(f.Path) : "список";
+            int choice = Dlg.SaveChanges(this.View.FindForm(), "Несохранённые изменения",
+                "В файле «" + name + "» есть несохранённые изменения.");
+            if (choice == 1) return SaveSelected();
+            if (choice == 2) { _dirty = false; return true; }
+            return false;
+        }
+
+        private static bool IsIpFile(ListFile f)
+        {
+            return f != null && Path.GetFileName(f.Path).IndexOf("ipset", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         private void LoadSelected()
         {
             ListFile f = SelectedFile();
@@ -277,7 +323,7 @@ namespace ZapretManager
                 _pathLabel.Text = f.Path + "  —  " + f.Hint;
                 try
                 {
-                    if (File.Exists(f.Path)) _editor.Text = File.ReadAllText(f.Path, Encoding.UTF8).Replace("\r\n", "\n").Replace("\n", "\r\n");
+                    if (File.Exists(f.Path)) _editor.Text = TextFile.Read(f.Path).Replace("\r\n", "\n").Replace("\n", "\r\n");
                     else _editor.Text = f.Official ? "" : (f.Template ?? "");
                 }
                 catch (Exception ex)
@@ -305,6 +351,7 @@ namespace ZapretManager
             UpdateChangesCard();
             ApplyMarks();
             if (_changesCard.Visible) View.Stack.PerformLayout();
+            _lastIndex = _fileList.SelectedIndex;
         }
 
         private void UpdateInfo()
@@ -341,18 +388,21 @@ namespace ZapretManager
         private void ApplyMarks()
         {
             if (_changes == null || _editor.TextLength == 0) return;
+            bool redrawOff = false;
+            bool layoutSuspended = false;
             try
             {
                 int caret = _editor.SelectionStart;
                 int selLen = _editor.SelectionLength;
                 Native.SetRedraw(_editor.Handle, false);
+                redrawOff = true;
                 _editor.SuspendLayout();
+                layoutSuspended = true;
                 string text = _editor.Text;
                 string[] lines = text.Split('\n');
                 List<string> baseline = _changes.BaselineEntries;
                 bool inBlock = false;
                 HashSet<string> duplicated = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                HashSet<string> seenEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (ListNote note in ListAudit.Analyze(text))
                 {
                     if (note.Kind == "dup") duplicated.Add(note.Entry);
@@ -392,11 +442,13 @@ namespace ZapretManager
                 }
                 _editor.Select(Math.Min(caret, _editor.TextLength), Math.Min(selLen, Math.Max(0, _editor.TextLength - caret)));
                 _editor.SelectionColor = Theme.Text;
-                _editor.ResumeLayout();
-                Native.SetRedraw(_editor.Handle, true);
-                _editor.Invalidate();
             }
             catch (Exception ex) { Log.Warn("Не удалось разметить список: " + ex.Message); }
+            finally
+            {
+                try { if (layoutSuspended) _editor.ResumeLayout(); } catch { }
+                try { if (redrawOff) { Native.SetRedraw(_editor.Handle, true); _editor.Invalidate(); } } catch { }
+            }
         }
 
         private void UpdateChangesCard()
@@ -451,10 +503,10 @@ namespace ZapretManager
 
         // ---------- действия ----------
 
-        private void SaveSelected()
+        private bool SaveSelected()
         {
             ListFile f = SelectedFile();
-            if (f == null) return;
+            if (f == null) return false;
 
             // Чистим список перед сохранением: «*.домен» → «домен», повторы — убираем
             int fixedWild, removedDup;
@@ -470,17 +522,19 @@ namespace ZapretManager
                 UpdateInfo();
                 Shell.Notify(string.Format("Список почищен: убрано повторов {0}, заменено «*.» {1}.", removedDup, fixedWild), LogLevel.Ok);
             }
-            if (f.Official && _changes == null)
-            {
-                Shell.Notify("Официальные списки можно править — изменения будут помечены. Перезагрузите страницу.", LogLevel.Warn);
-                return;
-            }
+
+            bool markable = f.Official && ListChanges.IsOfficial(Path.GetFileName(f.Path));
             try
             {
-                if (f.Official)
+                if (markable)
                 {
+                    if (_changes == null)
+                    {
+                        Shell.Notify("Не удалось загрузить пометки изменений для этого списка. Перезагрузите страницу.", LogLevel.Error);
+                        return false;
+                    }
                     string text = _changes.SaveFromEditor(_editor.Text);
-                    if (text == null) { Shell.Notify("Не удалось сохранить: " + _changes.LastError, LogLevel.Error); return; }
+                    if (text == null) { Shell.Notify("Не удалось сохранить: " + _changes.LastError, LogLevel.Error); return false; }
                     _loading = true;
                     _editor.Text = text.Replace("\r\n", "\n").Replace("\n", "\r\n");
                     _loading = false;
@@ -490,7 +544,28 @@ namespace ZapretManager
                     UpdateChangesCard();
                     UpdateInfo();
                     Shell.Notify(string.Format("Сохранено. Ваши добавления ({0}) помечены и переживут обновление zapret.", _changes.Added.Count), LogLevel.Ok);
-                    return;
+                    return true;
+                }
+
+                if (f.Official)
+                {
+                    // Рабочие файлы вроде ipset-all.txt не имеют пометок изменений —
+                    // их нужно сохранять напрямую, иначе кнопка «Сохранить» не работает.
+                    if (f.Path.EndsWith("ipset-all.txt", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int entriesIp = 0;
+                        foreach (string line in _editor.Text.Replace("\r\n", "\n").Split('\n'))
+                            if (line.Trim().Length > 0) entriesIp++;
+                        if (entriesIp == 0)
+                        {
+                            Shell.Notify("Пустой ipset-all.txt означает режим «любые IP». Если нужен полный список — переключите режим в «Настройках».", LogLevel.Warn);
+                        }
+                    }
+                    ZapretOps.WriteTextAtomic(f.Path, _editor.Text.Replace("\r\n", "\n").Replace("\n", "\r\n"));
+                    _dirty = false;
+                    UpdateInfo();
+                    Shell.Notify("Список сохранён: " + Path.GetFileName(f.Path) + ". Перезапустите bypass, чтобы применить.", LogLevel.Ok);
+                    return true;
                 }
 
                 int entries = 0;
@@ -501,17 +576,18 @@ namespace ZapretManager
                 if (entries == 0 && f.Path.EndsWith("list-general-user.txt", StringComparison.OrdinalIgnoreCase))
                 {
                     Shell.Notify("Список «Мои домены» нельзя сохранить пустым — winws.exe не запустится.", LogLevel.Error);
-                    return;
+                    return false;
                 }
-                Directory.CreateDirectory(Path.GetDirectoryName(f.Path));
-                File.WriteAllText(f.Path, _editor.Text.Replace("\r\n", "\n").Replace("\n", "\r\n"), new UTF8Encoding(false));
+                ZapretOps.WriteTextAtomic(f.Path, _editor.Text.Replace("\r\n", "\n").Replace("\n", "\r\n"));
                 _dirty = false;
                 UpdateInfo();
                 Shell.Notify("Список сохранён: " + Path.GetFileName(f.Path) + ". Перезапустите bypass, чтобы применить.", LogLevel.Ok);
+                return true;
             }
             catch (Exception ex)
             {
                 Shell.Notify("Не удалось сохранить список: " + ex.Message, LogLevel.Error);
+                return false;
             }
         }
 
@@ -545,8 +621,21 @@ namespace ZapretManager
                 string.Format("Ваши строки ({0}) будут перенесены в {1} — этот файл обновление никогда не перезаписывает. Из официального списка они исчезнут.",
                     _changes.Added.Count, userList), "Перенести")) return;
             int moved = _changes.MoveAddedToUserList(target);
+            if (moved < 0)
+            {
+                Shell.Notify("Не удалось перенести добавления в личный список — официальный файл не изменён.", LogLevel.Error);
+                return;
+            }
             string text = ListChanges.ComposeText(SplitOfficial(_editor.Text), new List<string>());
-            try { File.WriteAllText(f.Path, text, new UTF8Encoding(false)); } catch { }
+            try
+            {
+                ZapretOps.WriteTextAtomic(f.Path, text);
+            }
+            catch (Exception ex)
+            {
+                Shell.Notify("Не удалось сохранить официальный список: " + ex.Message, LogLevel.Error);
+                return;
+            }
             _loading = true;
             _editor.Text = text.Replace("\r\n", "\n").Replace("\n", "\r\n");
             _loading = false;
@@ -574,9 +663,23 @@ namespace ZapretManager
                 "Текущее содержимое станет «официальной версией»: пометки «добавлено/удалено» сбросятся, и при следующем обновлении эти строки больше не будут переноситься отдельно.",
                 "Принять")) return;
             _changes.AcceptAsOfficial(_editor.Text);
+            if (_changes.LastError.Length > 0)
+            {
+                Shell.Notify("Не удалось зафиксировать список: " + _changes.LastError, LogLevel.Error);
+                return;
+            }
             _loading = true;
-            _editor.Text = File.ReadAllText(f.Path, Encoding.UTF8).Replace("\r\n", "\n").Replace("\n", "\r\n");
-            _loading = false;
+            try
+            {
+                _editor.Text = TextFile.Read(f.Path).Replace("\r\n", "\n").Replace("\n", "\r\n");
+            }
+            catch (Exception ex)
+            {
+                _loading = false;
+                Shell.Notify("Список зафиксирован, но перечитать файл не удалось: " + ex.Message, LogLevel.Warn);
+                return;
+            }
+            finally { _loading = false; }
             _changes = ListChanges.Load(f.Path, AppPaths.DataDir);
             ApplyMarks();
             UpdateChangesCard();
@@ -590,13 +693,13 @@ namespace ZapretManager
             string text = PromptPaste();
             if (text == null) return;
             int skipped;
-            List<string> hosts = ListAudit.ParseBatch(text, out skipped);
+            List<string> hosts = ListAudit.ParseBatch(text, IsIpFile(SelectedFile()), out skipped);
             if (hosts.Count == 0)
             {
                 Shell.Notify("Не нашёл ни одного домена во вставленном тексте (пропущено " + skipped + ").", LogLevel.Warn);
                 return;
             }
-            List<string> existing = new List<string>();
+            HashSet<string> existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (string line in _editor.Text.Replace("\r\n", "\n").Split('\n'))
             {
                 string norm = ListAudit.Normalize(line);
@@ -607,13 +710,7 @@ namespace ZapretManager
             if (sb.Length > 0 && !sb.ToString().EndsWith("\n")) sb.Append("\n");
             foreach (string host in hosts)
             {
-                bool dup = false;
-                foreach (string e in existing)
-                {
-                    if (string.Equals(e, host, StringComparison.OrdinalIgnoreCase)) { dup = true; break; }
-                }
-                if (dup) { skipped++; continue; }
-                existing.Add(host);
+                if (!existing.Add(host)) { skipped++; continue; }
                 sb.Append(host).Append("\n");
                 added++;
             }
@@ -634,7 +731,7 @@ namespace ZapretManager
         private void TidyList()
         {
             int changed, removed;
-            string text = ListAudit.Tidy(_editor.Text, out changed, out removed);
+            string text = ListAudit.Tidy(_editor.Text, IsIpFile(SelectedFile()), out changed, out removed);
             if (changed == 0 && removed == 0)
             {
                 Shell.Notify("Список и так в порядке: ничего чистить не нужно.", LogLevel.Ok);
@@ -715,7 +812,8 @@ namespace ZapretManager
         private void AddEmptyLine()
         {
             int caret = _editor.SelectionStart;
-            string insert = (caret > 0 ? "\r\n" : "") + "domain.example.com";
+            string sample = IsIpFile(SelectedFile()) ? "203.0.113.113/32" : "domain.example.com";
+            string insert = (caret > 0 ? "\r\n" : "") + sample;
             _editor.Text = _editor.Text.Substring(0, caret) + insert + _editor.Text.Substring(caret);
             _editor.SelectionStart = caret + insert.Length;
             _editor.Focus();
@@ -745,8 +843,7 @@ namespace ZapretManager
 
         public override void OnShow()
         {
-            if (_files.Count == 0 && Shell.Install != null && Shell.Install.IsValid) BuildFileList();
-            if (!string.IsNullOrEmpty(AppInfo.ShotList))
+            if (_files.Count == 0 && Shell.Install != null && Shell.Install.IsValid) BuildFileList();            if (!string.IsNullOrEmpty(AppInfo.ShotList))
             {
                 for (int i = 0; i < _files.Count; i++)
                 {
@@ -758,6 +855,16 @@ namespace ZapretManager
                 }
             }
             RefreshState();
+        }
+
+        public override void OnDispose()
+        {
+            if (_markTimer != null)
+            {
+                _markTimer.Stop();
+                _markTimer.Dispose();
+                _markTimer = null;
+            }
         }
 
         public override void RefreshState()

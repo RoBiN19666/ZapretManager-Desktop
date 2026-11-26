@@ -74,19 +74,19 @@ namespace ZapretManager
             _warnText = WrapLabel("", Theme.Small, Theme.TextDim, 22, 40, DesignWidth - 60);
             _warnCard.Controls.Add(_warnText);
 
-            RoundButton fix = Btn("Переустановить службу из этой папки", ButtonKind.Secondary, 290);
-            fix.Location = new Point(22, 88);
-            fix.Click += delegate { ReinstallServiceHere(); };
-            _warnCard.Controls.Add(fix);
+            _warnFix = Btn("Переустановить службу из этой папки", ButtonKind.Secondary, 290);
+            _warnFix.Location = new Point(22, 88);
+            _warnFix.Click += delegate { ReinstallServiceHere(); };
+            _warnCard.Controls.Add(_warnFix);
 
-            RoundButton open = Btn("Открыть папку службы", ButtonKind.Ghost, 180);
-            open.Location = new Point(324, 88);
-            open.Click += delegate
+            _warnOpen = Btn("Открыть папку службы", ButtonKind.Ghost, 180);
+            _warnOpen.Location = new Point(324, 88);
+            _warnOpen.Click += delegate
             {
                 string root = Shell.Ops.ServiceInstallRoot;
                 if (!string.IsNullOrEmpty(root)) Native.OpenFolder(root);
             };
-            _warnCard.Controls.Add(open);
+            _warnCard.Controls.Add(_warnOpen);
             _warnCard.Visible = false;
         }
 
@@ -110,10 +110,13 @@ namespace ZapretManager
             if (s == null) return;
             if (!Dlg.Confirm(this.View.FindForm(), "Переустановить службу?",
                 string.Format("Служба zapret будет пересоздана из папки «{0}» со стратегией «{1}».", Shell.Install.Root, s.Name), "Переустановить")) return;
-            bool ok;
-            string msg = Shell.Ops.InstallService(s, out ok);
-            Shell.Notify(msg, ok ? LogLevel.Ok : LogLevel.Error);
-            Shell.RefreshState(false);
+            bool ok = false;
+            string msg = "";
+            Shell.RunOperation(delegate() { msg = Shell.Ops.InstallService(s, out ok); return msg; }, delegate(string message)
+            {
+                Shell.Notify(message, ok ? LogLevel.Ok : LogLevel.Error);
+                Shell.RefreshState(false);
+            });
         }
 
         private void BuildInstallCard()
@@ -242,16 +245,23 @@ namespace ZapretManager
             }
             if (st.Running)
             {
-                Shell.Notify(TgProxy.Stop(), LogLevel.Info);
+                Shell.RunOperation(delegate() { return TgProxy.Stop(st.Dir); }, delegate(string message)
+                {
+                    Shell.Notify(message, LogLevel.Info);
+                    Shell.RefreshState(false);
+                    RefreshState();
+                });
             }
             else
             {
-                bool ok;
-                string msg = TgProxy.Start(Shell.Config, out ok);
-                Shell.Notify(msg, ok ? LogLevel.Ok : LogLevel.Error);
+                bool ok = false;
+                Shell.RunOperation(delegate() { return TgProxy.Start(Shell.Config, out ok); }, delegate(string message)
+                {
+                    Shell.Notify(message, ok ? LogLevel.Ok : LogLevel.Error);
+                    Shell.RefreshState(false);
+                    RefreshState();
+                });
             }
-            Shell.RefreshState(false);
-            RefreshState();
         }
         private void BuildQuickCard()
         {
@@ -274,9 +284,12 @@ namespace ZapretManager
             {
                 if (_suppress) return;
                 string mode = _tgIpSet.Checked ? "loaded" : "none";
-                string msg = Shell.Ops.SetIpsetMode(mode);
-                Shell.Notify(msg + " Перезапустите bypass.", LogLevel.Ok);
-                Shell.RefreshState(false);
+                Shell.RunOperation(delegate() { return Shell.Ops.SetIpsetMode(mode); }, delegate(string message)
+                {
+                    bool failed = message.StartsWith("Ошибка") || message.StartsWith("Нет ") || message.StartsWith("Неизвестный");
+                    Shell.Notify(message + (failed ? "" : " Перезапустите bypass."), failed ? LogLevel.Error : LogLevel.Ok);
+                    Shell.RefreshState(false);
+                });
             });
 
             _tgAutoUpdate = AddToggleRow(_quickCard, 146, "Авто-проверка обновлений", "Проверять новые версии при запуске стратегий", false, delegate
@@ -332,12 +345,23 @@ namespace ZapretManager
         private void OnLog(LogLevel level, string text)
         {
             if (_log == null) return;
-            _log.Append(level, text);
+            // Log.Write может вызываться из фонового потока: RichTextBox трогаем только в UI.
+            Shell.Ui(delegate()
+            {
+                if (_log == null || _log.IsDisposed) return;
+                _log.Append(level, text);
+            });
         }
 
         public override void OnShow()
         {
             RefreshState();
+        }
+
+        public override void OnDispose()
+        {
+            Shell.UpdateStateChanged -= RefreshState;
+            Log.Appended -= OnLog;
         }
 
         public override void RefreshState()
@@ -368,6 +392,7 @@ namespace ZapretManager
                 }
                 _warnText.Height = TextRenderer.MeasureText(_warnText.Text, _warnText.Font, new Size(Math.Max(100, _warnText.Width), 2000), TextFormatFlags.WordBreak).Height + 6;
                 _warnText.Width = DesignWidth - 60;
+                LayoutWarnCard();
                 _warnCard.Invalidate();
             }
             View.Stack.PerformLayout();
@@ -492,17 +517,22 @@ namespace ZapretManager
             if (st != null && st.WinwsRunning)
             {
                 if (!Shell.RequireAdmin("Остановка")) return;
-                string msg = Shell.Ops.Stop();
-                Shell.Notify(msg, LogLevel.Ok);
-                Shell.RefreshState(false);
+                Shell.RunOperation(delegate() { return Shell.Ops.Stop(); }, delegate(string message)
+                {
+                    Shell.Notify(message, LogLevel.Ok);
+                    Shell.RefreshState(false);
+                });
                 return;
             }
             if (!Shell.RequireAdmin("Запуск")) return;
             StrategyDef s = CurrentOrDefaultStrategy();
             if (s == null) { Shell.Notify("Стратегии не найдены в папке zapret.", LogLevel.Error); return; }
-            ZapretOps.StartResult r = Shell.Ops.Start(s);
-            Shell.Notify(r.Message, r.Ok ? LogLevel.Ok : LogLevel.Error);
-            Shell.RefreshState(false);
+            ZapretOps.StartResult r = null;
+            Shell.RunOperation(delegate() { r = Shell.Ops.Start(s); return r.Message; }, delegate(string message)
+            {
+                Shell.Notify(message, r != null && r.Ok ? LogLevel.Ok : LogLevel.Error);
+                Shell.RefreshState(false);
+            });
         }
 
         private void RestartBypass()
@@ -510,9 +540,11 @@ namespace ZapretManager
             if (!Shell.RequireAdmin("Перезапуск")) return;
             StrategyDef s = CurrentOrDefaultStrategy();
             if (s == null) { Shell.Notify("Стратегии не найдены.", LogLevel.Error); return; }
-            string msg = Shell.Ops.Restart(s);
-            Shell.Notify(msg, LogLevel.Ok);
-            Shell.RefreshState(false);
+            Shell.RunOperation(delegate() { return Shell.Ops.Restart(s); }, delegate(string message)
+            {
+                Shell.Notify(message, LogLevel.Ok);
+                Shell.RefreshState(false);
+            });
         }
 
         private void CheckUpdates()

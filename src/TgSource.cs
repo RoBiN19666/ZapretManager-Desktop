@@ -127,6 +127,12 @@ namespace ZapretManager
 
         private static string Run(string exe, string arguments, int timeoutMs)
         {
+            return RunProcess(exe, arguments, timeoutMs, "", "");
+        }
+
+        /// <summary>Запуск процесса с асинхронным чтением обоих потоков (без дедлока на pip).</summary>
+        private static string RunProcess(string exe, string arguments, int timeoutMs, string workingDir, string pythonPath)
+        {
             try
             {
                 ProcessStartInfo psi = new ProcessStartInfo(exe, arguments);
@@ -134,24 +140,38 @@ namespace ZapretManager
                 psi.CreateNoWindow = true;
                 psi.RedirectStandardOutput = true;
                 psi.RedirectStandardError = true;
-                using (Process p = Process.Start(psi))
+                if (!string.IsNullOrEmpty(workingDir)) psi.WorkingDirectory = workingDir;
+                if (!string.IsNullOrEmpty(pythonPath)) psi.EnvironmentVariables["PYTHONPATH"] = pythonPath;
+
+                StringBuilder output = new StringBuilder();
+                object gate = new object();
+                using (Process p = new Process())
                 {
-                    string output = "";
-                    Thread reader = new Thread(delegate()
+                    p.StartInfo = psi;
+                    p.OutputDataReceived += delegate(object s, DataReceivedEventArgs e)
                     {
-                        try { output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd(); }
-                        catch { }
-                    });
-                    reader.IsBackground = true;
-                    reader.Start();
+                        if (e.Data == null) return;
+                        lock (gate) output.AppendLine(e.Data);
+                    };
+                    p.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e)
+                    {
+                        if (e.Data == null) return;
+                        lock (gate) output.AppendLine(e.Data);
+                    };
+                    p.Start();
+                    p.BeginOutputReadLine();
+                    p.BeginErrorReadLine();
                     if (!p.WaitForExit(timeoutMs))
                     {
                         try { p.Kill(); } catch { }
-                        return output;
+                        try { p.WaitForExit(2000); } catch { }
                     }
-                    reader.Join(1500);
-                    return output;
+                    else
+                    {
+                        p.WaitForExit();
+                    }
                 }
+                lock (gate) return output.ToString().Trim();
             }
             catch (Exception ex)
             {
@@ -159,17 +179,14 @@ namespace ZapretManager
             }
         }
 
-        /// <summary>Скачивает исходники, создаёт venv и ставит зависимости.</summary>
+        /// <summary>Скачивает исходники, портативный Python и ставит зависимости (системный Python не нужен).</summary>
         public static string Prepare(string tag, Action<int, string> progress, out bool ok)
         {
             ok = false;
+            TgProxy.InvalidateCache();
             try
             {
-                string python = FindPython();
-                if (python == null)
-                    return "Python 3 не найден. Установите Python с python.org (галочка «Add python.exe to PATH») и повторите.";
-
-                if (progress != null) progress(3, "Python: " + python);
+                string python = "";
                 string refName = string.IsNullOrEmpty(tag) ? "main" : tag;
                 string zip = Path.Combine(Path.GetTempPath(), "tgws-" + refName + ".zip");
                 string url = string.Format("https://github.com/{0}/archive/refs/{1}.zip", Repo,
@@ -181,9 +198,12 @@ namespace ZapretManager
                     if (progress != null) progress(percent < 0 ? 15 : 8 + (int)(percent * 0.22), "Скачивание исходников: " + (percent < 0 ? 0 : percent) + "%");
                 }, 180000);
 
-                if (Directory.Exists(RootDir)) Directory.Delete(RootDir, true);
-                Directory.CreateDirectory(RootDir);
-                string tmp = Path.Combine(RootDir, "unpack");
+                // Сначала распаковываем в staging: старый рабочий тихий режим не трогаем,
+                // пока новый архив не проверен.
+                string staging = RootDir + ".new";
+                if (Directory.Exists(staging)) Directory.Delete(staging, true);
+                Directory.CreateDirectory(staging);
+                string tmp = Path.Combine(staging, "unpack");
                 Directory.CreateDirectory(tmp);
 
                 if (progress != null) progress(32, "Распаковка…");
@@ -193,9 +213,16 @@ namespace ZapretManager
                 {
                     if (File.Exists(Path.Combine(dir, @"proxy\tg_ws_proxy.py"))) { found = dir; break; }
                 }
-                if (found == null) return "В архиве не найден proxy/tg_ws_proxy.py — похоже, изменилась структура репозитория.";
+                if (found == null)
+                {
+                    try { Directory.Delete(staging, true); } catch { }
+                    return "В архиве не найден proxy/tg_ws_proxy.py — похоже, изменилась структура репозитория.";
+                }
+
+                if (Directory.Exists(RootDir)) Directory.Delete(RootDir, true);
+                Directory.CreateDirectory(RootDir);
                 Directory.Move(found, SrcDir);
-                try { Directory.Delete(tmp, true); } catch { }
+                try { Directory.Delete(staging, true); } catch { }
                 try { File.Delete(zip); } catch { }
 
                 if (progress != null) progress(40, "Готовим портативный Python " + PythonVersion + " (≈10 МБ)…");
@@ -203,7 +230,7 @@ namespace ZapretManager
                 if (portableError.Length > 0) return portableError;
 
                 if (progress != null) progress(70, "Устанавливаем зависимости (httpx, certifi, cryptography)…");
-                if (!File.Exists(PortableSitePackages) || !HasPackages(python)) 
+                if (!Directory.Exists(PortableSitePackages) || !HasPackages(python))
                 {
                     string pipError = InstallPackages(python, progress);
                     if (pipError.Length > 0) return pipError;
@@ -211,7 +238,7 @@ namespace ZapretManager
 
                 if (progress != null) progress(92, "Проверяем запуск…");
                 string check = Run(PortableConsole, "\"" + ScriptPath + "\" --help", 40000, PortablePythonPath());
-                if (check.IndexOf("usage", StringComparison.OrdinalIgnoreCase) < 0 && check.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0)
+                if (check.Trim().Length == 0 || (check.IndexOf("usage", StringComparison.OrdinalIgnoreCase) < 0 && check.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0))
                     return "Прокси не запускается из исходников: " + Trim(check);
 
                 File.WriteAllText(MarkerPath,
@@ -321,33 +348,7 @@ namespace ZapretManager
 
         private static string Run(string exe, string arguments, int timeoutMs, string pythonPath)
         {
-            try
-            {
-                ProcessStartInfo psi = new ProcessStartInfo(exe, arguments);
-                psi.UseShellExecute = false;
-                psi.CreateNoWindow = true;
-                psi.WorkingDirectory = PortableDir;
-                psi.RedirectStandardOutput = true;
-                psi.RedirectStandardError = true;
-                if (!string.IsNullOrEmpty(pythonPath)) psi.EnvironmentVariables["PYTHONPATH"] = pythonPath;
-                using (Process p = Process.Start(psi))
-                {
-                    string output = "";
-                    Thread reader = new Thread(delegate()
-                    {
-                        try { output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd(); } catch { }
-                    });
-                    reader.IsBackground = true;
-                    reader.Start();
-                    if (!p.WaitForExit(timeoutMs)) { try { p.Kill(); } catch { } return output; }
-                    reader.Join(2000);
-                    return output;
-                }
-            }
-            catch (Exception ex)
-            {
-                return "ERR: " + ex.Message;
-            }
+            return RunProcess(exe, arguments, timeoutMs, PortableDir, pythonPath);
         }
 
         private static string Trim(string text)
@@ -402,16 +403,23 @@ namespace ZapretManager
 
             try
             {
-                // Запускаем системным pythonw, подсовывая пакеты из venv:
-                // так получается один процесс, а не лаунчер venv + интерпретатор.
-                string python = BasePython();
-                string pythonw = python;
-                string dir = Path.GetDirectoryName(python);
-                string candidate = Path.Combine(dir, "pythonw.exe");
-                if (File.Exists(candidate)) pythonw = candidate;
-                if (!File.Exists(pythonw))
+                // Портативный pythonw — основной вариант; системный Python нужен только
+                // для совместимости со старыми установками.
+                string pythonw;
+                if (File.Exists(PortablePython)) pythonw = PortablePython;
+                else if (File.Exists(VenvPython)) pythonw = VenvPython;
+                else
                 {
-                    pythonw = VenvPython;
+                    string python = BasePython();
+                    if (string.IsNullOrEmpty(python))
+                    {
+                        error = "Python не найден. Нажмите «Подготовить», чтобы скачать портативный Python.";
+                        return false;
+                    }
+                    pythonw = python;
+                    string dir = Path.GetDirectoryName(python);
+                    string candidate = string.IsNullOrEmpty(dir) ? "" : Path.Combine(dir, "pythonw.exe");
+                    if (!string.IsNullOrEmpty(candidate) && File.Exists(candidate)) pythonw = candidate;
                 }
 
                 ProcessStartInfo psi = new ProcessStartInfo(pythonw, args.ToString());
@@ -419,7 +427,9 @@ namespace ZapretManager
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
                 psi.WindowStyle = ProcessWindowStyle.Hidden;
-                string sitePackages = Path.Combine(VenvDir, @"Lib\site-packages");
+                string sitePackages = Directory.Exists(PortableSitePackages)
+                    ? PortableSitePackages
+                    : Path.Combine(VenvDir, @"Lib\site-packages");
                 if (Directory.Exists(sitePackages))
                 {
                     string oldPath = Environment.GetEnvironmentVariable("PYTHONPATH") ?? "";

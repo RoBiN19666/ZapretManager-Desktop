@@ -17,6 +17,35 @@ namespace ZapretManager
 {
     public enum LogLevel { Info, Ok, Warn, Error }
 
+    /// <summary>Чтение текстовых файлов с автоопределением UTF-8/UTF-16/CP1251.</summary>
+    public static class TextFile
+    {
+        public static string Read(string path)
+        {
+            byte[] bytes = File.ReadAllBytes(path);
+            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+                return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+            if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+                return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+            if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+                return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
+            try
+            {
+                return new UTF8Encoding(false, true).GetString(bytes);
+            }
+            catch
+            {
+                try { return Encoding.GetEncoding(1251).GetString(bytes); }
+                catch { return Encoding.UTF8.GetString(bytes); }
+            }
+        }
+
+        public static string[] ReadLines(string path)
+        {
+            return Read(path).Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        }
+    }
+
     /// <summary>Разделяемый журнал событий приложения.</summary>
     public static class Log
     {
@@ -165,7 +194,9 @@ namespace ZapretManager
         {
             try
             {
-                if (Directory.Exists(path)) Process.Start("explorer.exe", "\"" + path + "\"");
+                path = SafePath(path);
+                if (path.Length > 0 && Directory.Exists(path))
+                    using (Process p = Process.Start("explorer.exe", "\"" + path + "\"")) { }
             }
             catch (Exception ex) { Log.Error("Не удалось открыть папку", ex); }
         }
@@ -174,15 +205,30 @@ namespace ZapretManager
         {
             try
             {
-                if (File.Exists(file)) Process.Start("explorer.exe", "/select,\"" + file + "\"");
-                else OpenFolder(Path.GetDirectoryName(file));
+                file = SafePath(file);
+                if (file.Length > 0 && File.Exists(file))
+                    using (Process p = Process.Start("explorer.exe", "/select,\"" + file + "\"")) { }
+                else if (file.Length > 0) OpenFolder(Path.GetDirectoryName(file));
             }
             catch (Exception ex) { Log.Error("Не удалось открыть проводник", ex); }
         }
 
+        private static string SafePath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return "";
+            path = path.Replace("\"", "").Replace("\r", "").Replace("\n", "").Trim();
+            try
+            {
+                string full = Path.GetFullPath(path);
+                if (full.Length > 3) full = full.TrimEnd('\\');
+                return full;
+            }
+            catch { return ""; }
+        }
+
         public static void OpenUrl(string url)
         {
-            try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+            try { using (Process p = Process.Start(new ProcessStartInfo(url) { UseShellExecute = true })) { } }
             catch (Exception ex) { Log.Error("Не удалось открыть ссылку", ex); }
         }
     }
@@ -214,12 +260,43 @@ namespace ZapretManager
                 psi.RedirectStandardOutput = true;
                 psi.RedirectStandardError = true;
                 try { psi.StandardOutputEncoding = Encoding.GetEncoding(866); psi.StandardErrorEncoding = Encoding.GetEncoding(866); } catch { }
-                using (Process p = Process.Start(psi))
+
+                StringBuilder stdout = new StringBuilder();
+                StringBuilder stderr = new StringBuilder();
+                object gate = new object();
+                using (Process p = new Process())
                 {
-                    r.StdOut = p.StandardOutput.ReadToEnd();
-                    r.StdErr = p.StandardError.ReadToEnd();
-                    if (!p.WaitForExit(timeoutMs)) { r.TimedOut = true; try { p.Kill(); } catch { } }
-                    else r.ExitCode = p.ExitCode;
+                    p.StartInfo = psi;
+                    p.OutputDataReceived += delegate(object s, DataReceivedEventArgs e)
+                    {
+                        if (e.Data == null) return;
+                        lock (gate) stdout.AppendLine(e.Data);
+                    };
+                    p.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e)
+                    {
+                        if (e.Data == null) return;
+                        lock (gate) stderr.AppendLine(e.Data);
+                    };
+                    p.Start();
+                    p.BeginOutputReadLine();
+                    p.BeginErrorReadLine();
+                    if (!p.WaitForExit(timeoutMs))
+                    {
+                        r.TimedOut = true;
+                        try { p.Kill(); } catch { }
+                        try { p.WaitForExit(2000); } catch { }
+                    }
+                    else
+                    {
+                        // второй WaitForExit без таймаута дожидается завершения async-чтения
+                        p.WaitForExit();
+                    }
+                    try { r.ExitCode = p.ExitCode; } catch { }
+                }
+                lock (gate)
+                {
+                    r.StdOut = stdout.ToString().TrimEnd();
+                    r.StdErr = stderr.ToString().TrimEnd();
                 }
             }
             catch (Exception ex)
@@ -520,7 +597,7 @@ namespace ZapretManager
             {
                 if (File.Exists(path))
                 {
-                    foreach (string raw in File.ReadAllLines(path, Encoding.UTF8))
+                    foreach (string raw in TextFile.ReadLines(path))
                     {
                         string line = raw.Trim();
                         if (line.Length == 0 || line.StartsWith("#") || line.StartsWith("[") || line.StartsWith(";")) continue;
@@ -545,7 +622,7 @@ namespace ZapretManager
                 List<string> keys = new List<string>(_values.Keys);
                 keys.Sort(StringComparer.OrdinalIgnoreCase);
                 foreach (string k in keys) sb.AppendLine(k + "=" + _values[k]);
-                File.WriteAllText(Path, sb.ToString(), new UTF8Encoding(true));
+                ZapretOps.WriteTextAtomic(Path, sb.ToString());
             }
             catch (Exception ex) { Log.Error("Не удалось сохранить manager.ini", ex); }
         }
@@ -795,22 +872,41 @@ namespace ZapretManager
                 {
                     string dir = Path.Combine(Path.GetTempPath(), name);
                     if (!Directory.Exists(dir)) continue;
-                    foreach (string file in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
-                    {
-                        try
-                        {
-                            FileInfo fi = new FileInfo(file);
-                            if (fi.LastWriteTime > limit) continue;
-                            long size = fi.Length;
-                            fi.Delete();
-                            freed += size;
-                        }
-                        catch { }
-                    }
+                    CleanTempDir(dir, limit, ref freed);
                 }
             }
             catch { }
             return freed;
+        }
+
+        /// <summary>Рекурсивная чистка, не заходящая в junction/symlink (защита от подмены %TEMP%).</summary>
+        private static void CleanTempDir(string dir, DateTime limit, ref long freed)
+        {
+            try
+            {
+                foreach (string sub in Directory.GetDirectories(dir))
+                {
+                    try
+                    {
+                        if ((File.GetAttributes(sub) & FileAttributes.ReparsePoint) != 0) continue;
+                    }
+                    catch { continue; }
+                    CleanTempDir(sub, limit, ref freed);
+                }
+                foreach (string file in Directory.GetFiles(dir))
+                {
+                    try
+                    {
+                        FileInfo fi = new FileInfo(file);
+                        if (fi.LastWriteTime > limit) continue;
+                        long size = fi.Length;
+                        fi.Delete();
+                        freed += size;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
         }
 
         public static string FormatSize(long bytes)
@@ -920,12 +1016,25 @@ namespace ZapretManager
             catch { return false; }
         }
 
+        /// <summary>Полный путь без завершающего «\», но корень диска (C:\) сохраняется.</summary>
+        public static string NormalizeRoot(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return "";
+            string full = Path.GetFullPath(path);
+            if (full.Length > 3) full = full.TrimEnd('\\');
+            return full;
+        }
+
         public static ZapretInstall Detect(string preferred)
         {
             List<string> candidates = new List<string>();
             if (!string.IsNullOrEmpty(preferred)) candidates.Add(preferred);
 
-            // 1. Папка рядом с exe — основной сценарий: exe кладут внутрь папки zapret.
+            // 1. Папка, из которой установлена действующая служба zapret, — самый надёжный источник.
+            string fromService = ServiceRootFromRegistry();
+            if (!string.IsNullOrEmpty(fromService)) candidates.Add(fromService);
+
+            // 2. Папка рядом с exe — основной сценарий: exe кладут внутрь папки zapret.
             string exeDir = AppPaths.ExeDir;
             candidates.Add(exeDir);
             try
@@ -942,10 +1051,6 @@ namespace ZapretManager
             }
             catch { }
 
-            // 2. Папка, из которой установлена действующая служба zapret.
-            string fromService = ServiceRootFromRegistry();
-            if (!string.IsNullOrEmpty(fromService)) candidates.Add(fromService);
-
             try
             {
                 DirectoryInfo parent = Directory.GetParent(exeDir);
@@ -960,7 +1065,7 @@ namespace ZapretManager
                 if (LooksValid(c))
                 {
                     ZapretInstall inst = new ZapretInstall();
-                    inst.Root = Path.GetFullPath(c).TrimEnd('\\');
+                    inst.Root = NormalizeRoot(c);
                     inst.Rescan();
                     return inst;
                 }
@@ -1051,7 +1156,9 @@ namespace ZapretManager
                 {
                     int j = i;
                     while (j < s.Length && char.IsDigit(s[j])) j++;
-                    sb.Append(int.Parse(s.Substring(i, j - i)).ToString("D6"));
+                    long num;
+                    if (!long.TryParse(s.Substring(i, j - i), out num)) num = 0;
+                    sb.Append(num.ToString("D12"));
                     i = j;
                 }
                 else
@@ -1143,7 +1250,7 @@ namespace ZapretManager
             {
                 if (File.Exists(ServiceBat))
                 {
-                    string text = File.ReadAllText(ServiceBat, Encoding.UTF8);
+                    string text = TextFile.Read(ServiceBat);
                     Match m = Regex.Match(text, "LOCAL_VERSION\\s*=\\s*\"?([0-9][0-9\\.a-zA-Z]*)");
                     if (m.Success && m.Groups[1].Value.Length > 0)
                     {
@@ -1159,7 +1266,7 @@ namespace ZapretManager
                 try
                 {
                     if (!File.Exists(file)) continue;
-                    Match m = Regex.Match(File.ReadAllText(file, Encoding.UTF8), "[0-9]+(\\.[0-9]+)+[a-zA-Z]?");
+                    Match m = Regex.Match(TextFile.Read(file), "[0-9]+(\\.[0-9]+)+[a-zA-Z]?");
                     if (m.Success)
                     {
                         VersionSource = Path.GetFileName(file);
@@ -1203,7 +1310,7 @@ namespace ZapretManager
             error = null;
             string path = strategy.File;
             string[] lines;
-            try { lines = File.ReadAllLines(path, Encoding.UTF8); }
+            try { lines = TextFile.ReadLines(path); }
             catch (Exception ex) { error = "Не удалось прочитать файл стратегии: " + ex.Message; return null; }
 
             Dictionary<string, string> vars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1220,6 +1327,9 @@ namespace ZapretManager
             int idx = -1;
             for (int i = 0; i < lines.Length; i++)
             {
+                string candidate = lines[i].TrimStart();
+                if (candidate.StartsWith("::") || candidate.StartsWith("rem ", StringComparison.OrdinalIgnoreCase)
+                    || candidate.StartsWith("@rem ", StringComparison.OrdinalIgnoreCase)) continue;
                 if (lines[i].IndexOf("winws.exe", StringComparison.OrdinalIgnoreCase) >= 0) { idx = i; break; }
             }
             if (idx < 0) { error = "В файле нет строки запуска winws.exe"; return null; }
@@ -1344,6 +1454,8 @@ namespace ZapretManager
     public sealed class ZapretOps
     {
         private static bool _tcpChecked;
+        private string _matchCacheKey;
+        private string _matchCacheValue;
         public ZapretInstall Install;
 
         public ZapretOps(ZapretInstall install) { Install = install; }
@@ -1471,20 +1583,30 @@ namespace ZapretManager
         public string MatchStrategy(string commandLine)
         {
             if (string.IsNullOrEmpty(commandLine)) return "";
+            string cacheKey = Install.Root + "|" + Install.Strategies.Count + "|" + commandLine;
+            if (string.Equals(cacheKey, _matchCacheKey, StringComparison.Ordinal)) return _matchCacheValue ?? "";
+
             string norm = Normalize(commandLine);
+            GameFilterState gf = GameFilterState.Load(Install.Root);
+            string matched = "";
             foreach (StrategyDef s in Install.Strategies)
             {
                 try
                 {
                     string err;
-                    GameFilterState gf = GameFilterState.Load(Install.Root);
                     string[] argv = BatParser.GetArgv(Install, s, gf, out err);
                     if (argv == null) continue;
-                    if (norm.EndsWith(Normalize(BatParser.BuildCommandLine(argv)))) return s.Name;
+                    if (norm.EndsWith(Normalize(BatParser.BuildCommandLine(argv))))
+                    {
+                        matched = s.Name;
+                        break;
+                    }
                 }
                 catch { }
             }
-            return "";
+            _matchCacheKey = cacheKey;
+            _matchCacheValue = matched;
+            return matched;
         }
 
         private static string Normalize(string s)
@@ -1519,6 +1641,42 @@ namespace ZapretManager
             public int Pid;
         }
 
+        /// <summary>Завершает только winws.exe, запущенный из папки этой установки.</summary>
+        public int KillWinws()
+        {
+            List<Proc.ProcInfo> procs = Proc.List("winws.exe");
+            bool anyCommandLine = false;
+            foreach (Proc.ProcInfo pi in procs) if (!string.IsNullOrEmpty(pi.CommandLine)) { anyCommandLine = true; break; }
+            if (procs.Count > 0 && !anyCommandLine)
+            {
+                // WMI не отдал командные строки — другого способа отличить чужие процессы нет.
+                Proc.KillAll("winws.exe");
+                return -1;
+            }
+
+            string root;
+            try { root = Path.GetFullPath(Install.Root).TrimEnd('\\') + "\\"; }
+            catch { return 0; }
+
+            int killed = 0;
+            foreach (Proc.ProcInfo pi in procs)
+            {
+                if (string.IsNullOrEmpty(pi.CommandLine)) continue;
+                if (pi.CommandLine.IndexOf(root, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                try
+                {
+                    using (Process p = Process.GetProcessById(pi.Pid))
+                    {
+                        p.Kill();
+                        p.WaitForExit(3000);
+                        killed++;
+                    }
+                }
+                catch { }
+            }
+            return killed;
+        }
+
         public StartResult Start(StrategyDef strategy)
         {
             StartResult res = new StartResult();
@@ -1533,11 +1691,16 @@ namespace ZapretManager
                 res.Message = "Служба zapret уже запущена. Сначала удалите службу, чтобы запускать стратегии вручную.";
                 return res;
             }
-            if (Proc.AnyRunning("winws.exe") || Proc.List("winws.exe").Count > 0)
+            if (Proc.AnyRunning("winws.exe"))
             {
-                Log.Info("Останавливаю текущий winws.exe перед запуском новой стратегии…");
-                Proc.KillAll("winws.exe");
+                Log.Info("Останавливаю winws.exe этой установки перед запуском новой стратегии…");
+                KillWinws();
                 Thread.Sleep(400);
+                if (Proc.AnyRunning("winws.exe"))
+                {
+                    res.Message = "Найден winws.exe из другой установки. Закройте его вручную и повторите.";
+                    return res;
+                }
             }
 
             GameFilterState gf = GameFilterState.Load(Install.Root);
@@ -1551,7 +1714,13 @@ namespace ZapretManager
             string cmd = BatParser.BuildCommandLine(argv);
             try
             {
-                if (!_tcpChecked) { EnableTcpTimestamps(); _tcpChecked = true; }
+                bool tcpWasOff = false;
+                if (!_tcpChecked)
+                {
+                    tcpWasOff = TcpTimestampsEnabled() == false;
+                    EnableTcpTimestamps();
+                    _tcpChecked = true;
+                }
                 Proc.ClearOutput();
                 Process p = Proc.StartCaptured(Install.WinwsExe, cmd, Install.BinDir);
                 Thread.Sleep(1200);
@@ -1572,6 +1741,21 @@ namespace ZapretManager
                     }
                 }
                 catch { }
+                // Контрольная проверка: winws иногда падает не сразу, а через 1.5-2 с
+                // (занятый WinDivert, битый список). Не рапортуем успех слишком рано.
+                Thread.Sleep(800);
+                try
+                {
+                    if (p.HasExited)
+                    {
+                        string output = Proc.RecentOutput;
+                        res.Message = string.Format("winws.exe завершился через пару секунд (код {0}).{1}",
+                            p.ExitCode, output.Length > 0 ? " Вывод: " + Shorten(output, 400) : " Проверьте WinDivert и списки.");
+                        Log.Error(res.Message);
+                        return res;
+                    }
+                }
+                catch { }
                 string early = Proc.RecentOutput;
                 if (early.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0 || early.IndexOf("failed", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
@@ -1579,7 +1763,8 @@ namespace ZapretManager
                 }
                 res.Ok = true;
                 res.Pid = p.Id;
-                res.Message = string.Format("Стратегия «{0}» запущена (PID {1}).", strategy.Name, p.Id);
+                res.Message = string.Format("Стратегия «{0}» запущена (PID {1}).", strategy.Name, p.Id)
+                    + (tcpWasOff ? " TCP timestamps были выключены и включены (системная настройка)." : "");
                 Log.Ok(res.Message);
                 return res;
             }
@@ -1604,18 +1789,55 @@ namespace ZapretManager
             string msg = "";
             if (svc.Installed && svc.Status == "работает")
             {
-                Proc.Run("sc.exe", "stop zapret", 20000);
-                msg += "Служба zapret остановлена. ";
-                Log.Info("Служба zapret остановлена.");
+                ProcResult stop = Proc.Run("sc.exe", "stop zapret", 20000);
+                if (WaitServiceStatus("zapret", "остановлена", 15000))
+                {
+                    msg += "Служба zapret остановлена. ";
+                    Log.Info("Служба zapret остановлена.");
+                }
+                else
+                {
+                    msg += "Не удалось дождаться остановки службы zapret: " + stop.All + " ";
+                    Log.Warn("Служба zapret не остановилась: " + stop.All);
+                }
             }
-            if (Proc.List("winws.exe").Count > 0)
+            if (Proc.AnyRunning("winws.exe"))
             {
-                Proc.KillAll("winws.exe");
-                msg += "Процесс winws.exe завершён.";
-                Log.Ok("Процесс winws.exe завершён.");
+                int killed = KillWinws();
+                if (killed != 0)
+                {
+                    msg += "Процесс winws.exe завершён.";
+                    Log.Ok("Процесс winws.exe завершён.");
+                }
+                else if (Proc.AnyRunning("winws.exe"))
+                {
+                    msg += "Остался winws.exe из другой установки — он не тронут.";
+                }
             }
             if (msg.Length == 0) msg = "Bypass уже остановлен.";
             return msg.Trim();
+        }
+
+        private static bool WaitServiceStatus(string name, string status, int timeoutMs)
+        {
+            DateTime end = DateTime.Now.AddMilliseconds(timeoutMs);
+            while (true)
+            {
+                if (string.Equals(QueryService(name).Status, status, StringComparison.OrdinalIgnoreCase)) return true;
+                if (DateTime.Now >= end) return false;
+                Thread.Sleep(300);
+            }
+        }
+
+        private static bool WaitServiceGone(string name, int timeoutMs)
+        {
+            DateTime end = DateTime.Now.AddMilliseconds(timeoutMs);
+            while (true)
+            {
+                if (!QueryService(name).Installed) return true;
+                if (DateTime.Now >= end) return false;
+                Thread.Sleep(300);
+            }
         }
 
         public string Restart(StrategyDef strategy)
@@ -1630,26 +1852,16 @@ namespace ZapretManager
         {
             try
             {
-                // chcp 437 — иначе netsh печатает подписи на языке системы и проверить состояние нельзя
-                ProcResult r = Proc.Run("cmd.exe", "/c chcp 437 >nul & netsh interface tcp show global", 10000);
-                string outText = r.All.ToLowerInvariant();
-                int idx = outText.IndexOf("timestamps", StringComparison.Ordinal);
-                if (idx >= 0)
-                {
-                    int colon = outText.IndexOf(':', idx);
-                    if (colon > 0)
-                    {
-                        string value = outText.Substring(colon + 1).Trim();
-                        if (value.StartsWith("enabled")) return true;
-                    }
-                }
+                // Уже включены — не трогаем системную настройку повторно.
+                if (TcpTimestampsEnabled() == true) return true;
+
                 ProcResult set = Proc.Run("cmd.exe", "/c chcp 437 >nul & netsh interface tcp set global timestamps=enabled", 10000);
                 if (set.ExitCode != 0)
                 {
                     Log.Warn("netsh timestamps=enabled: " + set.All);
                     return false;
                 }
-                return true;
+                return TcpTimestampsEnabled() != false;
             }
             catch (Exception ex)
             {
@@ -1666,11 +1878,14 @@ namespace ZapretManager
                 ProcResult r = Proc.Run("cmd.exe", "/c chcp 437 >nul & netsh interface tcp show global", 10000);
                 string text = r.All.ToLowerInvariant();
                 int idx = text.IndexOf("timestamps", StringComparison.Ordinal);
+                if (idx < 0) idx = text.IndexOf("метки", StringComparison.Ordinal);
                 if (idx < 0) return null;
                 int colon = text.IndexOf(':', idx);
                 if (colon < 0) return null;
                 string value = text.Substring(colon + 1).Trim();
-                return value.StartsWith("enabled");
+                if (value.StartsWith("enabled") || value.IndexOf("включ", StringComparison.Ordinal) >= 0) return true;
+                if (value.StartsWith("disabled") || value.IndexOf("выключ", StringComparison.Ordinal) >= 0) return false;
+                return null;
             }
             catch { return null; }
         }
@@ -1691,17 +1906,31 @@ namespace ZapretManager
 
             EnableTcpTimestamps();
             Proc.Run("sc.exe", "stop zapret", 20000);
-            Thread.Sleep(400);
+            WaitServiceStatus("zapret", "остановлена", 15000);
             Proc.Run("sc.exe", "delete zapret", 20000);
-            Proc.KillAll("winws.exe");
+            WaitServiceGone("zapret", 10000);
+            KillWinws();
             Thread.Sleep(300);
 
-            string binPath = "\"" + Install.WinwsExe + "\" " + args;
+            string binPath = "\"" + Install.WinwsExe + "\" " + args + " ";
             string scArgs = "create zapret binPath= \"" + binPath.Replace("\"", "\\\"") + "\" DisplayName= \"zapret\" start= auto";
-            ProcResult cr = Proc.Run("sc.exe", scArgs, 20000);
-            if (cr.ExitCode != 0)
+            ProcResult cr = null;
+            for (int attempt = 0; attempt < 3; attempt++)
             {
-                return "sc create завершился с кодом " + cr.ExitCode + ": " + cr.All;
+                cr = Proc.Run("sc.exe", scArgs, 20000);
+                if (cr.ExitCode == 0) break;
+                // 1072/1073 — служба ещё помечена на удаление, нужно подождать
+                if (cr.ExitCode == 1072 || cr.ExitCode == 1073)
+                {
+                    Thread.Sleep(1000);
+                    WaitServiceGone("zapret", 5000);
+                    continue;
+                }
+                break;
+            }
+            if (cr == null || cr.ExitCode != 0)
+            {
+                return "sc create завершился с кодом " + (cr == null ? -1 : cr.ExitCode) + ": " + (cr == null ? "" : cr.All);
             }
             Proc.Run("sc.exe", "description zapret \"Zapret DPI bypass software\"", 10000);
             ProcResult sr = Proc.Run("sc.exe", "start zapret", 25000);
@@ -1715,15 +1944,15 @@ namespace ZapretManager
             }
             catch (Exception ex) { Log.Warn("Не удалось записать имя стратегии в реестр: " + ex.Message); }
 
-            Thread.Sleep(900);
+            bool running = WaitServiceStatus("zapret", "работает", 20000);
             ServiceSnapshot snap = QueryService("zapret");
-            ok = snap.Installed;
+            ok = snap.Installed && running;
             if (ok)
             {
                 Log.Ok("Служба zapret установлена: " + strategy.Name);
                 return string.Format("Служба установлена со стратегией «{0}». Статус: {1}.", strategy.Name, snap.Status);
             }
-            return "Служба создана, но не обнаружена. " + sr.All;
+            return string.Format("Служба создана, но не запустилась (статус: {0}). {1}", snap.Status, sr.All);
         }
 
         public string RemoveService()
@@ -1734,12 +1963,20 @@ namespace ZapretManager
             if (svc.Installed)
             {
                 Proc.Run("sc.exe", "stop zapret", 20000);
-                Thread.Sleep(300);
+                WaitServiceStatus("zapret", "остановлена", 15000);
                 ProcResult d = Proc.Run("sc.exe", "delete zapret", 20000);
-                sb.Append(d.ExitCode == 0 ? "Служба zapret удалена. " : "Не удалось удалить службу zapret: " + d.All + " ");
-                Log.Ok("Служба zapret удалена.");
+                if (d.ExitCode == 0 && WaitServiceGone("zapret", 15000))
+                {
+                    sb.Append("Служба zapret удалена. ");
+                    Log.Ok("Служба zapret удалена.");
+                }
+                else
+                {
+                    sb.Append("Не удалось удалить службу zapret: " + d.All + " ");
+                    Log.Warn("Не удалось удалить службу zapret: " + d.All);
+                }
             }
-            Proc.KillAll("winws.exe");
+            KillWinws();
             foreach (string name in new string[] { "WinDivert", "WinDivert14" })
             {
                 ServiceSnapshot w = QueryService(name);
@@ -1773,43 +2010,33 @@ namespace ZapretManager
         {
             try
             {
+                if (mode != "loaded" && mode != "none" && mode != "any")
+                    return "Неизвестный режим IPSet: " + mode;
+
                 string current = GetIpsetMode();
-                if (current == mode) return "Режим уже установлен: " + IpsetModeText(mode);
-                if (current == "loaded")
+                bool exists = File.Exists(Install.IpsetFile);
+                if (current == mode && exists) return "Режим уже установлен: " + IpsetModeText(mode);
+
+                // Полный список всегда сначала сохраняем в .backup, и только потом меняем рабочий файл.
+                // Так переключение режима никогда не уничтожает данные.
+                if (current == "loaded" && exists)
+                    File.Copy(Install.IpsetFile, Install.IpsetBackup, true);
+
+                if (mode == "loaded")
                 {
-                    if (File.Exists(Install.IpsetBackup)) File.Delete(Install.IpsetBackup);
-                    File.Move(Install.IpsetFile, Install.IpsetBackup);
+                    if (!File.Exists(Install.IpsetBackup))
+                        return "Нет резервной копии полного списка. Сначала обновите IP-лист.";
+                    File.Copy(Install.IpsetBackup, Install.IpsetFile, true);
                 }
-                else if (current == "none")
+                else if (mode == "none")
                 {
-                    File.WriteAllText(Install.IpsetFile, "", new UTF8Encoding(false));
+                    WriteTextAtomic(Install.IpsetFile, "203.0.113.113/32\r\n");
                 }
-                else if (current == "any")
+                else
                 {
-                    if (File.Exists(Install.IpsetBackup))
-                    {
-                        if (File.Exists(Install.IpsetFile)) File.Delete(Install.IpsetFile);
-                        File.Move(Install.IpsetBackup, Install.IpsetFile);
-                    }
-                    else return "Нет резервной копии списка. Сначала обновите IP-лист.";
+                    WriteTextAtomic(Install.IpsetFile, "");
                 }
 
-                if (mode == "none")
-                {
-                    File.WriteAllText(Install.IpsetFile, "203.0.113.113/32\r\n", new UTF8Encoding(false));
-                }
-                else if (mode == "any")
-                {
-                    File.WriteAllText(Install.IpsetFile, "", new UTF8Encoding(false));
-                }
-                else if (mode == "loaded")
-                {
-                    if (File.Exists(Install.IpsetBackup))
-                    {
-                        if (File.Exists(Install.IpsetFile)) File.Delete(Install.IpsetFile);
-                        File.Move(Install.IpsetBackup, Install.IpsetFile);
-                    }
-                }
                 Log.Ok("IPSet режим: " + IpsetModeText(mode));
                 return "Готово: " + IpsetModeText(mode);
             }
@@ -1817,6 +2044,24 @@ namespace ZapretManager
             {
                 Log.Error("Не удалось переключить IPSet", ex);
                 return "Ошибка: " + ex.Message;
+            }
+        }
+
+        /// <summary>Атомарная запись текстового файла: temp в том же каталоге + File.Replace.</summary>
+        public static void WriteTextAtomic(string path, string text)
+        {
+            string dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+            string tmp = path + ".tmp-" + Guid.NewGuid().ToString("N");
+            File.WriteAllText(tmp, text ?? "", new UTF8Encoding(false));
+            try
+            {
+                if (File.Exists(path)) File.Replace(tmp, path, null);
+                else File.Move(tmp, path);
+            }
+            finally
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
             }
         }
 
@@ -1844,29 +2089,25 @@ namespace ZapretManager
                 string mode = GetIpsetMode();
                 if (mode == "loaded")
                 {
-                    if (File.Exists(Install.IpsetBackup)) File.Delete(Install.IpsetBackup);
-                    File.Copy(tmp, Install.IpsetFile, true);
+                    // рабочий файл и резервная копия содержат один и тот же полный список
+                    WriteTextAtomic(Install.IpsetFile, text);
+                    WriteTextAtomic(Install.IpsetBackup, text);
                 }
                 else
                 {
-                    File.Copy(tmp, Install.IpsetBackup, true);
-                    if (mode == "any") SetIpsetRestoreAfterUpdate();
+                    // полный список живёт в .backup, рабочий файл — пустой или заглушка
+                    WriteTextAtomic(Install.IpsetBackup, text);
+                    if (mode == "any") WriteTextAtomic(Install.IpsetFile, "");
+                    else if (mode == "none") WriteTextAtomic(Install.IpsetFile, "203.0.113.113/32\r\n");
                 }
-                long count = CountListLines(Install.IpsetFile);
-                Log.Ok(string.Format("IP-лист обновлён: {0} строк.", count));
-                return string.Format("IP-лист обновлён: {0} строк.", count);
+                Log.Ok(string.Format("IP-лист обновлён: {0} строк.", lines));
+                return string.Format("IP-лист обновлён: {0} строк.", lines);
             }
             catch (Exception ex)
             {
                 Log.Error("Не удалось обновить IP-лист", ex);
                 return "Ошибка обновления: " + ex.Message;
             }
-        }
-
-        private void SetIpsetRestoreAfterUpdate()
-        {
-            // в режиме "any" рабочий файл остаётся пустым, полный список лежит в .backup
-            if (GetIpsetMode() != "any") File.WriteAllText(Install.IpsetFile, "", new UTF8Encoding(false));
         }
 
         // ---------- Фейки ----------
@@ -1975,7 +2216,7 @@ namespace ZapretManager
                 st.TempFile = tmp;
                 List<string> remote = ReadHostsHosts(tmp);
                 st.RemoteLines = remote.Count;
-                string current = File.Exists(HostsPath) ? File.ReadAllText(HostsPath, Encoding.UTF8) : "";
+                string current = File.Exists(HostsPath) ? TextFile.Read(HostsPath) : "";
                 foreach (string line in remote)
                 {
                     if (current.IndexOf(line, StringComparison.OrdinalIgnoreCase) < 0) st.MissingLines++;
@@ -1991,7 +2232,7 @@ namespace ZapretManager
         private static List<string> ReadHostsHosts(string file)
         {
             List<string> list = new List<string>();
-            foreach (string raw in File.ReadAllLines(file, Encoding.UTF8))
+            foreach (string raw in TextFile.ReadLines(file))
             {
                 string l = raw.Trim();
                 if (l.Length == 0 || l.StartsWith("#")) continue;
@@ -2008,14 +2249,23 @@ namespace ZapretManager
             if (st.MissingLines == 0) return "Файл hosts уже содержит все записи из репозитория.";
             try
             {
-                string content = File.Exists(HostsPath) ? File.ReadAllText(HostsPath, Encoding.UTF8) : "";
+                string content = File.Exists(HostsPath) ? TextFile.Read(HostsPath) : "";
                 int s = content.IndexOf(HostsMarkerStart, StringComparison.Ordinal);
-                int e = content.IndexOf(HostsMarkerEnd, StringComparison.Ordinal);
-                if (s >= 0 && e > s)
+                if (s >= 0)
                 {
-                    int endOfLine = content.IndexOf('\n', e);
-                    if (endOfLine < 0) endOfLine = content.Length;
-                    content = content.Substring(0, s) + content.Substring(endOfLine + 1);
+                    int e = content.IndexOf(HostsMarkerEnd, s);
+                    int cut;
+                    if (e >= 0)
+                    {
+                        int nl = content.IndexOf('\n', e);
+                        cut = nl >= 0 ? nl + 1 : content.Length;
+                    }
+                    else
+                    {
+                        // конец блока потерян — заменяем весь хвост, иначе блок задвоится
+                        cut = content.Length;
+                    }
+                    content = content.Substring(0, s) + content.Substring(cut);
                 }
                 List<string> remote = ReadHostsHosts(st.TempFile);
                 StringBuilder sb = new StringBuilder();
@@ -2027,7 +2277,7 @@ namespace ZapretManager
 
                 string backup = HostsPath + ".zapret-manager.bak";
                 if (!File.Exists(backup) && File.Exists(HostsPath)) File.Copy(HostsPath, backup, true);
-                File.WriteAllText(HostsPath, sb.ToString(), new UTF8Encoding(false));
+                WriteTextAtomic(HostsPath, sb.ToString());
                 Log.Ok(string.Format("Файл hosts обновлён: добавлено {0} строк.", st.MissingLines));
                 return string.Format("Файл hosts обновлён (добавлено {0} строк). Резервная копия: {1}", st.MissingLines, backup);
             }
@@ -2044,14 +2294,15 @@ namespace ZapretManager
             try
             {
                 if (!File.Exists(HostsPath)) return "Файл hosts не найден.";
-                string content = File.ReadAllText(HostsPath, Encoding.UTF8);
+                string content = TextFile.Read(HostsPath);
                 int s = content.IndexOf(HostsMarkerStart, StringComparison.Ordinal);
                 if (s < 0) return "Блок zapret-manager в hosts не найден.";
-                int e = content.IndexOf(HostsMarkerEnd, StringComparison.Ordinal);
-                int endOfLine = e > 0 ? content.IndexOf('\n', e) : content.Length;
-                if (endOfLine < 0) endOfLine = content.Length;
-                string result = content.Substring(0, s) + content.Substring(endOfLine + 1);
-                File.WriteAllText(HostsPath, result, new UTF8Encoding(false));
+                int e = content.IndexOf(HostsMarkerEnd, s);
+                if (e < 0) return "Маркер конца блока в hosts не найден — файл не изменён.";
+                int endOfLine = content.IndexOf('\n', e);
+                int cut = endOfLine >= 0 ? endOfLine + 1 : content.Length;
+                string result = content.Substring(0, s) + content.Substring(cut);
+                WriteTextAtomic(HostsPath, result);
                 Log.Ok("Блок zapret-manager удалён из hosts.");
                 return "Блок zapret-manager удалён из hosts.";
             }

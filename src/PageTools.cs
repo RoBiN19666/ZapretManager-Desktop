@@ -106,9 +106,12 @@ namespace ZapretManager
             clear.Click += delegate
             {
                 if (!Dlg.Confirm(this.View.FindForm(), "Очистить кэш Discord?", "Discord будет закрыт, папки Cache, Code Cache и GPUCache будут удалены.", "Очистить")) return;
-                string msg = Shell.Ops.ClearDiscordCache();
-                Shell.Notify(msg, LogLevel.Ok);
-                RefreshState();
+                Shell.RunOperation(delegate() { return Shell.Ops.ClearDiscordCache(); }, delegate(string msg)
+                {
+                    bool failed = msg.IndexOf("Не удалось", StringComparison.OrdinalIgnoreCase) >= 0;
+                    Shell.Notify(msg, failed ? LogLevel.Error : LogLevel.Ok);
+                    RefreshState();
+                });
             };
             _discordCard.Controls.Add(clear);
 
@@ -174,7 +177,7 @@ namespace ZapretManager
             long total = 0;
             foreach (DirectoryInfo d in copies) total += Cleanup.SizeOf(d.FullName);
             if (!Dlg.Confirm(this.View.FindForm(), "Старые копии",
-                string.Format("Найдено копий: {0}, занято {1}.\\n\\nОставить самую свежую, остальные удалить?", copies.Count, Cleanup.FormatSize(total)),
+                string.Format("Найдено копий: {0}, занято {1}.\n\nОставить самую свежую, остальные удалить?", copies.Count, Cleanup.FormatSize(total)),
                 "Удалить старые")) return;
             long freed = Cleanup.PruneBackups(Shell.Install.Root, 1, delegate(string m) { Log.Info(m); });
             Shell.Notify("Удалено старых копий, освобождено " + Cleanup.FormatSize(freed) + ".", LogLevel.Ok);
@@ -204,7 +207,7 @@ namespace ZapretManager
 
             RoundButton repo = Btn("ZapretManager", ButtonKind.Link, 160);
             repo.Location = new Point(22, y);
-            repo.Click += delegate { Native.OpenUrl("https://github.com/RoBiN19666/ZapretManager-Windows"); };
+            repo.Click += delegate { Native.OpenUrl("https://github.com/RoBiN19666/ZapretManager-Desktop"); };
             _aboutCard.Controls.Add(repo);
 
             RoundButton zapret = Btn("zapret-discord-youtube", ButtonKind.Link, 210);
@@ -224,7 +227,7 @@ namespace ZapretManager
 
             RoundButton guide = Btn("Документация", ButtonKind.Link, 150);
             guide.Location = new Point(200, y + 60);
-            guide.Click += delegate { Native.OpenUrl("https://github.com/RoBiN19666/ZapretManager-Windows/blob/main/docs/guide.md"); };
+            guide.Click += delegate { Native.OpenUrl("https://github.com/RoBiN19666/ZapretManager-Desktop/blob/main/docs/guide.md"); };
             _aboutCard.Controls.Add(guide);
 
             RoundButton tgproxy = Btn("TG WS Proxy", ButtonKind.Link, 130);
@@ -259,12 +262,15 @@ namespace ZapretManager
             if (s == null) { Shell.Notify("Стратегии не найдены.", LogLevel.Error); return; }
             if (!Dlg.Confirm(this.View.FindForm(), "Установить службу?",
                 string.Format("Стратегия «{0}» будет установлена как служба «zapret» с автозапуском.", s.Name), "Установить")) return;
-            bool ok;
-            string msg = Shell.Ops.InstallService(s, out ok);
-            Shell.Notify(msg, ok ? LogLevel.Ok : LogLevel.Error);
-            Shell.RefreshState(false);
-            RefreshState();
-            if (!ok) Dlg.Info(this.View.FindForm(), "Не удалось установить службу", msg);
+            bool ok = false;
+            string msg = "";
+            Shell.RunOperation(delegate() { msg = Shell.Ops.InstallService(s, out ok); return msg; }, delegate(string message)
+            {
+                Shell.Notify(message, ok ? LogLevel.Ok : LogLevel.Error);
+                Shell.RefreshState(false);
+                RefreshState();
+                if (!ok) Dlg.Info(this.View.FindForm(), "Не удалось установить службу", message);
+            });
         }
 
         private void RemoveService()
@@ -273,10 +279,13 @@ namespace ZapretManager
             if (!Dlg.ConfirmDanger(this.View.FindForm(), "Удалить службу?",
                 "Служба zapret будет остановлена и удалена, драйвер WinDivert освобождён. Bypass перестанет работать, пока вы снова не запустите его вручную.",
                 "Удалить службу")) return;
-            string msg = Shell.Ops.RemoveService();
-            Shell.Notify(msg, LogLevel.Ok);
-            Shell.RefreshState(false);
-            RefreshState();
+            Shell.RunOperation(delegate() { return Shell.Ops.RemoveService(); }, delegate(string msg)
+            {
+                bool failed = msg.IndexOf("Не удалось", StringComparison.OrdinalIgnoreCase) >= 0;
+                Shell.Notify(msg, failed ? LogLevel.Error : LogLevel.Ok);
+                Shell.RefreshState(false);
+                RefreshState();
+            });
         }
 
         private void CheckHosts()
@@ -316,14 +325,18 @@ namespace ZapretManager
             if (!Shell.RequireAdmin("Изменение hosts")) return;
             if (!Dlg.ConfirmDanger(this.View.FindForm(), "Убрать блок менеджера?",
                 "Из файла hosts будет удалён блок, добавленный Zapret Manager. Остальные записи останутся.", "Удалить")) return;
-            string msg = Shell.Ops.ClearHostsBlock();
-            _hostsStatus.Text = msg;
-            Shell.Notify(msg, LogLevel.Ok);
+            Shell.RunOperation(delegate() { return Shell.Ops.ClearHostsBlock(); }, delegate(string msg)
+            {
+                _hostsStatus.Text = msg;
+                bool failed = msg.IndexOf("Не удалось", StringComparison.OrdinalIgnoreCase) >= 0 || msg.StartsWith("Ошибка");
+                Shell.Notify(msg, failed ? LogLevel.Error : LogLevel.Ok);
+            });
         }
 
         private void RunTests()
         {
             if (Shell.Install == null || !Shell.Install.IsValid) return;
+            if (!Shell.RequireAdmin("Официальный тест")) return;
             string script = Path.Combine(Shell.Install.UtilsDir, "test zapret.ps1");
             if (!File.Exists(script)) { Shell.Notify("Не найден файл utils\\test zapret.ps1", LogLevel.Error); return; }
             try
@@ -332,7 +345,7 @@ namespace ZapretManager
                     "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"");
                 psi.UseShellExecute = true;
                 psi.WorkingDirectory = Shell.Install.Root;
-                System.Diagnostics.Process.Start(psi);
+                using (System.Diagnostics.Process p = System.Diagnostics.Process.Start(psi)) { }
                 Shell.Notify("Тест запущен в отдельном окне PowerShell. Он останавливает текущий bypass и перебирает стратегии.", LogLevel.Info);
             }
             catch (Exception ex) { Shell.Notify("Не удалось запустить тест: " + ex.Message, LogLevel.Error); }

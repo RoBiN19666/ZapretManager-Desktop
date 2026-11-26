@@ -178,18 +178,27 @@ namespace ZapretManager
                 "Создаётся задача планировщика с наивысшими правами — запуск без запроса UAC", false, delegate
                 {
                     if (_suppress) return;
-                    if (_tgAutoStart.Checked)
+                    bool enable = _tgAutoStart.Checked;
+                    Shell.RunOperation(delegate()
                     {
-                        string msg = Autostart.Enable(Application.ExecutablePath, Shell.Config.GetBool("StartMinimized", true));
-                        Shell.Notify(msg, msg.StartsWith("Не удалось") ? LogLevel.Error : LogLevel.Ok);
-                        if (msg.StartsWith("Не удалось")) _tgAutoStart.Checked = false;
-                    }
-                    else
+                        string msg = enable
+                            ? Autostart.Enable(Application.ExecutablePath, Shell.Config.GetBool("StartMinimized", true))
+                            : Autostart.Disable();
+                        return (msg.StartsWith("Не удалось") ? "ERR|" : "OK|") + msg;
+                    }, delegate(string result)
                     {
-                        string msg = Autostart.Disable();
-                        Shell.Notify(msg, LogLevel.Ok);
-                    }
-                    RefreshStartupStatus();
+                        bool failed = result.StartsWith("ERR|");
+                        string msg = result.Substring(4);
+                        Shell.Notify(msg, failed ? LogLevel.Error : LogLevel.Ok);
+                        _autoStatusAt = DateTime.Now;
+                        SetStartupStatus(failed ? !enable : enable);
+                        if (failed)
+                        {
+                            _suppress = true;
+                            try { _tgAutoStart.Checked = !enable; }
+                            finally { _suppress = false; }
+                        }
+                    });
                 });
 
             _tgCloseToTray = AddToggleRow(_startupCard, 92, "При закрытии окна сворачиваться в трей",
@@ -249,9 +258,23 @@ namespace ZapretManager
             View.Stack.Add(_startupCard);
         }
 
+        private DateTime _autoStatusAt = DateTime.MinValue;
+
         private void RefreshStartupStatus()
         {
-            bool enabled = Autostart.IsEnabled;
+            RefreshStartupStatus(false);
+        }
+
+        private void RefreshStartupStatus(bool force)
+        {
+            // schtasks — отдельный процесс; не запускаем его каждые 5 секунд.
+            if (!force && (DateTime.Now - _autoStatusAt).TotalSeconds < 30) return;
+            _autoStatusAt = DateTime.Now;
+            SetStartupStatus(Autostart.IsEnabled);
+        }
+
+        private void SetStartupStatus(bool enabled)
+        {
             _suppress = true;
             try { _tgAutoStart.Checked = enabled; }
             finally { _suppress = false; }
@@ -335,8 +358,14 @@ namespace ZapretManager
             tcp.Click += delegate
             {
                 if (!Shell.RequireAdmin("TCP timestamps")) return;
-                bool ok = Shell.Ops.EnableTcpTimestamps();
-                Shell.Notify(ok ? "TCP timestamps включены." : "Не удалось включить TCP timestamps.", ok ? LogLevel.Ok : LogLevel.Error);
+                Shell.RunOperation(delegate()
+                {
+                    return Shell.Ops.EnableTcpTimestamps() ? "TCP timestamps включены." : "Не удалось включить TCP timestamps.";
+                }, delegate(string msg)
+                {
+                    bool ok = !msg.StartsWith("Не удалось");
+                    Shell.Notify(msg, ok ? LogLevel.Ok : LogLevel.Error);
+                });
             };
             _miscCard.Controls.Add(tcp);
 
@@ -345,8 +374,11 @@ namespace ZapretManager
             dc.Click += delegate
             {
                 if (!Dlg.Confirm(this.View.FindForm(), "Очистить кэш Discord?", "Discord будет закрыт, а папки Cache, Code Cache и GPUCache удалены.", "Очистить")) return;
-                string msg = Shell.Ops.ClearDiscordCache();
-                Shell.Notify(msg, LogLevel.Ok);
+                Shell.RunOperation(delegate() { return Shell.Ops.ClearDiscordCache(); }, delegate(string msg)
+                {
+                    bool failed = msg.IndexOf("Не удалось", StringComparison.OrdinalIgnoreCase) >= 0;
+                    Shell.Notify(msg, failed ? LogLevel.Error : LogLevel.Ok);
+                });
             };
             _miscCard.Controls.Add(dc);
             View.Stack.Add(_miscCard);
@@ -402,10 +434,13 @@ namespace ZapretManager
         {
             if (Shell.Install == null || !Shell.Install.IsValid) return;
             if (!Shell.RequireAdmin("Переключение IPSet")) return;
-            string msg = Shell.Ops.SetIpsetMode(mode);
-            Shell.Notify(msg + " Перезапустите bypass, чтобы применить.", LogLevel.Ok);
-            Shell.RefreshState(false);
-            RefreshState();
+            Shell.RunOperation(delegate() { return Shell.Ops.SetIpsetMode(mode); }, delegate(string msg)
+            {
+                bool failed = msg.StartsWith("Ошибка") || msg.StartsWith("Нет ") || msg.StartsWith("Неизвестный");
+                Shell.Notify(msg + (failed ? "" : " Перезапустите bypass, чтобы применить."), failed ? LogLevel.Error : LogLevel.Ok);
+                Shell.RefreshState(false);
+                RefreshState();
+            });
         }
 
         private void UpdateIpset()
@@ -471,8 +506,8 @@ namespace ZapretManager
             try
             {
                 _mode = st.GameFilter.Mode;
-                _tcpBox.Text = st.GameFilter.TcpRange;
-                _udpBox.Text = st.GameFilter.UdpRange;
+                if (!_tcpBox.Focused) _tcpBox.Text = st.GameFilter.TcpRange;
+                if (!_udpBox.Focused) _udpBox.Text = st.GameFilter.UdpRange;
                 ApplyModes();
 
                 _ipsetMode = st.IpsetMode;

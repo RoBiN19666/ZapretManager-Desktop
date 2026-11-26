@@ -32,7 +32,10 @@ namespace ZapretManager
         public void Notify(string message, LogLevel level)
         {
             Log.Write(level, message);
-            if (Form != null) Form.ShowToast(message, level);
+            Ui(delegate()
+            {
+                if (Form != null && !Form.IsDisposed) Form.ShowToast(message, level);
+            });
         }
 
         public bool RequireAdmin(string action)
@@ -101,8 +104,9 @@ namespace ZapretManager
         /// <summary>Меняет папку установки zapret.</summary>
         public void SetRoot(string root)
         {
+            if (Form != null && Current != null && !Current.ConfirmLeave()) return;
             ZapretInstall inst = new ZapretInstall();
-            inst.Root = root != null ? root.TrimEnd('\\') : "";
+            inst.Root = ZapretInstall.NormalizeRoot(root ?? "");
             inst.Rescan();
             Install = inst;
             Ops = new ZapretOps(inst);
@@ -150,8 +154,35 @@ namespace ZapretManager
         public void Ui(Action action)
         {
             if (Form == null) { action(); return; }
-            if (Form.InvokeRequired) Form.BeginInvoke((MethodInvoker)delegate() { action(); });
+            if (Form.IsDisposed || Form.Disposing) return;
+            if (Form.InvokeRequired)
+            {
+                if (!Form.IsHandleCreated) return;
+                try { Form.BeginInvoke((MethodInvoker)delegate() { action(); }); }
+                catch { }
+            }
             else action();
+        }
+
+        /// <summary>
+        /// Долгая операция: блокирует окно, выполняет работу в фоне и возвращает результат в UI.
+        /// Так sc.exe/schtasks/netsh/winws не замораживают интерфейс.
+        /// </summary>
+        public void RunOperation(Func<string> operation, Action<string> onDone)
+        {
+            if (Busy) return;
+            if (Form != null) { Form.Enabled = false; Form.UseWaitCursor = true; }
+            RunBackground(delegate()
+            {
+                string result;
+                try { result = operation(); }
+                catch (Exception ex) { result = "Ошибка: " + ex.Message; }
+                Ui(delegate()
+                {
+                    if (Form != null) { Form.Enabled = true; Form.UseWaitCursor = false; }
+                    if (onDone != null) onDone(result);
+                });
+            }, null);
         }
     }
 
@@ -174,6 +205,10 @@ namespace ZapretManager
         public abstract void Build();
         public virtual void OnShow() { }
         public virtual void RefreshState() { }
+        /// <summary>Можно ли уходить со страницы (спросить о несохранённых изменениях).</summary>
+        public virtual bool ConfirmLeave() { return true; }
+        /// <summary>Отписка от событий/таймеров перед уничтожением страницы.</summary>
+        public virtual void OnDispose() { }
 
         public const int DesignWidth = 880;
 
@@ -249,10 +284,8 @@ namespace ZapretManager
         private Label _lblBypass;
         private Label _lblService;
         private Label _lblIpSet;
-        private Pill _adminPill;
         private Panel _logoBox;
         private Label _navGroup1;
-        private Label _navGroup2;
 
         public const int SidebarWidth = 236;
 
@@ -294,6 +327,7 @@ namespace ZapretManager
             Native.SetTitleBarTheme(Handle, Theme.IsDark);
             BuildTray();
             StartActivationWatcher();
+            StartSiteGuard();
 
             // реальный DPI берём у окна: приложение могло открыться на мониторе с другим масштабом
             float windowDpi = 96f;
@@ -325,6 +359,7 @@ namespace ZapretManager
         }
 
         private System.Threading.Thread _activationThread;
+        private volatile bool _closing;
 
         /// <summary>Слушает запросы второго экземпляра «покажи окно».</summary>
         private void StartActivationWatcher()
@@ -332,7 +367,7 @@ namespace ZapretManager
             if (AppInfo.ActivateEvent == null) return;
             _activationThread = new System.Threading.Thread(delegate()
             {
-                while (true)
+                while (!_closing)
                 {
                     bool signaled = false;
                     try { signaled = AppInfo.ActivateEvent.WaitOne(400); }
@@ -445,17 +480,23 @@ namespace ZapretManager
         {
             if (_shell.State != null && _shell.State.WinwsRunning)
             {
-                _shell.Ops.Stop();
-                _shell.Notify("Bypass остановлен.", LogLevel.Info);
+                _shell.RunOperation(delegate() { return _shell.Ops.Stop(); }, delegate(string message)
+                {
+                    _shell.Notify(message, LogLevel.Info);
+                    _shell.RefreshStateAsync();
+                });
             }
             else
             {
                 StrategyDef s = StrategyPicker.Pick(_shell);
                 if (s == null) { _shell.Notify("Стратегии не найдены.", LogLevel.Error); return; }
-                ZapretOps.StartResult r = _shell.Ops.Start(s);
-                _shell.Notify(r.Message, r.Ok ? LogLevel.Ok : LogLevel.Error);
+                ZapretOps.StartResult r = null;
+                _shell.RunOperation(delegate() { r = _shell.Ops.Start(s); return r.Message; }, delegate(string message)
+                {
+                    _shell.Notify(message, r != null && r.Ok ? LogLevel.Ok : LogLevel.Error);
+                    _shell.RefreshStateAsync();
+                });
             }
-            _shell.RefreshStateAsync();
         }
 
         private void TrayToggleTgProxy()
@@ -463,15 +504,21 @@ namespace ZapretManager
             TgProxyState st = TgProxy.GetState(_shell.Config);
             if (st.Running)
             {
-                _shell.Notify(TgProxy.Stop(), LogLevel.Info);
+                _shell.RunOperation(delegate() { return TgProxy.Stop(st.Dir); }, delegate(string message)
+                {
+                    _shell.Notify(message, LogLevel.Info);
+                    _shell.RefreshStateAsync();
+                });
             }
             else
             {
-                bool ok;
-                string msg = TgProxy.Start(_shell.Config, out ok);
-                _shell.Notify(msg, ok ? LogLevel.Ok : LogLevel.Error);
+                bool ok = false;
+                _shell.RunOperation(delegate() { return TgProxy.Start(_shell.Config, out ok); }, delegate(string message)
+                {
+                    _shell.Notify(message, ok ? LogLevel.Ok : LogLevel.Error);
+                    _shell.RefreshStateAsync();
+                });
             }
-            _shell.RefreshStateAsync();
         }
 
         public void HideToTray(bool silent)
@@ -496,6 +543,9 @@ namespace ZapretManager
 
         public void ExitApplication()
         {
+            if (_shell.Busy && !Dlg.ConfirmDanger(this, "Идёт операция",
+                "Дождитесь завершения текущей операции, иначе можно оборвать запись файлов.\n\nВыйти принудительно?", "Выйти"))
+                return;
             AppInfo.ExitRequested = true;
             Close();
         }
@@ -715,15 +765,30 @@ namespace ZapretManager
         {
             bool explicitExit = AppInfo.ExitRequested || string.IsNullOrEmpty(AppInfo.ShotPath) == false;
             bool trayEnabled = _shell.Config.GetBool("CloseToTray", true);
+            if (string.IsNullOrEmpty(AppInfo.ShotPath) && _shell.Current != null && !_shell.Current.ConfirmLeave())
+            {
+                e.Cancel = true;
+                return;
+            }
+            if (!explicitExit && _shell.Busy && e.CloseReason == CloseReason.UserClosing)
+            {
+                e.Cancel = true;
+                _shell.Notify("Дождитесь завершения текущей операции — иначе можно оборвать запись файлов.", LogLevel.Warn);
+                base.OnFormClosing(e);
+                return;
+            }
             if (!explicitExit && trayEnabled && e.CloseReason == CloseReason.UserClosing && _tray != null)
             {
                 e.Cancel = true;
+                base.OnFormClosing(e);
                 HideToTray(false);
                 return;
             }
             _tickTimer.Stop();
             if (_guardTimer != null) _guardTimer.Stop();
+            if (_autoCheckTimer != null) _autoCheckTimer.Stop();
             _toastTimer.Stop();
+            _closing = true;
             if (_tray != null)
             {
                 _tray.Visible = false;
@@ -732,13 +797,11 @@ namespace ZapretManager
             }
             try
             {
-                _shell.Config.SetInt("WindowW", Width);
-                _shell.Config.SetInt("WindowH", Height);
-                if (WindowState == FormWindowState.Normal && string.IsNullOrEmpty(AppInfo.ShotPath))
-                {
-                    _shell.Config.SetInt("WindowX", Left);
-                    _shell.Config.SetInt("WindowY", Top);
-                }
+                Rectangle restore = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+                _shell.Config.SetInt("WindowW", restore.Width);
+                _shell.Config.SetInt("WindowH", restore.Height);
+                _shell.Config.SetInt("WindowX", restore.Left);
+                _shell.Config.SetInt("WindowY", restore.Top);
                 _shell.Config.SetBool("Maximized", WindowState == FormWindowState.Maximized);
                 _shell.Config.Save();
             }
@@ -800,10 +863,11 @@ namespace ZapretManager
             if (_sidebar == null || _content == null || _statusBar == null) return;
             int w = ClientSize.Width;
             int h = ClientSize.Height;
-            int statusH = 30;
-            _sidebar.Bounds = new Rectangle(0, 0, SidebarWidth, h - statusH);
+            int sidebarW = Theme.Px(SidebarWidth);
+            int statusH = Theme.Px(30);
+            _sidebar.Bounds = new Rectangle(0, 0, sidebarW, h - statusH);
             _statusBar.Bounds = new Rectangle(0, h - statusH, w, statusH);
-            _content.Bounds = new Rectangle(SidebarWidth, 0, Math.Max(100, w - SidebarWidth), Math.Max(100, h - statusH));
+            _content.Bounds = new Rectangle(sidebarW, 0, Math.Max(100, w - sidebarW), Math.Max(100, h - statusH));
             LayoutContent();
             _sidebar.Invalidate();
         }
@@ -843,16 +907,16 @@ namespace ZapretManager
         private void LayoutContent()
         {
             if (_pageHost == null || _content == null) return;
-            _titleLbl.Location = new Point(24, 18);
-            _subtitleLbl.Location = new Point(26, 52);
-            _pageHost.Location = new Point(24, 88);
-            _pageHost.Size = new Size(Math.Max(200, _content.ClientSize.Width - 48), Math.Max(100, _content.ClientSize.Height - 88 - 24));
+            _titleLbl.Location = new Point(Theme.Px(24), Theme.Px(18));
+            _subtitleLbl.Location = new Point(Theme.Px(26), Theme.Px(52));
+            _pageHost.Location = new Point(Theme.Px(24), Theme.Px(88));
+            _pageHost.Size = new Size(Math.Max(200, _content.ClientSize.Width - Theme.Px(48)), Math.Max(100, _content.ClientSize.Height - Theme.Px(88) - Theme.Px(24)));
         }
 
         private void BuildStatusBar()
         {
             _statusBar = new Panel();
-            _statusBar.Height = 30;
+            _statusBar.Height = Theme.Px(30);
             _statusBar.BackColor = Theme.Sidebar;
             _statusBar.Paint += delegate(object s, PaintEventArgs e)
             {
@@ -901,29 +965,29 @@ namespace ZapretManager
         {
             if (_statusRight == null) return;
             int w = TextRenderer.MeasureText(_statusRight.Text, _statusRight.Font).Width;
-            _statusRight.Location = new Point(Math.Max(430, _statusBar.ClientSize.Width - w - 16), 6);
+            _statusRight.Location = new Point(Math.Max(Theme.Px(430), _statusBar.ClientSize.Width - w - Theme.Px(16)), Theme.Px(6));
         }
 
         /// <summary>Переставляет элементы строки состояния слева направо без наложений.</summary>
         private void RelayoutStatus()
         {
             if (_lblBypass == null) return;
-            int x = 16;
-            _dotBypass.Location = new Point(x, 10);
-            x += 16;
-            _lblBypass.Location = new Point(x, 6);
-            x += TextRenderer.MeasureText(_lblBypass.Text, _lblBypass.Font).Width + 18;
-            _dotService.Location = new Point(x, 10);
-            x += 16;
-            _lblService.Location = new Point(x, 6);
-            x += TextRenderer.MeasureText(_lblService.Text, _lblService.Font).Width + 18;
-            _lblIpSet.Location = new Point(x, 6);
+            int x = Theme.Px(16);
+            _dotBypass.Location = new Point(x, Theme.Px(10));
+            x += Theme.Px(16);
+            _lblBypass.Location = new Point(x, Theme.Px(6));
+            x += TextRenderer.MeasureText(_lblBypass.Text, _lblBypass.Font).Width + Theme.Px(18);
+            _dotService.Location = new Point(x, Theme.Px(10));
+            x += Theme.Px(16);
+            _lblService.Location = new Point(x, Theme.Px(6));
+            x += TextRenderer.MeasureText(_lblService.Text, _lblService.Font).Width + Theme.Px(18);
+            _lblIpSet.Location = new Point(x, Theme.Px(6));
         }
 
         private void BuildToast()
         {
             _toast = new Panel();
-            _toast.Size = new Size(430, 56);
+            _toast.Size = new Size(Theme.Px(430), Theme.Px(56));
             _toast.Visible = false;
             _toast.BackColor = Color.Transparent;
             _toast.Paint += delegate(object s, PaintEventArgs e)
@@ -936,8 +1000,9 @@ namespace ZapretManager
             };
             _toastLabel = new Label();
             _toastLabel.AutoSize = false;
-            _toastLabel.Location = new Point(16, 10);
-            _toastLabel.Size = new Size(398, 36);
+            _toastLabel.AutoEllipsis = true;
+            _toastLabel.Location = new Point(Theme.Px(16), Theme.Px(10));
+            _toastLabel.Size = new Size(Theme.Px(398), Theme.Px(36));
             _toastLabel.BackColor = Color.Transparent;
             _toastLabel.ForeColor = Theme.Text;
             _toastLabel.Font = Theme.Base;
@@ -978,7 +1043,7 @@ namespace ZapretManager
         private void PositionToast()
         {
             if (_toast == null) return;
-            _toast.Location = new Point(ClientSize.Width - _toast.Width - 24, ClientSize.Height - _toast.Height - 46);
+            _toast.Location = new Point(ClientSize.Width - _toast.Width - Theme.Px(24), ClientSize.Height - _toast.Height - Theme.Px(46));
         }
 
         protected override void OnResize(EventArgs e)
@@ -1062,6 +1127,7 @@ namespace ZapretManager
             string currentKey = _shell.Current != null ? _shell.Current.Key : "overview";
             foreach (PageBase p in _shell.Pages)
             {
+                p.OnDispose();
                 _pageHost.Controls.Remove(p.View);
                 p.View.Dispose();
             }
@@ -1082,7 +1148,7 @@ namespace ZapretManager
             pages.Add(new DiagnosticsPage(_shell));
             pages.Add(new ToolsPage(_shell));
 
-            int y = 102;
+            int y = Theme.Px(102);
             foreach (PageBase p in pages)
             {
                 p.Build();
@@ -1094,8 +1160,9 @@ namespace ZapretManager
                 _shell.Pages.Add(p);
 
                 NavButton nb = new NavButton(p.Title, p.Icon);
-                nb.Location = new Point(10, y);
-                nb.Width = SidebarWidth - 20;
+                nb.Location = new Point(Theme.Px(10), y);
+                nb.Width = Theme.Px(SidebarWidth) - Theme.Px(20);
+                nb.Height = Theme.Px(42);
                 nb.Tag = p.Key;
                 nb.Click += delegate(object s, EventArgs e)
                 {
@@ -1104,9 +1171,10 @@ namespace ZapretManager
                 };
                 _sidebar.Controls.Add(nb);
                 _navButtons.Add(nb);
-                y += 44;
+                y += Theme.Px(44);
             }
 
+            _sidebar.Controls.Add(_navGroup1);
             _shell.Current = null;
             Navigate(currentKey);
         }
@@ -1120,6 +1188,8 @@ namespace ZapretManager
             }
             if (target == null && _shell.Pages.Count > 0) target = _shell.Pages[0];
             if (target == null) return;
+
+            if (_shell.Current != null && _shell.Current != target && !_shell.Current.ConfirmLeave()) return;
 
             foreach (PageBase p in _shell.Pages) p.View.Visible = (p == target);
             foreach (NavButton nb in _navButtons) nb.Selected = string.Equals(Convert.ToString(nb.Tag), target.Key, StringComparison.Ordinal);
@@ -1135,6 +1205,7 @@ namespace ZapretManager
         /// <summary>Применяет тему (auto/dark/light) и перестраивает интерфейс.</summary>
         public void ApplyTheme(string mode)
         {
+            if (_shell.Current != null && !_shell.Current.ConfirmLeave()) return;
             Theme.Apply(mode);
             _shell.Config.Set("Theme", Theme.Mode);
             _shell.Config.Save();
@@ -1145,8 +1216,10 @@ namespace ZapretManager
             _titleLbl.ForeColor = Theme.Text;
             _subtitleLbl.ForeColor = Theme.TextMuted;
             Native.SetTitleBarTheme(Handle, Theme.IsDark);
-            RebuildPages();
-            _shell.RefreshStateAsync();
+            // Перестраиваем страницы после выхода из обработчика кнопки/комбобокса:
+            // иначе RebuildPages уничтожает контрол, чей Click ещё на стеке.
+            try { BeginInvoke((MethodInvoker)delegate() { RebuildPages(); _shell.RefreshStateAsync(); }); }
+            catch { RebuildPages(); _shell.RefreshStateAsync(); }
             Log.Info("Оформление: " + Theme.Mode + " (" + (Theme.IsDark ? "тёмная" : "светлая") + ").");
         }
 
@@ -1224,17 +1297,22 @@ namespace ZapretManager
         /// <summary>Фоновый сторож: читает журнал DNS и добавляет заблокированные домены в списки.</summary>
         private void StartSiteGuard()
         {
-            if (_shell.Config.GetBool("SiteGuard", false))
-            {
-                SiteGuard.EnableLog();
-                SiteGuard.ResetCursor();
-                Log.Info("Сторож сайтов включён: следим за запросами браузеров.");
-            }
             if (_guardTimer != null) return;
             _guardTimer = new System.Windows.Forms.Timer();
             _guardTimer.Interval = 6000;
             _guardTimer.Tick += delegate { PollSiteGuard(); };
             _guardTimer.Start();
+
+            if (_shell.Config.GetBool("SiteGuard", false))
+            {
+                // включение журнала — отдельный процесс wevtutil, не блокируем старт UI
+                _shell.RunBackground(delegate()
+                {
+                    SiteGuard.EnableLog();
+                    SiteGuard.ResetCursor();
+                    Log.Info("Сторож сайтов включён: следим за запросами браузеров.");
+                }, null);
+            }
         }
 
         private void PollSiteGuard()
@@ -1244,7 +1322,7 @@ namespace ZapretManager
             if (System.Threading.Interlocked.CompareExchange(ref _guardBusy, 1, 0) != 0) return;
 
             ZapretInstall install = _shell.Install;
-            bool autoAdd = _shell.Config.GetBool("SiteGuardAutoAdd", true);
+            bool autoAdd = _shell.Config.GetBool("SiteGuardAutoAdd", false);
             _shell.RunBackground(delegate()
             {
                 try

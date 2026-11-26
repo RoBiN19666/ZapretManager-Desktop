@@ -55,7 +55,14 @@ namespace ZapretManager
             if (!Uri.TryCreate(t, UriKind.Absolute, out uri)) return "";
             if (string.IsNullOrEmpty(uri.Host)) return "";
             url = uri.Scheme + "://" + uri.Host + (uri.IsDefaultPort ? "" : ":" + uri.Port) + "/";
-            return uri.Host.ToLowerInvariant();
+            string host = uri.Host.ToLowerInvariant();
+            try
+            {
+                // Unicode-домен → punycode: DNS/SNI и списки должны видеть ASCII-форму.
+                host = new System.Globalization.IdnMapping().GetAscii(host);
+            }
+            catch { }
+            return host;
         }
 
         public static SiteProbe Check(string input, Action<string> progress)
@@ -76,7 +83,7 @@ namespace ZapretManager
             Stopwatch sw = Stopwatch.StartNew();
             try
             {
-                IPAddress[] addresses = Dns.GetHostAddresses(p.Host);
+                IPAddress[] addresses = Resolve(p.Host, 5000);
                 List<string> v4 = new List<string>();
                 List<string> v6 = new List<string>();
                 foreach (IPAddress a in addresses)
@@ -224,10 +231,10 @@ namespace ZapretManager
             string err = "";
             int elapsed = 0;
             bool ok = false;
+            TcpClient client = new TcpClient();
             Thread thread = new Thread(delegate()
             {
                 Stopwatch sw = Stopwatch.StartNew();
-                TcpClient client = new TcpClient();
                 try
                 {
                     IAsyncResult ar = client.BeginConnect(host, 443, null, null);
@@ -260,6 +267,8 @@ namespace ZapretManager
             thread.Start();
             if (!thread.Join(timeoutMs))
             {
+                // закрываем сокет снаружи — поток не останется висеть на Connect/Authenticate
+                try { client.Close(); } catch { }
                 error = "таймаут TLS " + timeoutMs + " мс";
                 ms = timeoutMs;
                 return false;
@@ -277,6 +286,7 @@ namespace ZapretManager
             Web.EnableModernTls();
             HttpWebRequest req = (HttpWebRequest)WebRequest.Create("https://" + host + "/");
             req.Method = "GET";
+            req.Proxy = null;
             req.Timeout = timeoutMs;
             req.ReadWriteTimeout = timeoutMs;
             req.AllowAutoRedirect = true;
@@ -370,7 +380,7 @@ namespace ZapretManager
             foreach (string h in result.ToArray())
             {
                 IPAddress[] ips;
-                try { ips = Dns.GetHostAddresses(h); }
+                try { ips = Resolve(h, 2000); }
                 catch { continue; }
                 if (ips == null || ips.Length == 0) continue;
                 int ms;
@@ -404,6 +414,7 @@ namespace ZapretManager
             {
                 HttpWebRequest req = (HttpWebRequest)WebRequest.Create("https://" + host + "/");
                 req.Method = "GET";
+                req.Proxy = null;
                 req.Timeout = 12000;
                 req.ReadWriteTimeout = 12000;
                 req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
@@ -473,6 +484,25 @@ namespace ZapretManager
             list.Add(value);
         }
 
+        /// <summary>DNS-резолв с таймаутом: системный резолвер иначе может висеть десятки секунд.</summary>
+        public static IPAddress[] Resolve(string host, int timeoutMs)
+        {
+            try
+            {
+                IAsyncResult ar = Dns.BeginGetHostAddresses(host, null, null);
+                try
+                {
+                    if (!ar.AsyncWaitHandle.WaitOne(timeoutMs)) return new IPAddress[0];
+                    return Dns.EndGetHostAddresses(ar);
+                }
+                finally
+                {
+                    try { ar.AsyncWaitHandle.Close(); } catch { }
+                }
+            }
+            catch { return new IPAddress[0]; }
+        }
+
         public static string Describe(Exception ex)
         {
             if (ex == null) return "неизвестная ошибка";
@@ -506,29 +536,33 @@ namespace ZapretManager
             if (!Directory.Exists(listsDir)) Directory.CreateDirectory(listsDir);
             path = Path.Combine(listsDir, "list-general-user.txt");
 
-            List<string> existing = new List<string>();
-            string text = File.Exists(path) ? File.ReadAllText(path, Encoding.UTF8) : "";
-            foreach (string line in text.Replace("\r\n", "\n").Split('\n'))
+            lock (ListChanges.ListFileLock)
             {
-                string norm = ListAudit.Normalize(line);
-                if (norm.Length > 0) existing.Add(norm);
-            }
+                HashSet<string> existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                string text = File.Exists(path) ? TextFile.Read(path) : "";
+                foreach (string line in text.Replace("\r\n", "\n").Split('\n'))
+                {
+                    string norm = ListAudit.Normalize(line);
+                    if (norm.Length > 0) existing.Add(norm);
+                }
 
-            StringBuilder append = new StringBuilder();
-            foreach (string raw in hosts)
-            {
-                string host = (raw ?? "").Trim().ToLowerInvariant();
-                if (host.Length == 0) continue;
-                if (host.StartsWith("*.")) host = host.Substring(2);
-                if (existing.Contains(host)) continue;
-                existing.Add(host);
-                append.AppendLine(host);
-                added++;
-            }
-            if (added == 0) return "Все эти адреса уже есть в списке.";
+                StringBuilder append = new StringBuilder();
+                foreach (string raw in hosts)
+                {
+                    string host = (raw ?? "").Trim().ToLowerInvariant();
+                    if (host.Length == 0) continue;
+                    if (host.StartsWith("*.")) host = host.Substring(2);
+                    if (host.StartsWith("^")) host = host.Substring(1);
+                    if (!ListAudit.IsHostLike(host)) continue;
+                    if (!existing.Add(host)) continue;
+                    append.AppendLine(host);
+                    added++;
+                }
+                if (added == 0) return "Все эти адреса уже есть в списке.";
 
-            if (text.Length > 0 && !text.EndsWith("\n")) text += "\r\n";
-            File.WriteAllText(path, text + append, new UTF8Encoding(false));
+                if (text.Length > 0 && !text.EndsWith("\n")) text += "\r\n";
+                ZapretOps.WriteTextAtomic(path, text + append);
+            }
             return string.Format("Добавлено адресов: {0}.", added);
         }
 
@@ -542,8 +576,10 @@ namespace ZapretManager
             {
                 string host = (raw ?? "").Trim().ToLowerInvariant();
                 if (host.Length == 0) continue;
+                if (host.StartsWith("^")) host = host.Substring(1);
+                if (!ListAudit.IsHostLike(host)) continue;
                 IPAddress[] ips;
-                try { ips = Dns.GetHostAddresses(host); }
+                try { ips = Resolve(host, 3000); }
                 catch { continue; }
                 string ipv4 = "";
                 foreach (IPAddress ip in ips)
@@ -557,7 +593,8 @@ namespace ZapretManager
 
             string path = HostsPath;
             if (!File.Exists(path)) return "Файл hosts не найден.";
-            string content = File.ReadAllText(path, Encoding.UTF8);
+            string content = TextFile.Read(path);
+            content = RemoveHostsBlocks(content);
             backup = path + ".zapret-backup-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
             File.Copy(path, backup, true);
 
@@ -579,9 +616,35 @@ namespace ZapretManager
             if (!any) return "Все эти адреса уже есть в hosts.";
             append.AppendLine("# <<< Zapret Manager");
             if (!content.EndsWith("\n")) content += "\r\n";
-            File.WriteAllText(path, content + append, new UTF8Encoding(false));
+            ZapretOps.WriteTextAtomic(path, content + append);
             try { Proc.Run("ipconfig", "/flushdns", 8000); } catch { }
             return string.Format("Записей в hosts добавлено: {0}.", added);
+        }
+
+        /// <summary>Убирает прежние блоки менеджера из hosts, чтобы записи не дублировались.</summary>
+        private static string RemoveHostsBlocks(string content)
+        {
+            if (string.IsNullOrEmpty(content)) return content;
+            if (content.IndexOf("# >>> Zapret Manager: адреса сайтов", StringComparison.Ordinal) < 0) return content;
+            string[] lines = content.Replace("\r\n", "\n").Split('\n');
+            StringBuilder sb = new StringBuilder();
+            bool inBlock = false;
+            foreach (string line in lines)
+            {
+                string t = line.TrimStart();
+                if (!inBlock && t.StartsWith("# >>> Zapret Manager: адреса сайтов", StringComparison.Ordinal))
+                {
+                    inBlock = true;
+                    continue;
+                }
+                if (inBlock)
+                {
+                    if (t.StartsWith("# <<< Zapret Manager", StringComparison.Ordinal)) inBlock = false;
+                    continue;
+                }
+                sb.AppendLine(line);
+            }
+            return sb.ToString();
         }
 
         public static string HostsPath

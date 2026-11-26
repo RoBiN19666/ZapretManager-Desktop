@@ -60,6 +60,7 @@ foreach ($s in $sources) { $cscArgs += "`"$s`"" }
 # --- Версия файла: берём из AppInfo.Version, иначе самообновление видит старую метку ---
 $corePath = Join-Path $src "Core.cs"
 $coreText = Get-Content $corePath -Raw
+$full = ""
 $mv = [regex]::Match($coreText, 'Version\s*=\s*"([^"]+)"')
 if ($mv.Success) {
     $full = $mv.Groups[1].Value
@@ -105,7 +106,7 @@ if (-not $Quiet) {
 
 # --- Пакет для релиза: отдельная папка dist со сборкой и контрольной суммой ---
 $verFile = Join-Path $root "version.txt"
-$version = if (Test-Path $verFile) { (Get-Content $verFile -Raw).Trim() } else { "0.0.0" }
+$version = if ($full.Length -gt 0) { $full } elseif (Test-Path $verFile) { (Get-Content $verFile -Raw).Trim() } else { "0.0.0" }
 $dist = Join-Path $root "dist"
 if (-not (Test-Path $dist)) { New-Item -ItemType Directory -Path $dist | Out-Null }
 $distExe = Join-Path $dist "ZapretManager.exe"

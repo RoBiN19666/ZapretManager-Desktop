@@ -15,6 +15,14 @@ namespace ZapretManager
         [STAThread]
         private static void Main(string[] args)
         {
+            // Применение обновления: новый exe ждёт выхода старого, копирует себя на место
+            // старого и запускает его. Никакого cmd.exe и кодировок — пути остаются Unicode.
+            if (HasFlag(args, "--apply-update"))
+            {
+                SelfUpdate.RunApplyUpdate();
+                return;
+            }
+
             Web.EnableModernTls();
             Theme.InitFonts();
             Application.EnableVisualStyles();
@@ -112,11 +120,21 @@ namespace ZapretManager
             if (guardOnce)
             {
                 AppConfig guardConfig = AppConfig.Load(AppConfig.DefaultPath());
+                ZapretInstall guardInstall = ZapretInstall.Detect(string.IsNullOrEmpty(rootArg) ? guardConfig.Get("Root", "") : rootArg);
                 SiteGuard.AllowAllProcesses = true;
                 SiteGuard.DebugFirst = 6;
                 string guardError;
                 int guardScanned;
                 System.Collections.Generic.List<string> guardHosts = SiteGuard.NewBrowserHosts(out guardError, out guardScanned);
+                Log.Info("Сторож: просканировано событий " + guardScanned + ", доменов " + guardHosts.Count + (guardError.Length > 0 ? ", ошибка: " + guardError : ""));
+                if (guardInstall.IsValid && guardHosts.Count > 0)
+                {
+                    bool guardAutoAdd = guardConfig.GetBool("SiteGuardAutoAdd", false);
+                    System.Collections.Generic.List<string> guardAdded = SiteGuard.Process(guardInstall, guardConfig, guardHosts, guardAutoAdd,
+                        delegate(string guardMessage) { Log.Info(guardMessage); });
+                    Log.Info("Сторож: добавлено доменов " + guardAdded.Count + (guardAutoAdd ? "." : " (без авто-добавления)."));
+                }
+                return;
             }
             if (menuCursorProbe)
             {
@@ -196,7 +214,14 @@ namespace ZapretManager
                 Log.Write(prepared ? LogLevel.Ok : LogLevel.Error, "Тихий режим TG WS Proxy: " + message);
                 return;
             }
-            Log.Info("Аргументы: [" + string.Join("] [", args) + "]");
+            StringBuilder argFlags = new StringBuilder();
+            foreach (string arg in args)
+            {
+                if (!arg.StartsWith("--", StringComparison.Ordinal)) continue;
+                int eq = arg.IndexOf('=');
+                argFlags.Append(eq > 0 ? arg.Substring(0, eq) : arg).Append(' ');
+            }
+            Log.Info("Аргументы: " + args.Length + " шт. [" + argFlags.ToString().Trim() + "]");
             Log.Info("Права администратора: " + (Native.IsAdmin() ? "да" : "нет") + " / " + (limited ? "ограниченный режим" : "обычный режим"));
 
             AppConfig config = AppConfig.Load(AppConfig.DefaultPath());
@@ -228,7 +253,7 @@ namespace ZapretManager
             form.Height = Math.Max(form.MinimumSize.Height, h);
             if (x != int.MinValue && y != int.MinValue)
             {
-                Rectangle wa = Screen.PrimaryScreen.WorkingArea;
+                Rectangle wa = SystemInformation.VirtualScreen;
                 if (x > wa.Left - 200 && y > wa.Top - 200 && x < wa.Right - 100 && y < wa.Bottom - 100)
                 {
                     form.StartPosition = FormStartPosition.Manual;

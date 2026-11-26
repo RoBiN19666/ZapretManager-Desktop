@@ -22,8 +22,9 @@ namespace ZapretManager
         };
 
         private static long _lastRecordId = -1;
+        private static readonly object _stateLock = new object();
         /// <summary>Служебный режим: учитывать процессы любых приложений, а не только браузеров.</summary>
-        public static bool AllowAllProcesses;
+        public static volatile bool AllowAllProcesses;
         /// <summary>Сколько первых событий писать в журнал (для отладки).</summary>
         public static int DebugFirst;
         private static readonly Dictionary<string, DateTime> _checked = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
@@ -58,13 +59,24 @@ namespace ZapretManager
         /// <summary>Сбрасывает курсор: при старте историю не разбираем.</summary>
         public static void ResetCursor()
         {
-            _lastRecordId = -1;
-            _checked.Clear();
+            lock (_stateLock)
+            {
+                _lastRecordId = -1;
+                _checked.Clear();
+            }
         }
 
         /// <summary>Последние имена из журнала DNS, которые запрашивали браузеры.</summary>
         public static List<string> NewBrowserHosts(out string error, out int scanned)
         {
+            return NewBrowserHosts(null, out error, out scanned);
+        }
+
+        /// <summary>То же, но с фильтром по конкретным PID (для «Проверки приложения»).</summary>
+        public static List<string> NewBrowserHosts(ISet<int> allowedPids, out string error, out int scanned)
+        {
+            lock (_stateLock)
+            {
             error = "";
             scanned = 0;
             List<string> hosts = new List<string>();
@@ -95,12 +107,20 @@ namespace ZapretManager
                     try
                     {
                         scanned++;
-                        // журнал локализован, поэтому ищем домен в тексте события, а PID — по слову PID
+                        // журнал локализован, поэтому домен ищем в тексте, а ClientPID — в XML события
                         string message = rec.FormatDescription() ?? "";
+                        int clientPid = 0;
+                        try
+                        {
+                            string xml = rec.ToXml() ?? "";
+                            Match pm = Regex.Match(xml, "<Data Name=['\"]ClientPID['\"]>(\\d+)</Data>");
+                            if (pm.Success) int.TryParse(pm.Groups[1].Value, out clientPid);
+                        }
+                        catch { }
                         if (DebugFirst > 0 && scanned <= DebugFirst)
                         {
                             string preview = message.Replace("\r", " ").Replace("\n", " ");
-                            Log.Info("Сторож debug: id=" + rec.Id + " len=" + message.Length + " [" + (preview.Length > 240 ? preview.Substring(0, 240) : preview) + "]");
+                            Log.Info("Сторож debug: id=" + rec.Id + " pid=" + clientPid + " len=" + message.Length + " [" + (preview.Length > 240 ? preview.Substring(0, 240) : preview) + "]");
                         }
                         Match nameMatch = Regex.Match(message, "([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,24}", RegexOptions.IgnoreCase);
                         Match pidMatch = Regex.Match(message, "(?i)(?:client\\s+pid|pid|process|процесс[^0-9]{0,12})\\s*[:=]?\\s*(\\d{2,6})");
@@ -116,7 +136,16 @@ namespace ZapretManager
                         if (host.StartsWith("wpad") || host == "localhost") continue;
                         if (IsNoise(host)) continue;
 
-                        if (pidMatch.Success)
+                        if (allowedPids != null)
+                        {
+                            // «Проверка приложения»: только процессы выбранного приложения.
+                            if (clientPid <= 0 || !allowedPids.Contains(clientPid)) continue;
+                        }
+                        else if (clientPid > 0)
+                        {
+                            if (!AllowAllProcesses && !IsBrowser(clientPid)) continue;
+                        }
+                        else if (pidMatch.Success)
                         {
                             int pid;
                             if (int.TryParse(pidMatch.Groups[1].Value, out pid) && !AllowAllProcesses && !IsBrowser(pid)) continue;
@@ -133,6 +162,7 @@ namespace ZapretManager
                 error = ex.Message;
             }
             return hosts;
+            }
         }
 
         private static readonly string[] NoiseHosts = new string[]
@@ -208,7 +238,7 @@ namespace ZapretManager
                 foreach (string file in Directory.GetFiles(install.ListsDir, "*list*.txt"))
                 {
                     if (file.IndexOf("exclude", StringComparison.OrdinalIgnoreCase) >= 0) continue;
-                    foreach (string line in File.ReadAllLines(file, Encoding.UTF8))
+                    foreach (string line in TextFile.ReadLines(file))
                     {
                         string norm = ListAudit.Normalize(line);
                         if (norm.Length > 0) entries.Add(norm.StartsWith("^") ? norm.Substring(1) : norm);
@@ -243,9 +273,14 @@ namespace ZapretManager
                 if (host.Length == 0) continue;
                 if (perCycle >= 5) break;
 
-                DateTime last;
-                if (_checked.TryGetValue(host, out last) && (DateTime.Now - last).TotalMinutes < 60) continue;
-                _checked[host] = DateTime.Now;
+                bool recentlyChecked;
+                lock (_stateLock)
+                {
+                    DateTime last;
+                    recentlyChecked = _checked.TryGetValue(host, out last) && (DateTime.Now - last).TotalMinutes < 60;
+                    if (!recentlyChecked) _checked[host] = DateTime.Now;
+                }
+                if (recentlyChecked) continue;
                 if (AlreadyListed(install, host)) continue;
 
                 perCycle++;
@@ -272,13 +307,16 @@ namespace ZapretManager
         /// <summary>Убирает старые записи из кэша проверок, чтобы он не рос.</summary>
         public static void Trim()
         {
-            if (_checked.Count < 500) return;
-            List<string> stale = new List<string>();
-            foreach (KeyValuePair<string, DateTime> pair in _checked)
+            lock (_stateLock)
             {
-                if ((DateTime.Now - pair.Value).TotalHours > 6) stale.Add(pair.Key);
+                if (_checked.Count < 500) return;
+                List<string> stale = new List<string>();
+                foreach (KeyValuePair<string, DateTime> pair in _checked)
+                {
+                    if ((DateTime.Now - pair.Value).TotalHours > 6) stale.Add(pair.Key);
+                }
+                foreach (string key in stale) _checked.Remove(key);
             }
-            foreach (string key in stale) _checked.Remove(key);
         }
     }
 }

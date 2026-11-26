@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -17,6 +17,8 @@ namespace ZapretManager
         public string Url = "";        // null/пусто для ping-целей
         public string PingHost = "";
         public bool IsPing;
+        /// <summary>Цель доступна без обхода — её нельзя засчитывать стратегии.</summary>
+        public bool BaselineOk;
 
         public string Display
         {
@@ -40,7 +42,7 @@ namespace ZapretManager
             try
             {
                 if (!File.Exists(path)) return groups;
-                foreach (string raw in File.ReadAllLines(path, Encoding.UTF8))
+                foreach (string raw in TextFile.ReadLines(path))
                 {
                     string line = raw.Trim();
                     if (line.Length == 0) continue;
@@ -162,6 +164,8 @@ namespace ZapretManager
         public bool DeepCheck;
         public bool StopService = true;
         public bool RestoreAfter = true;
+        /// <summary>Сколько целей доступно без обхода (исключены из оценки).</summary>
+        public int BaselineReachable;
     }
 
     /// <summary>Прогон стратегий: запускает winws.exe по очереди и проверяет доступность целей.</summary>
@@ -207,12 +211,14 @@ namespace ZapretManager
                     status = (int)resp.StatusCode;
                     int want = deep ? 16384 : 512;
                     byte[] buffer = new byte[8192];
+                    byte[] captured = new byte[want];
                     int total = 0;
                     using (Stream s = resp.GetResponseStream())
                     {
                         int n;
-                        while (total < want && (n = s.Read(buffer, 0, buffer.Length)) > 0)
+                        while (total < want && (n = s.Read(buffer, 0, Math.Min(buffer.Length, want - total))) > 0)
                         {
+                            Array.Copy(buffer, 0, captured, total, n);
                             total += n;
                         }
                     }
@@ -221,6 +227,17 @@ namespace ZapretManager
                     {
                         error = "получено всего " + total + " Б";
                         return false;
+                    }
+                    if (total > 0)
+                    {
+                        string utf8 = Encoding.UTF8.GetString(captured, 0, total);
+                        string cp1251 = "";
+                        try { cp1251 = Encoding.GetEncoding(1251).GetString(captured, 0, total); } catch { }
+                        if (LooksLikeBlockPage(utf8) || LooksLikeBlockPage(cp1251))
+                        {
+                            error = "страница-заглушка провайдера";
+                            return false;
+                        }
                     }
                     return true;
                 }
@@ -232,6 +249,27 @@ namespace ZapretManager
                 {
                     try { status = (int)((HttpWebResponse)ex.Response).StatusCode; } catch { }
                     // Сервер ответил (даже 403/404) — значит TLS и HTTP дошли, обход работает.
+                    // Но если это явная страница-заглушка провайдера, успехом не считаем.
+                    try
+                    {
+                        using (Stream es = ex.Response.GetResponseStream())
+                        {
+                            byte[] eb = new byte[2048];
+                            int en = es != null ? es.Read(eb, 0, eb.Length) : 0;
+                            if (en > 0)
+                            {
+                                string eh = Encoding.UTF8.GetString(eb, 0, en);
+                                string ec = "";
+                                try { ec = Encoding.GetEncoding(1251).GetString(eb, 0, en); } catch { }
+                                if (LooksLikeBlockPage(eh) || LooksLikeBlockPage(ec))
+                                {
+                                    error = "страница-заглушка провайдера";
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    catch { }
                     return true;
                 }
                 error = ex.Status == WebExceptionStatus.Timeout ? "таймаут" : ex.Message;
@@ -245,6 +283,19 @@ namespace ZapretManager
                 if (error.Length > 60) error = error.Substring(0, 60);
                 return false;
             }
+        }
+
+        private static bool LooksLikeBlockPage(string html)
+        {
+            if (string.IsNullOrEmpty(html)) return false;
+            string t = html.ToLowerInvariant();
+            return t.IndexOf("доступ ограничен", StringComparison.Ordinal) >= 0
+                || t.IndexOf("доступ к запрашиваемому", StringComparison.Ordinal) >= 0
+                || t.IndexOf("заблокирован", StringComparison.Ordinal) >= 0
+                || t.IndexOf("blockpage", StringComparison.Ordinal) >= 0
+                || t.IndexOf("blocked by", StringComparison.Ordinal) >= 0
+                || t.IndexOf("zapret-info", StringComparison.Ordinal) >= 0
+                || t.IndexOf("роскомнадзор", StringComparison.Ordinal) >= 0;
         }
 
         public static bool CheckPing(string host, int timeoutMs, out int ms, out string error)
@@ -291,8 +342,17 @@ namespace ZapretManager
                     Proc.Run("sc.exe", "stop zapret", 25000);
                     Thread.Sleep(1200);
                 }
-                Proc.KillAll("winws.exe");
+                _ops.KillWinws();
                 Thread.Sleep(300);
+
+                // Базовая линия: что открывается БЕЗ обхода. Такие цели нельзя
+                // засчитывать стратегиям, иначе тест показывает ложные ✓.
+                int baselineReachable = CheckBaseline(groups, options);
+                options.BaselineReachable = baselineReachable;
+                if (baselineReachable > 0)
+                {
+                    Log.Warn("Тест: без обхода доступно целей " + baselineReachable + " — они исключены из оценки стратегий.");
+                }
 
                 for (int i = 0; i < strategies.Count; i++)
                 {
@@ -307,7 +367,8 @@ namespace ZapretManager
                     {
                         GroupResult gr = new GroupResult();
                         gr.Group = g.Name;
-                        gr.Total = g.Targets.Count;
+                        gr.Total = 0;
+                        foreach (TestTarget t in g.Targets) if (!t.BaselineOk) gr.Total++;
                         row.Groups.Add(gr);
                     }
 
@@ -324,7 +385,7 @@ namespace ZapretManager
                         ExecuteChecks(groups, row, options, cancelled);
                     }
 
-                    Proc.KillAll("winws.exe");
+                    _ops.KillWinws();
                     Thread.Sleep(250);
 
                     rows.Add(row);
@@ -333,7 +394,7 @@ namespace ZapretManager
             }
             finally
             {
-                Proc.KillAll("winws.exe");
+                _ops.KillWinws();
                 Thread.Sleep(300);
                 if (options.RestoreAfter)
                 {
@@ -349,11 +410,56 @@ namespace ZapretManager
                             StrategyDef prev = _install.FindStrategy(before.MatchedStrategy);
                             if (prev != null) _ops.Start(prev);
                         }
+                        else if (before.WinwsRunning)
+                        {
+                            Log.Warn("Тест: bypass был запущен, но стратегия не сопоставлена — после теста он остался выключен.");
+                        }
                     }
                     catch (Exception ex) { Log.Warn("Не удалось восстановить bypass после теста: " + ex.Message); }
                 }
             }
             return rows;
+        }
+
+        private static int CheckBaseline(List<TestTargetGroup> groups, TesterOptions options)
+        {
+            List<TestTarget> flat = new List<TestTarget>();
+            foreach (TestTargetGroup g in groups)
+            {
+                foreach (TestTarget t in g.Targets)
+                {
+                    t.BaselineOk = false;
+                    flat.Add(t);
+                }
+            }
+            int reachable = 0;
+            try
+            {
+                ParallelOptions po = new ParallelOptions();
+                po.MaxDegreeOfParallelism = 6;
+                Parallel.ForEach(flat, po, delegate(TestTarget t)
+                {
+                    bool ok;
+                    int ms;
+                    string error;
+                    if (t.IsPing)
+                    {
+                        ok = CheckPing(t.PingHost, options.TimeoutMs, out ms, out error);
+                    }
+                    else
+                    {
+                        int status;
+                        ok = CheckHttp(t.Url, options.TimeoutMs, false, out ms, out status, out error);
+                    }
+                    if (ok)
+                    {
+                        t.BaselineOk = true;
+                        Interlocked.Increment(ref reachable);
+                    }
+                });
+            }
+            catch (Exception ex) { Log.Warn("Тест: не удалось проверить базовую линию: " + ex.Message); }
+            return reachable;
         }
 
         private static void ExecuteChecks(List<TestTargetGroup> groups, StrategyTestRow row, TesterOptions options, Func<bool> cancelled)
@@ -368,7 +474,8 @@ namespace ZapretManager
                     if (string.Equals(r.Group, g.Name, StringComparison.OrdinalIgnoreCase)) { gr = r; break; }
                 }
                 if (gr == null) continue;
-                foreach (TestTarget t in g.Targets) flat.Add(new KeyValuePair<GroupResult, TestTarget>(gr, t));
+                foreach (TestTarget t in g.Targets)
+                    if (!t.BaselineOk) flat.Add(new KeyValuePair<GroupResult, TestTarget>(gr, t));
             }
 
             object gate = new object();
@@ -455,7 +562,7 @@ namespace ZapretManager
             try
             {
                 if (!File.Exists(path)) return rep;
-                string[] lines = File.ReadAllLines(path, Encoding.UTF8);
+                string[] lines = TextFile.ReadLines(path);
                 bool groupsRead = false;
                 foreach (string raw in lines)
                 {
@@ -552,7 +659,7 @@ namespace ZapretManager
             {
                 rep.Created = File.GetLastWriteTime(path);
                 bool inAnalytics = false;
-                foreach (string raw in File.ReadAllLines(path, Encoding.UTF8))
+                foreach (string raw in TextFile.ReadLines(path))
                 {
                     string line = raw.Trim();
                     if (line.StartsWith("=== ANALYTICS", StringComparison.OrdinalIgnoreCase)) { inAnalytics = true; continue; }
@@ -564,13 +671,20 @@ namespace ZapretManager
                     if (!inAnalytics || line.Length == 0) continue;
                     Match m = Regex.Match(line,
                         "^(?<name>.+?)\\s*:\\s*OK:\\s*(?<ok>\\d+),\\s*FAIL:\\s*(?<fail>\\d+),\\s*UNSUP:\\s*(?<unsup>\\d+),\\s*BLOCKED:\\s*(?<blocked>\\d+)\\s*$");
+                    if (!m.Success)
+                    {
+                        // режим Standard: "HTTP OK: n, ERR: n, UNSUP: n, Ping OK: n, Fail: n"
+                        m = Regex.Match(line,
+                            "^(?<name>.+?)\\s*:\\s*HTTP OK:\\s*(?<ok>\\d+),\\s*ERR:\\s*(?<fail>\\d+),\\s*UNSUP:\\s*(?<unsup>\\d+),\\s*Ping OK:\\s*(?<pingok>\\d+),\\s*Fail:\\s*(?<pingfail>\\d+)\\s*$");
+                    }
                     if (!m.Success) continue;
                     OfficialTestRow row = new OfficialTestRow();
                     row.Name = m.Groups["name"].Value.Trim();
                     row.Ok = int.Parse(m.Groups["ok"].Value);
                     row.Fail = int.Parse(m.Groups["fail"].Value);
+                    if (m.Groups["pingfail"].Success) row.Fail += int.Parse(m.Groups["pingfail"].Value);
                     row.Unsup = int.Parse(m.Groups["unsup"].Value);
-                    row.Blocked = int.Parse(m.Groups["blocked"].Value);
+                    row.Blocked = m.Groups["blocked"].Success ? int.Parse(m.Groups["blocked"].Value) : 0;
                     rep.Rows.Add(row);
                 }
             }

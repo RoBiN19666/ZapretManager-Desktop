@@ -44,23 +44,31 @@ namespace ZapretManager
                 "explorer", "dwm", "taskhostw", "sihost", "ctfmon", "runtimebroker", "searchapp",
                 "startmenuexperiencehost", "shellexperiencehost", "applicationframehost", "textinputhost"
             };
-            foreach (Process p in Process.GetProcesses())
+            Process[] processes = Process.GetProcesses();
+            try
             {
-                try
+                foreach (Process p in processes)
                 {
-                    if (p.Id <= 4) continue;
-                    if (skip.Contains(p.ProcessName)) continue;
-                    string title = "";
-                    try { title = p.MainWindowTitle ?? ""; } catch { }
-                    if (title.Length == 0) continue;
-                    AppEntry e = new AppEntry();
-                    e.Pid = p.Id;
-                    e.Name = p.ProcessName;
-                    e.Title = title.Length > 60 ? title.Substring(0, 59) + "…" : title;
-                    try { e.Path = p.MainModule.FileName; } catch { }
-                    list.Add(e);
+                    try
+                    {
+                        if (p.Id <= 4) continue;
+                        if (skip.Contains(p.ProcessName)) continue;
+                        string title = "";
+                        try { title = p.MainWindowTitle ?? ""; } catch { }
+                        if (title.Length == 0) continue;
+                        AppEntry e = new AppEntry();
+                        e.Pid = p.Id;
+                        e.Name = p.ProcessName;
+                        e.Title = title.Length > 60 ? title.Substring(0, 59) + "…" : title;
+                        try { e.Path = p.MainModule.FileName; } catch { }
+                        list.Add(e);
+                    }
+                    catch { }
                 }
-                catch { }
+            }
+            finally
+            {
+                foreach (Process p in processes) { try { p.Dispose(); } catch { } }
             }
             list.Sort(delegate(AppEntry a, AppEntry b) { return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase); });
             return list;
@@ -82,14 +90,22 @@ namespace ZapretManager
             }
             catch { return result; }
             if (name.Length == 0) return result;
-            foreach (Process p in Process.GetProcessesByName(name))
+            Process[] same = Process.GetProcessesByName(name);
+            try
             {
-                try
+                foreach (Process p in same)
                 {
-                    if (path.Length == 0 || string.Equals(p.MainModule.FileName, path, StringComparison.OrdinalIgnoreCase))
-                        result.Add(p.Id);
+                    try
+                    {
+                        if (path.Length == 0 || string.Equals(p.MainModule.FileName, path, StringComparison.OrdinalIgnoreCase))
+                            result.Add(p.Id);
+                    }
+                    catch { }
                 }
-                catch { }
+            }
+            finally
+            {
+                foreach (Process p in same) { try { p.Dispose(); } catch { } }
             }
             return result;
         }
@@ -167,14 +183,17 @@ namespace ZapretManager
             List<string> hosts = new List<string>();
             Dictionary<string, bool> seen = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             bool oldAll = SiteGuard.AllowAllProcesses;
-            SiteGuard.AllowAllProcesses = true;   // у игр свои сетевые службы: смотрим запросы всех процессов
+            SiteGuard.AllowAllProcesses = true;   // для игр/лаунчеров смотрим все процессы приложения
+            HashSet<int> allowed = new HashSet<int>(SameApp(pid));
+            foreach (int child in WithChildren(pid)) allowed.Add(child);
+            allowed.Add(pid);
             try
             {
                 for (int step = 0; step <= seconds; step += 2)
                 {
                     string err;
                     int scanned;
-                    List<string> found = SiteGuard.NewBrowserHosts(out err, out scanned);
+                    List<string> found = SiteGuard.NewBrowserHosts(allowed, out err, out scanned);
                     foreach (string h in found)
                     {
                         if (IsNoiseHost(h)) continue;

@@ -328,7 +328,7 @@ namespace ZapretManager
 
             RoundButton refresh = Btn("Обновить список", ButtonKind.Ghost, 160);
             refresh.Location = new Point(454, 60);
-            refresh.Click += delegate { LoadReportList(true); };
+            refresh.Click += delegate { LoadReportList(); };
             _officialCard.Controls.Add(refresh);
 
             RoundButton openFolder = Btn("Открыть папку", ButtonKind.Ghost, 140);
@@ -361,7 +361,7 @@ namespace ZapretManager
             }
         }
 
-        private void LoadReportList(bool force)
+        private void LoadReportList()
         {
             if (ResultsDir.Length == 0) { _officialCard.Visible = false; return; }
             _reportFiles = OfficialTestReport.ListReports(ResultsDir);
@@ -375,8 +375,7 @@ namespace ZapretManager
             }
             _officialCard.Visible = true;
             _reportSelect.SetItems(names, keep.Length > 0 ? keep : names[0]);
-            if (!force) LoadOfficialReport();
-            else LoadOfficialReport();
+            LoadOfficialReport();
         }
 
         private void LoadOfficialReport()
@@ -523,6 +522,8 @@ namespace ZapretManager
 
             Shell.RunBackground(delegate()
             {
+                try
+                {
                 List<StrategyTestRow> result = tester.Run(groups, defs, opt,
                     delegate(int done, int total, string name)
                     {
@@ -558,11 +559,34 @@ namespace ZapretManager
                     Shell.Form.SetStatusHint("");
                     StrategyTester.SaveCsv(ReportPath, _rows, _grid.Groups, opt);
                     UpdateSummary();
+                    if (opt.BaselineReachable > 0)
+                    {
+                        _status.Text = "Готово. Без обхода уже доступно целей: " + opt.BaselineReachable + " — они не учитывались.";
+                        if (opt.BaselineReachable >= targets)
+                        {
+                            _summary.Text = "Все цели доступны без обхода — результаты теста не показательны.";
+                            _summary.ForeColor = Theme.Warn;
+                        }
+                    }
                     _loadedReport = false;
                     Log.Ok(string.Format("Прогон стратегий завершён за {0}: проверено {1}, лучший результат {2}/{3}",
                         FormatDuration(DateTime.Now - started), _rows.Count, BestScore(_rows), rowTotal()));
                     Shell.Notify("Тест завершён: " + _summary.Text, LogLevel.Ok);
                 });
+                }
+                finally
+                {
+                    Shell.Ui(delegate()
+                    {
+                        if (!_running) return;
+                        _running = false;
+                        _btnRun.Enabled = true;
+                        _btnStop.Enabled = false;
+                        SetTimeoutButtonsEnabled(true);
+                        _status.Text = "Прогон прерван — подробности в журнале.";
+                        Shell.Form.SetStatusHint("");
+                    });
+                }
             }, null);
         }
 
@@ -655,24 +679,36 @@ namespace ZapretManager
             {
                 if (!Dlg.Confirm(this.View.FindForm(), "Установить службу?",
                     string.Format("Стратегия «{0}» будет установлена как служба zapret (автозапуск).", def.Name), "Установить")) return;
-                bool ok;
-                string msg = Shell.Ops.InstallService(def, out ok);
-                Shell.Notify(msg, ok ? LogLevel.Ok : LogLevel.Error);
+                bool ok = false;
+                Shell.RunOperation(delegate() { return Shell.Ops.InstallService(def, out ok); }, delegate(string message)
+                {
+                    Shell.Notify(message, ok ? LogLevel.Ok : LogLevel.Error);
+                    Shell.Config.Set("LastStrategy", def.Name);
+                    Shell.Config.Save();
+                    Shell.RefreshState(false);
+                });
             }
             else
             {
-                if (Shell.State != null && Shell.State.ServiceInstalled && Shell.State.ServiceStatus == "работает")
+                bool stopService = Shell.State != null && Shell.State.ServiceInstalled && Shell.State.ServiceStatus == "работает";
+                if (stopService && !Dlg.Confirm(this.View.FindForm(), "Остановить службу?",
+                    "Сейчас bypass работает как служба. Остановить службу и запустить выбранную стратегию вручную?", "Запустить")) return;
+
+                bool ok = false;
+                Shell.RunOperation(delegate()
                 {
-                    if (!Dlg.Confirm(this.View.FindForm(), "Остановить службу?",
-                        "Сейчас bypass работает как служба. Остановить службу и запустить выбранную стратегию вручную?", "Запустить")) return;
-                    Shell.Ops.Stop();
-                }
-                ZapretOps.StartResult r2 = Shell.Ops.Start(def);
-                Shell.Notify(r2.Message, r2.Ok ? LogLevel.Ok : LogLevel.Error);
+                    if (stopService) Shell.Ops.Stop();
+                    ZapretOps.StartResult r2 = Shell.Ops.Start(def);
+                    ok = r2.Ok;
+                    return r2.Message;
+                }, delegate(string message)
+                {
+                    Shell.Notify(message, ok ? LogLevel.Ok : LogLevel.Error);
+                    Shell.Config.Set("LastStrategy", def.Name);
+                    Shell.Config.Save();
+                    Shell.RefreshState(false);
+                });
             }
-            Shell.Config.Set("LastStrategy", def.Name);
-            Shell.Config.Save();
-            Shell.RefreshState(false);
         }
 
         private void SaveReport()
@@ -699,7 +735,7 @@ namespace ZapretManager
         public override void OnShow()
         {
             if (_groups.Count == 0) LoadTargets();
-            if (_reportFiles.Count == 0) LoadReportList(false);
+            if (_reportFiles.Count == 0) LoadReportList();
             if (_rows.Count == 0 && !_loadedReport) TryLoadReport();
             SetTimeout(_timeoutMs);
             RefreshState();

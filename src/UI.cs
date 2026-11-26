@@ -86,7 +86,6 @@ namespace ZapretManager
             _fontScale = 1f / userScale;
             if (_fontScale > 1.001f || _fontScale < 0.999f)
             {
-                Font old = Base;
                 Base = new Font("Segoe UI", 9.5f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
                 Small = new Font("Segoe UI", 8.5f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
                 Bold = new Font("Segoe UI Semibold", 9.5f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
@@ -96,7 +95,8 @@ namespace ZapretManager
                 Big = new Font("Segoe UI Semibold", 22f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
                 Mono = new Font("Consolas", 9f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
                 Icons = new Font("Segoe MDL2 Assets", 11f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
-                if (old != null) old.Dispose();
+                // old Base не диспозим: на него могут ссылаться уже созданные контролы.
+                // Утечка нескольких Font при смене масштаба безопаснее падения отрисовки.
             }
         }
 
@@ -327,6 +327,22 @@ namespace ZapretManager
             Margin = new Padding(0, 0, 0, 12);
         }
 
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            try
+            {
+                if (Width <= 0 || Height <= 0) return;
+                Region old = Region;
+                using (GraphicsPath path = Shape.Round(new Rectangle(0, 0, Width, Height), Radius))
+                {
+                    Region = new Region(path);
+                }
+                if (old != null) old.Dispose();
+            }
+            catch { }
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
@@ -373,12 +389,13 @@ namespace ZapretManager
 
         public RoundButton()
         {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor | ControlStyles.ResizeRedraw, true);
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
             BackColor = Color.Transparent;
             Font = Theme.Bold;
             Cursor = Cursors.Hand;
             Height = 32;
             Width = 100;
+            TabStop = true;
         }
 
         protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
@@ -386,6 +403,19 @@ namespace ZapretManager
         protected override void OnMouseDown(MouseEventArgs e) { _pressed = true; Invalidate(); base.OnMouseDown(e); }
         protected override void OnMouseUp(MouseEventArgs e) { _pressed = false; Invalidate(); base.OnMouseUp(e); }
         protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (Enabled && (e.KeyCode == Keys.Space || e.KeyCode == Keys.Enter))
+            {
+                OnClick(EventArgs.Empty);
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+            base.OnKeyDown(e);
+        }
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -436,6 +466,7 @@ namespace ZapretManager
 
             if (fill != Color.Transparent) Draw.FillRound(g, r, Radius, fill);
             if (border != Color.Transparent) Draw.DrawRound(g, r, Radius, border, 1f);
+            if (Focused && Enabled) ControlPaint.DrawFocusRectangle(g, new Rectangle(3, 3, Width - 7, Height - 7), text, Color.Transparent);
 
             Rectangle textRect = ClientRectangle;
             if (!string.IsNullOrEmpty(Glyph) && GlyphSize() > 0)
@@ -479,10 +510,11 @@ namespace ZapretManager
 
         public ToggleSwitch()
         {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor | ControlStyles.ResizeRedraw, true);
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
             BackColor = Color.Transparent;
             Size = new Size(46, 24);
             Cursor = Cursors.Hand;
+            TabStop = true;
         }
 
         public bool Checked
@@ -547,6 +579,19 @@ namespace ZapretManager
         }
 
         protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (Enabled && (e.KeyCode == Keys.Space || e.KeyCode == Keys.Enter))
+            {
+                Checked = !Checked;
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+            base.OnKeyDown(e);
+        }
 
         protected override void Dispose(bool disposing)
         {
@@ -592,6 +637,7 @@ namespace ZapretManager
             {
                 g.FillEllipse(b, kx, ky, knob, knob);
             }
+            if (Focused && Enabled) ControlPaint.DrawFocusRectangle(g, new Rectangle(0, 0, Width - 1, Height - 1), Theme.Text, Color.Transparent);
         }
 
         private static Color Blend(Color from, Color to, float t)
@@ -614,17 +660,31 @@ namespace ZapretManager
 
         public NavButton(string text, string glyph)
         {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor | ControlStyles.ResizeRedraw, true);
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
             Text = text;
             Glyph = glyph;
             BackColor = Color.Transparent;
             Font = Theme.Base;
             Height = 42;
             Cursor = Cursors.Hand;
+            TabStop = true;
         }
 
         protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
         protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Space)
+            {
+                OnClick(EventArgs.Empty);
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+            base.OnKeyDown(e);
+        }
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -650,6 +710,7 @@ namespace ZapretManager
             }
             TextRenderer.DrawText(g, Text, Selected ? Theme.Bold : Theme.Base, new Rectangle(x, 0, Width - x - 12, Height), textColor,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+            if (Focused) ControlPaint.DrawFocusRectangle(g, new Rectangle(12, 4, Width - 24, Height - 8), Theme.Text, Color.Transparent);
         }
     }
 
@@ -760,6 +821,8 @@ namespace ZapretManager
             Box.BackColor = Theme.Surface;
             Box.ForeColor = Theme.Text;
             Box.Font = Theme.Base;
+            Box.Enter += delegate { Invalidate(); };
+            Box.Leave += delegate { Invalidate(); };
             Controls.Add(Box);
         }
 

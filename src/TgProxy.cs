@@ -130,11 +130,12 @@ namespace ZapretManager
         }
 
         /// <summary>Останавливает только те экземпляры, чей exe лежит в указанной папке.</summary>
-        private static void StopProcessesInside(string dir)
+        private static int StopProcessesInside(string dir)
         {
-            if (string.IsNullOrEmpty(dir)) return;
+            if (string.IsNullOrEmpty(dir)) return 0;
             string full = "";
-            try { full = Path.GetFullPath(dir).TrimEnd('\\'); } catch { return; }
+            try { full = Path.GetFullPath(dir).TrimEnd('\\'); } catch { return 0; }
+            int count = 0;
             foreach (Proc.ProcInfo pi in FindProcesses())
             {
                 string exe = ExtractExePath(pi.CommandLine);
@@ -147,11 +148,13 @@ namespace ZapretManager
                     using (Process p = Process.GetProcessById(pi.Pid))
                     {
                         if (!p.CloseMainWindow() || !p.WaitForExit(2500)) p.Kill();
+                        count++;
                     }
-                    Log.Info("Остановлен TG WS Proxy из " + dir + " перед обновлением.");
+                    Log.Info("Остановлен TG WS Proxy из " + dir + ".");
                 }
                 catch (Exception ex) { Log.Warn("Не удалось остановить TG WS Proxy: " + ex.Message); }
             }
+            return count;
         }
 
         public static string StartupFolderExe
@@ -169,8 +172,21 @@ namespace ZapretManager
             }
         }
 
+        private static TgProxyState _cache;
+        private static DateTime _cacheAt = DateTime.MinValue;
+
+        /// <summary>Сбросить кэш состояния после запуска/остановки/установки прокси.</summary>
+        public static void InvalidateCache()
+        {
+            _cache = null;
+            _cacheAt = DateTime.MinValue;
+        }
+
         public static TgProxyState GetState(AppConfig config)
         {
+            // WMI-опрос процессов дорогой; кэш перекрывает один 5-секундный тик UI.
+            if (_cache != null && (DateTime.Now - _cacheAt).TotalSeconds < 6) return _cache;
+
             TgProxyState st = new TgProxyState();
             string dir = config.Get("TgDir", "");
             string exe = config.Get("TgExe", "");
@@ -258,6 +274,8 @@ st.PortListening = IsPortListening(st.Port);
                     st.Version = TgSource.PreparedVersion();
                 }
             }
+            _cache = st;
+            _cacheAt = DateTime.Now;
             return st;
         }
 
@@ -354,6 +372,7 @@ st.PortListening = IsPortListening(st.Port);
         public static string Start(AppConfig config, out bool ok)
         {
             ok = false;
+            InvalidateCache();
             bool quiet = RunMode(config) == "quiet";
             if (quiet)
             {
@@ -365,12 +384,15 @@ st.PortListening = IsPortListening(st.Port);
                     Log.Warn("Тихий режим TG WS Proxy: " + quietError);
                     return quietError;
                 }
+                InvalidateCache();
                 for (int i = 0; i < 20; i++)
                 {
                     Thread.Sleep(300);
+                    InvalidateCache();
                     TgProxyState check = GetState(config);
                     if (check.PortListening) { ok = true; break; }
                 }
+                InvalidateCache();
                 TgProxyState after = GetState(config);
                 ok = after.Running;
                 if (ok)
@@ -392,12 +414,14 @@ st.PortListening = IsPortListening(st.Port);
                 psi.WorkingDirectory = st.Dir;
                 psi.UseShellExecute = true;
                 Process.Start(psi);
+                InvalidateCache();
                 for (int i = 0; i < 20; i++)
                 {
                     Thread.Sleep(300);
                     if (FindProcesses().Count > 0) break;
                 }
                 Thread.Sleep(700);
+                InvalidateCache();
                 TgProxyState after = GetState(config);
                 if (after.Running)
                 {
@@ -417,30 +441,35 @@ st.PortListening = IsPortListening(st.Port);
 
         public static string Stop()
         {
+            return Stop(null);
+        }
+
+        /// <summary>Останавливает TG WS Proxy; dir — папка конкретной копии (null — определить из конфига).</summary>
+        public static string Stop(string dir)
+        {
+            InvalidateCache();
             int quietStopped = TgSource.Stop();
-            if (quietStopped > 0) return "TG WS Proxy (тихий режим) остановлен.";
-            List<Proc.ProcInfo> procs = FindProcesses();
-            if (procs.Count == 0) return "TG WS Proxy уже остановлен.";
-            int closed = 0;
-            foreach (Proc.ProcInfo pi in procs)
+            if (string.IsNullOrEmpty(dir))
             {
                 try
                 {
-                    using (Process p = Process.GetProcessById(pi.Pid))
-                    {
-                        if (p.CloseMainWindow() && p.WaitForExit(2500)) { closed++; continue; }
-                        p.Kill();
-                        p.WaitForExit(2500);
-                        closed++;
-                    }
+                    AppConfig cfg = AppConfig.Load(AppConfig.DefaultPath());
+                    TgProxyState st = GetState(cfg);
+                    dir = st.Dir;
                 }
-                catch (Exception ex)
-                {
-                    Log.Warn("Не удалось остановить TG WS Proxy (PID " + pi.Pid + "): " + ex.Message);
-                }
+                catch { }
             }
-            Log.Ok("TG WS Proxy остановлен (процессов закрыто: " + closed + ").");
-            return closed > 0 ? "TG WS Proxy остановлен." : "Не удалось остановить TG WS Proxy.";
+            if (string.IsNullOrEmpty(dir))
+                return quietStopped > 0 ? "TG WS Proxy (тихий режим) остановлен." : "Не удалось определить папку TG WS Proxy.";
+
+            int closed = StopProcessesInside(dir);
+            if (closed > 0)
+            {
+                Log.Ok("TG WS Proxy остановлен (процессов закрыто: " + closed + ").");
+                return "TG WS Proxy остановлен.";
+            }
+            if (quietStopped > 0) return "TG WS Proxy (тихий режим) остановлен.";
+            return "TG WS Proxy уже остановлен.";
         }
 
         public static string OpenInTelegram(AppConfig config)
@@ -485,8 +514,11 @@ st.PortListening = IsPortListening(st.Port);
         public static string Install(AppConfig config, string tag, string targetDir, Action<int, string> progress, out bool ok)
         {
             ok = false;
+            InvalidateCache();
             try
             {
+                if (string.IsNullOrEmpty(tag) || !Regex.IsMatch(tag, @"^[0-9A-Za-z._-]+$"))
+                    return "Некорректный тег версии: " + tag;
                 if (string.IsNullOrEmpty(targetDir)) targetDir = DefaultDir;
                 config.Set("TgDir", targetDir);
                 // останавливаем только экземпляры из обновляемой папки, чужие копии не трогаем

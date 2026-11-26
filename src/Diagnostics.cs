@@ -121,7 +121,7 @@ namespace ZapretManager
                             "После перезагрузки bypass не запустится. Переустановите службу из текущей папки.", "", "", "Bypass");
                     }
                 }
-                if (!winws && wd.Installed)
+                if (!winws && wd.Installed && wd.Status == "работает")
                 {
                     Add(list, "Зависший драйвер WinDivert", CheckSeverity.Error,
                         "Служба WinDivert активна, но winws.exe не запущен — драйвер занят и блокирует запуск.",
@@ -375,7 +375,7 @@ if (tg.QuietMode)
                 Add(list, "Файлы списков", CheckSeverity.Ok, "Все списки, на которые ссылаются стратегии, существуют.", "", "", "", "Списки");
             else
                 Add(list, "Файлы списков", CheckSeverity.Error, "Не найдены файлы списков: " + Join(missing),
-                    "Пересоздайте их: меню «Списки» → «Создать отсутствующие» или обновите zapret.", "", "", "Списки");
+                    "Откройте «Списки» и сохраните существующие файлы или обновите zapret.", "", "", "Списки");
         }
 
         private static int CountDohInterfaces()
@@ -467,11 +467,14 @@ if (tg.QuietMode)
             {
                 case ActionRemoveWinDivert:
                     if (!Native.IsAdmin()) return "Нужны права администратора.";
+                    bool removedAny = false;
                     foreach (string n in new string[] { "WinDivert", "WinDivert14" })
                     {
                         Proc.Run("sc.exe", "stop " + n, 12000);
-                        Proc.Run("sc.exe", "delete " + n, 12000);
+                        ProcResult del = Proc.Run("sc.exe", "delete " + n, 12000);
+                        if (del.ExitCode == 0) removedAny = true;
                     }
+                    if (!removedAny) return "Не удалось удалить драйвер WinDivert (служба занята или нет прав).";
                     Log.Ok("Драйвер WinDivert остановлен и удалён.");
                     return "Драйвер WinDivert остановлен и удалён.";
                 case ActionRemoveConflicts:

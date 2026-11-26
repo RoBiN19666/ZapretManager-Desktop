@@ -8,8 +8,15 @@ namespace ZapretManager
     public sealed class DialogForm : Form
     {
         private bool _ok;
+        private int _choice;
 
         public DialogForm(string title, string message, string okText, bool danger, bool withCancel)
+            : this(title, message, okText, danger, withCancel, null)
+        {
+        }
+
+        /// <summary>Диалог с третьей кнопкой (например, «Не сохранять»); Choice: 1 — OK, 2 — третья, 0 — отмена.</summary>
+        public DialogForm(string title, string message, string okText, bool danger, bool withCancel, string extraText)
         {
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
@@ -22,7 +29,7 @@ namespace ZapretManager
             Text = title;
             AutoScaleMode = AutoScaleMode.None;
 
-            int width = 520;
+            int width = extraText != null ? 640 : 520;
             int textWidth = width - 56;
             Font msgFont = Theme.Base;
             Size textSize = TextRenderer.MeasureText(message, msgFont, new Size(textWidth, 2000), TextFormatFlags.WordBreak);
@@ -47,7 +54,7 @@ namespace ZapretManager
             ok.Width = Math.Max(110, TextRenderer.MeasureText(okText, Theme.Bold).Width + 40);
             ok.Height = 34;
             ok.Location = new Point(ClientSize.Width - 28 - ok.Width, ClientSize.Height - 54);
-            ok.Click += delegate { _ok = true; DialogResult = DialogResult.OK; Close(); };
+            ok.Click += delegate { _ok = true; _choice = 1; DialogResult = DialogResult.OK; Close(); };
             Controls.Add(ok);
 
             if (withCancel)
@@ -58,9 +65,21 @@ namespace ZapretManager
                 cancel.Width = 100;
                 cancel.Height = 34;
                 cancel.Location = new Point(ok.Left - 112, ClientSize.Height - 54);
-                cancel.Click += delegate { DialogResult = DialogResult.Cancel; Close(); };
+                cancel.Click += delegate { _choice = 0; DialogResult = DialogResult.Cancel; Close(); };
                 Controls.Add(cancel);
                 CancelButton = cancel;
+
+                if (extraText != null)
+                {
+                    RoundButton extra = new RoundButton();
+                    extra.Text = extraText;
+                    extra.Kind = ButtonKind.Ghost;
+                    extra.Width = Math.Max(120, TextRenderer.MeasureText(extraText, Theme.Bold).Width + 36);
+                    extra.Height = 34;
+                    extra.Location = new Point(cancel.Left - 12 - extra.Width, ClientSize.Height - 54);
+                    extra.Click += delegate { _choice = 2; DialogResult = DialogResult.No; Close(); };
+                    Controls.Add(extra);
+                }
             }
             AcceptButton = ok;
             if (danger) ok.Kind = ButtonKind.Danger;
@@ -74,6 +93,7 @@ namespace ZapretManager
         }
 
         public bool Confirmed { get { return _ok; } }
+        public int Choice { get { return _choice; } }
 
         protected override void OnHandleCreated(EventArgs e)
         {
@@ -84,6 +104,16 @@ namespace ZapretManager
 
     public static class Dlg
     {
+        /// <summary>Возвращает 1 — сохранить, 2 — не сохранять, 0 — отмена.</summary>
+        public static int SaveChanges(IWin32Window owner, string title, string message)
+        {
+            using (DialogForm f = new DialogForm(title, message, "Сохранить", false, true, "Не сохранять"))
+            {
+                f.ShowDialog(owner);
+                return f.Choice;
+            }
+        }
+
         public static bool Confirm(IWin32Window owner, string title, string message, string okText)
         {
             using (DialogForm f = new DialogForm(title, message, okText, false, true))
@@ -180,11 +210,12 @@ namespace ZapretManager
 
         public DarkSelect()
         {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor | ControlStyles.ResizeRedraw, true);
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
             BackColor = Color.Transparent;
             Font = Theme.Base;
             Height = 30;
             Cursor = Cursors.Hand;
+            TabStop = true;
         }
 
         public int SelectedIndex
@@ -227,6 +258,20 @@ namespace ZapretManager
             OpenPopup();
         }
 
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Space || e.KeyCode == Keys.Down)
+            {
+                OpenPopup();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+            base.OnKeyDown(e);
+        }
+
         private void OpenPopup()
         {
             if (Items.Count == 0) return;
@@ -248,7 +293,7 @@ namespace ZapretManager
             g.SmoothingMode = SmoothingMode.AntiAlias;
             Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
             Draw.FillRound(g, r, 7, Theme.SurfaceAlt);
-            Draw.DrawRound(g, r, 7, _hover ? Theme.BorderStrong : Theme.Border, 1f);
+            Draw.DrawRound(g, r, 7, _hover || Focused ? Theme.BorderStrong : Theme.Border, 1f);
             TextRenderer.DrawText(g, SelectedItem, Font, new Rectangle(10, 0, Width - 34, Height), Theme.Text,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
             Point[] chevron = new Point[] {
@@ -296,6 +341,7 @@ namespace ZapretManager
 
             if (_selected >= 0)
             {
+                _hover = _selected;
                 _offset = _selected * RowH - ClientSize.Height / 2 + RowH;
                 int maxOffset = Math.Max(0, _items.Count * RowH + 8 - ClientSize.Height);
                 if (_offset < 0) _offset = 0;
@@ -319,9 +365,23 @@ namespace ZapretManager
             KeyDown += delegate(object s, KeyEventArgs e)
             {
                 if (e.KeyCode == Keys.Escape) Close();
-                else if (e.KeyCode == Keys.Down) ScrollBy(RowH);
-                else if (e.KeyCode == Keys.Up) ScrollBy(-RowH);
-                else if (e.KeyCode == Keys.Enter && _hover >= 0) { Result = _hover; Close(); }
+                else if (e.KeyCode == Keys.Down)
+                {
+                    _hover = _hover < 0 ? Math.Max(0, _selected) : Math.Min(_items.Count - 1, _hover + 1);
+                    EnsureVisible(_hover);
+                    Invalidate();
+                }
+                else if (e.KeyCode == Keys.Up)
+                {
+                    _hover = _hover < 0 ? Math.Max(0, _selected) : Math.Max(0, _hover - 1);
+                    EnsureVisible(_hover);
+                    Invalidate();
+                }
+                else if (e.KeyCode == Keys.Enter)
+                {
+                    int idx = _hover >= 0 ? _hover : _selected;
+                    if (idx >= 0 && idx < _items.Count) { Result = idx; Close(); }
+                }
             };
         }
 
@@ -332,6 +392,17 @@ namespace ZapretManager
             if (_offset < 0) _offset = 0;
             if (_offset > maxOffset) _offset = maxOffset;
             Invalidate();
+        }
+
+        private void EnsureVisible(int index)
+        {
+            if (index < 0) return;
+            int top = index * RowH + 4;
+            if (top < _offset) _offset = top;
+            else if (top + RowH > _offset + ClientSize.Height - 4) _offset = top + RowH - ClientSize.Height + 4;
+            int maxOffset = Math.Max(0, _items.Count * RowH + 8 - ClientSize.Height);
+            if (_offset < 0) _offset = 0;
+            if (_offset > maxOffset) _offset = maxOffset;
         }
 
         private int IndexAt(int y)
@@ -465,7 +536,8 @@ namespace ZapretManager
         private void InvalidateRow(int index)
         {
             if (index < 0 || index >= Items.Count) return;
-            Invalidate(new Rectangle(0, index * ItemHeight, Math.Max(1, ClientSize.Width), ItemHeight));
+            try { Invalidate(GetItemRectangle(index)); }
+            catch { Invalidate(); }
         }
     }
 
@@ -484,7 +556,8 @@ namespace ZapretManager
         {
             using (DarkDialogWatcher watcher = new DarkDialogWatcher())
             {
-                return dialog.ShowDialog(owner);
+                try { return dialog.ShowDialog(owner); }
+                finally { dialog.Dispose(); }
             }
         }
     }

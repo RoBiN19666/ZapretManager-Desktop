@@ -105,10 +105,12 @@ namespace ZapretManager
             base.OnResize(e);
             try
             {
+                Region old = Region;
                 using (GraphicsPath path = Shape.Round(new Rectangle(0, 0, Width, Height), Theme.Px(Radius)))
                 {
                     Region = new Region(path);
                 }
+                if (old != null) old.Dispose();
             }
             catch { }
         }

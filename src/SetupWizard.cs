@@ -297,6 +297,9 @@ namespace ZapretManager
             _btnSkip.Enabled = false;
             _tgZapret.Enabled = false;
             _tgTg.Enabled = false;
+            _btnZapretBrowse.Enabled = false;
+            _btnZapretBat.Enabled = false;
+            _btnTgBrowse.Enabled = false;
             _progress.Value = 0;
 
             bool installZapret = _tgZapret.Checked;
@@ -359,6 +362,12 @@ namespace ZapretManager
                         _busy = false;
                         _btnInstall.Enabled = true;
                         _btnSkip.Enabled = true;
+                        _btnZapretBrowse.Enabled = true;
+                        _btnZapretBat.Enabled = true;
+                        _btnTgBrowse.Enabled = true;
+                        _tgZapret.Enabled = true;
+                        _tgTg.Enabled = true;
+                        RefreshStatuses();
                         _stage.Text = "Ошибка: " + ex.Message;
                         _progress.Value = 0;
                         DlgHost.Message(this, "Установка не завершена:\n\n" + ex.Message, Text, MessageBoxIcon.Error);

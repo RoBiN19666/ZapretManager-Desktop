@@ -54,6 +54,7 @@ namespace ZapretManager
         private void Sweep()
         {
             if (!Theme.IsDark) return;
+            if (_painted.Count > 64) _painted.Clear();   // защита от накопления/переиспользования HWND
             int dark = 1;
             uint pid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
             EnumWindows(delegate(IntPtr hwnd, IntPtr lParam)

@@ -5,6 +5,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace ZapretManager
@@ -23,13 +24,13 @@ namespace ZapretManager
     }
 
     /// <summary>
-    /// Обновление самого менеджера из GitHub Releases репозитория RoBiN19666/ZapretManager-Windows.
+    /// Обновление самого менеджера из GitHub Releases репозитория RoBiN19666/ZapretManager-Desktop.
     /// Версия — тег последнего релиза, файл — ZapretManager.exe из его вложений.
     /// version.txt в ветке main остаётся подсказкой, если редирект релиза недоступен.
     /// </summary>
     public static class SelfUpdate
     {
-        public const string Repo = "RoBiN19666/ZapretManager-Windows";
+        public const string Repo = "RoBiN19666/ZapretManager-Desktop";
 
         /// <summary>Зеркала version.txt на случай, если релизы не отдаются (блокировки, прокси).</summary>
         public static string[] VersionMirrors
@@ -99,8 +100,8 @@ namespace ZapretManager
             if (!string.IsNullOrEmpty(tag))
             {
                 info.Tag = tag;
-                Match tm = Regex.Match(tag, "[0-9]+(\\.[0-9]+)*");
-                if (tm.Success) tagVersion = tm.Value;
+                tagVersion = Versions.NormalizeTag(tag);
+                if (!Regex.IsMatch(tagVersion, @"^\d+(\.\d+)+(?:[-.][0-9A-Za-z]+)?$")) tagVersion = "";
             }
 
             // version.txt — резервный источник версии, если релиз недоступен
@@ -112,7 +113,7 @@ namespace ZapretManager
                 {
                     string url = mirror + (mirror.IndexOf('?') >= 0 ? "&" : "?") + "t=" + DateTime.Now.Ticks;
                     string text = Web.GetString(url, 15000).Trim();
-                    Match m = Regex.Match(text, "[0-9]+(\\.[0-9]+)*");
+                    Match m = Regex.Match(text, @"[0-9]+(?:\.[0-9]+)+(?:[-.][0-9A-Za-z]+)?");
                     if (!m.Success) continue;
                     fileVersion = m.Value;
                     break;
@@ -253,32 +254,25 @@ namespace ZapretManager
                 if (!downloaded) return "Не удалось скачать обновление: " + downloadError;
 
                 if (progress != null) progress(90, "Подготовка замены файла…");
-                string script = Path.Combine(dir, "apply-update.cmd");
-                StringBuilder sb = new StringBuilder();
-                sb.AppendLine("@echo off");
-                sb.AppendLine(":wait");
-                sb.AppendLine("tasklist /FI \"IMAGENAME eq ZapretManager.exe\" 2>nul | find /I \"ZapretManager.exe\" >nul");
-                sb.AppendLine("if not errorlevel 1 (");
-                sb.AppendLine("  timeout /t 1 /nobreak >nul");
-                sb.AppendLine("  goto wait");
-                sb.AppendLine(")");
-                sb.AppendLine("copy /y \"" + newExe + "\" \"" + exePath + "\" >nul");
-                sb.AppendLine("if errorlevel 1 (");
-                sb.AppendLine("  del \"%~f0\"");
-                sb.AppendLine("  exit /b 1");
-                sb.AppendLine(")");
-                sb.AppendLine("start \"\" \"" + exePath + "\"");
-                sb.AppendLine("del \"" + newExe + "\" >nul 2>nul");
-                sb.AppendLine("del \"%~f0\"");
-                File.WriteAllText(script, sb.ToString(), Encoding.Default);
-
-                if (progress != null) progress(96, "Запуск обновления…");
-                ProcessStartInfo psi = new ProcessStartInfo("cmd.exe", "/c \"" + script + "\"");
-                psi.UseShellExecute = false;
-                psi.CreateNoWindow = true;
-                psi.WindowStyle = ProcessWindowStyle.Hidden;
-                psi.WorkingDirectory = dir;
-                Process.Start(psi);
+                try
+                {
+                    // Новый exe сам дождётся выхода старого процесса, скопирует себя
+                    // на место старого и запустит его. Это надёжнее cmd.exe: пути
+                    // передаются через Unicode-переменные окружения, без кодировок и кавычек.
+                    ProcessStartInfo psi = new ProcessStartInfo(newExe);
+                    psi.UseShellExecute = false;
+                    psi.CreateNoWindow = true;
+                    psi.WindowStyle = ProcessWindowStyle.Hidden;
+                    psi.WorkingDirectory = dir;
+                    psi.Arguments = "--apply-update";
+                    psi.EnvironmentVariables["ZAPRET_UPDATE_TARGET"] = exePath;
+                    psi.EnvironmentVariables["ZAPRET_UPDATE_PID"] = Process.GetCurrentProcess().Id.ToString();
+                    Process.Start(psi);
+                }
+                catch (Exception ex)
+                {
+                    return "Не удалось запустить замену файла: " + ex.Message;
+                }
 
                 ok = true;
                 pendingPath = newExe;
@@ -289,6 +283,77 @@ namespace ZapretManager
             {
                 Log.Error("Ошибка самообновления", ex);
                 return "Ошибка самообновления: " + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// Выполняется новым exe (флаг --apply-update): ждёт выхода старого процесса,
+        /// копирует себя на место старого exe и запускает его.
+        /// </summary>
+        public static void RunApplyUpdate()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "ZapretManagerUpdate");
+            try { if (!Directory.Exists(dir)) Directory.CreateDirectory(dir); } catch { }
+            string resultFile = Path.Combine(dir, "apply-result.txt");
+            try
+            {
+                string target = Environment.GetEnvironmentVariable("ZAPRET_UPDATE_TARGET");
+                string pidText = Environment.GetEnvironmentVariable("ZAPRET_UPDATE_PID");
+                if (string.IsNullOrEmpty(target))
+                {
+                    File.WriteAllText(resultFile, "no target", Encoding.UTF8);
+                    return;
+                }
+
+                int pid;
+                if (int.TryParse(pidText, out pid) && pid > 0)
+                {
+                    try
+                    {
+                        using (Process old = Process.GetProcessById(pid))
+                        {
+                            if (!old.WaitForExit(120000))
+                            {
+                                File.WriteAllText(resultFile, "old process still running", Encoding.UTF8);
+                                return;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                // Даём Windows отпустить exe и antivirus'у закончить проверку.
+                string source = Application.ExecutablePath;
+                Exception last = null;
+                for (int i = 0; i < 30; i++)
+                {
+                    try
+                    {
+                        File.Copy(source, target, true);
+                        last = null;
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        last = ex;
+                        Thread.Sleep(500);
+                    }
+                }
+
+                if (last != null)
+                {
+                    File.WriteAllText(resultFile, "copy failed: " + last.Message, Encoding.UTF8);
+                    // не оставляем пользователя без приложения: запускаем старый exe
+                    try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(target) }); } catch { }
+                    return;
+                }
+
+                File.WriteAllText(resultFile, "ok " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), Encoding.UTF8);
+                try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(target) }); } catch { }
+            }
+            catch (Exception ex)
+            {
+                try { File.WriteAllText(resultFile, "error: " + ex.Message, Encoding.UTF8); } catch { }
             }
         }
 
