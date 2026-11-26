@@ -37,6 +37,7 @@ namespace ZapretManager
             bool tgStartMode = HasFlag(args, "--tg-start");
             bool tgStopMode = HasFlag(args, "--tg-stop");
             string msgBoxShot = FindArgValue(args, "--msgbox-shot");
+            bool checkSelfMode = HasFlag(args, "--check-self");
             string appWatch = FindArgValue(args, "--app-watch");
             AppInfo.TrayMode = HasFlag(args, "--tray");
             AppInfo.AutostartMode = HasFlag(args, "--autostart");
@@ -112,6 +113,13 @@ namespace ZapretManager
                 System.Collections.Generic.List<string> guardAdded = SiteGuard.Process(guardInstall, guardConfig, guardHosts, true,
                     delegate(string message) { Log.Warn("Сторож: " + message); });
                 Log.Info("Сторож: добавлено доменов — " + guardAdded.Count + ".");
+                return;
+            }
+            if (checkSelfMode)
+            {
+                SelfUpdateInfo check = SelfUpdate.Check(true);
+                Log.Info(string.Format("Самообновление: локальная {0}, релиз {1}, доступна {2}, ok={3}, error={4}",
+                    check.Local, check.Remote, check.Available, check.Ok, check.Error));
                 return;
             }
             if (!string.IsNullOrEmpty(msgBoxShot))

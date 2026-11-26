@@ -19,3 +19,7 @@ zapret-discord-youtube-*_backup_*/
 # Служебные файлы Windows
 Thumbs.db
 desktop.ini
+
+# Сборка и дистрибутив: exe живёт в GitHub Releases, а не в гите
+/ZapretManager.exe
+dist/

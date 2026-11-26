@@ -346,7 +346,7 @@ namespace ZapretManager
             _selfProgress.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             _selfCard.Controls.Add(_selfProgress);
 
-            _selfCard.Controls.Add(L("Источник: github.com/" + SelfUpdate.Repo + " • version.txt и ZapretManager.exe в ветке main",
+            _selfCard.Controls.Add(L("Источник: github.com/" + SelfUpdate.Repo + " • GitHub Releases, файл ZapretManager.exe с SHA-256",
                 Theme.Small, Theme.TextMuted, 22, 156));
             View.Stack.Add(_selfCard);
         }

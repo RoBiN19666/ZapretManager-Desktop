@@ -708,7 +708,7 @@ namespace ZapretManager
 
     public static class AppInfo
     {
-        public const string Version = "1.2.8";
+        public const string Version = "1.3.0";
         public const string Title = "Zapret Manager";
 
         /// <summary>Служебный режим снимка окна (используется при отладке и для отчётов).</summary>

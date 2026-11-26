@@ -1,4 +1,4 @@
-﻿# Build ZapretManager.exe with the in-box .NET Framework compiler (csc.exe).
+# Build ZapretManager.exe with the in-box .NET Framework compiler (csc.exe).
 # Requirements: Windows 10/11 only - no SDK, NuGet or installs needed.
 [CmdletBinding()]
 param(
@@ -77,4 +77,19 @@ if ($proc.ExitCode -ne 0) {
 if (-not $Quiet) {
     $size = [math]::Round((Get-Item $out).Length / 1KB, 1)
     Write-Host "OK: $out ($size KB)" -ForegroundColor Green
+}
+
+# --- Пакет для релиза: отдельная папка dist со сборкой и контрольной суммой ---
+$verFile = Join-Path $root "version.txt"
+$version = if (Test-Path $verFile) { (Get-Content $verFile -Raw).Trim() } else { "0.0.0" }
+$dist = Join-Path $root "dist"
+if (-not (Test-Path $dist)) { New-Item -ItemType Directory -Path $dist | Out-Null }
+$distExe = Join-Path $dist "ZapretManager.exe"
+Copy-Item $out $distExe -Force
+$hash = (Get-FileHash $distExe -Algorithm SHA256).Hash.ToLower()
+$checks = "$hash  ZapretManager.exe`r`n"
+Set-Content -Path (Join-Path $dist "checksums.txt") -Value $checks -Encoding ASCII -NoNewline
+if (-not $Quiet) {
+    Write-Host "dist: $distExe ($([math]::Round((Get-Item $distExe).Length / 1KB, 1)) KB, версия $version)" -ForegroundColor DarkGray
+    Write-Host "SHA-256: $hash" -ForegroundColor DarkGray
 }
