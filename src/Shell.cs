@@ -368,6 +368,10 @@ namespace ZapretManager
             _tray.DoubleClick += delegate { ShowFromTray(); };
 
             ContextMenuStrip menu = new ContextMenuStrip();
+            menu.BackColor = Theme.Surface;
+            menu.ForeColor = Theme.Text;
+            menu.Renderer = new DarkMenuRenderer();
+            menu.ShowImageMargin = false;
             menu.Items.Add("Открыть Zapret Manager", null, delegate { ShowFromTray(); });
             menu.Items.Add("Свернуть в трей", null, delegate
             {

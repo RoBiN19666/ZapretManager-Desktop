@@ -1,5 +1,8 @@
 # Zapret Manager
 
+**Подробное руководство:** [docs/guide.md](docs/guide.md) — все страницы, списки, доктор сайтов,
+проверка приложений, прокси, автозапуск, командная строка и частые проблемы.
+
 Графическая оболочка (один `.exe`, без установки и зависимостей) для
 [zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube) —
 инструмента обхода DPI-блокировок Discord и YouTube, построенного на

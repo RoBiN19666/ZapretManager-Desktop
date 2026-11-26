@@ -144,7 +144,7 @@ namespace ZapretManager
             OpenFileDialog dlg = new OpenFileDialog();
             dlg.Title = "Выберите service.bat в папке zapret";
             dlg.Filter = "service.bat|service.bat|Все файлы (*.*)|*.*";
-            if (dlg.ShowDialog() == DialogResult.OK)
+            if (DlgHost.Show(dlg, this.View.FindForm()) == DialogResult.OK)
             {
                 string root = System.IO.Path.GetDirectoryName(dlg.FileName);
                 if (ZapretInstall.LooksValid(root)) Shell.SetRoot(root);

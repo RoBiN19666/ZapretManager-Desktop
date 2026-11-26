@@ -127,6 +127,8 @@ namespace ZapretManager
                  : string.Equals(mode, "light", StringComparison.OrdinalIgnoreCase) ? "light" : "auto";
             bool dark = Mode == "dark" || (Mode == "auto" && SystemPrefersDark());
             IsDark = dark;
+            // системные диалоги, меню и ползунки тоже должны стать тёмными
+            Native.EnableDarkMode(dark);
             if (dark)
             {
                 Bg = Color.FromArgb(11, 10, 10);

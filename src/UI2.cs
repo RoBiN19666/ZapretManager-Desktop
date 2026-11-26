@@ -469,7 +469,56 @@ namespace ZapretManager
         }
     }
 
-    /// <summary>Небольшой кликабельный значок-ссылка (Boosty, DonationAlerts).</summary>
+    /// <summary>Показ системных диалогов в тёмном оформлении.</summary>
+    public static class DlgHost
+    {
+        public static void Message(IWin32Window owner, string text, string caption, MessageBoxIcon icon)
+        {
+            using (DarkDialogWatcher watcher = new DarkDialogWatcher())
+            {
+                MessageBox.Show(owner, text, caption, MessageBoxButtons.OK, icon);
+            }
+        }
+
+        public static DialogResult Show(CommonDialog dialog, IWin32Window owner)
+        {
+            using (DarkDialogWatcher watcher = new DarkDialogWatcher())
+            {
+                return dialog.ShowDialog(owner);
+            }
+        }
+    }
+
+    /// <summary>Тёмное контекстное меню' (трей, правый клик) вместо системного светлого.</summary>
+    public sealed class DarkMenuRenderer : ToolStripProfessionalRenderer
+    {
+        public DarkMenuRenderer() : base(new DarkMenuColors()) { RoundedEdges = false; }
+
+        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        {
+            e.TextColor = e.Item.Enabled ? Theme.Text : Theme.TextMuted;
+            base.OnRenderItemText(e);
+        }
+    }
+
+    public sealed class DarkMenuColors : ProfessionalColorTable
+    {
+        public override Color ToolStripDropDownBackground { get { return Theme.Surface; } }
+        public override Color ImageMarginGradientBegin { get { return Theme.Surface; } }
+        public override Color ImageMarginGradientMiddle { get { return Theme.Surface; } }
+        public override Color ImageMarginGradientEnd { get { return Theme.Surface; } }
+        public override Color MenuBorder { get { return Theme.BorderStrong; } }
+        public override Color MenuItemBorder { get { return Theme.BorderStrong; } }
+        public override Color MenuItemSelected { get { return Theme.Hover; } }
+        public override Color MenuItemSelectedGradientBegin { get { return Theme.Hover; } }
+        public override Color MenuItemSelectedGradientEnd { get { return Theme.Hover; } }
+        public override Color SeparatorDark { get { return Theme.Border; } }
+        public override Color SeparatorLight { get { return Theme.Border; } }
+        public override Color CheckBackground { get { return Theme.Accent; } }
+        public override Color CheckSelectedBackground { get { return Theme.Accent; } }
+    }
+
+    /// <summary>Небольшой кликабельный значок-ссылка (Boosty, DonationAlerts).</summary>'
     public sealed class LinkBadge : Control
     {
         public string Url = "";

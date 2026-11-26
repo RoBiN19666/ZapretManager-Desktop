@@ -70,7 +70,39 @@ namespace ZapretManager
         [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
         [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)] private static extern int SetWindowTheme(IntPtr hWnd, string pszSubAppName, string pszSubIdList);
 
-        /// <summary>Тёмные ползунки прокрутки у RichTextBox/ListBox (Windows 10+).</summary>
+        [DllImport("uxtheme.dll", EntryPoint = "#135")] private static extern int SetPreferredAppMode(int mode);
+        [DllImport("uxtheme.dll", EntryPoint = "#136")] private static extern void FlushMenuThemes();
+
+        /// <summary>
+        /// Тёмная тема для системных элементов процесса: проводники, диалоги выбора файла и папки,
+        /// меню, message box. Без этого они остаются светлыми (и «синими») даже в тёмном интерфейсе.
+        /// </summary>
+        public static bool EnableDarkMode(bool dark)
+        {
+            bool ok = false;
+            try
+            {
+                // 1 = AllowDark, 2 = ForceDark, 3 = ForceLight
+                SetPreferredAppMode(dark ? 2 : 3);
+                FlushMenuThemes();
+                ok = true;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Системная тёмная тема недоступна: " + ex.Message);
+            }
+            try
+            {
+                if (dark) SetWindowTheme(GetDesktopWindow(), "DarkMode_Explorer", null);
+                else SetWindowTheme(GetDesktopWindow(), "Explorer", null);
+            }
+            catch { }
+            return ok;
+        }
+
+        [DllImport("user32.dll")] private static extern IntPtr GetDesktopWindow();
+
+        /// <summary>Тёмные ползунки прокрутки у RichTextBox/ListBox (Windows 10+).</summary>'
         public static void ApplyDarkScrollbars(IntPtr hwnd)
         {
             try { SetWindowTheme(hwnd, "DarkMode_Explorer", null); }
@@ -676,7 +708,7 @@ namespace ZapretManager
 
     public static class AppInfo
     {
-        public const string Version = "1.2.7";
+        public const string Version = "1.2.8";
         public const string Title = "Zapret Manager";
 
         /// <summary>Служебный режим снимка окна (используется при отладке и для отчётов).</summary>

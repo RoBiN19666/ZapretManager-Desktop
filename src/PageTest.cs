@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -682,7 +682,7 @@ namespace ZapretManager
             dlg.Title = "Сохранить отчёт теста";
             dlg.Filter = "Таблица (*.tsv)|*.tsv|Все файлы (*.*)|*.*";
             dlg.FileName = "zapret-strategy-test-" + DateTime.Now.ToString("yyyyMMdd-HHmm") + ".tsv";
-            if (dlg.ShowDialog() != DialogResult.OK) return;
+            if (DlgHost.Show(dlg, this.View.FindForm()) != DialogResult.OK) return;
             TesterOptions opt = new TesterOptions();
             opt.TimeoutMs = _timeoutMs;
             opt.DeepCheck = _deep;

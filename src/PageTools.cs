@@ -208,6 +208,11 @@ namespace ZapretManager
             core.Click += delegate { Native.OpenUrl("https://github.com/bol-van/zapret"); };
             _aboutCard.Controls.Add(core);
 
+            RoundButton guide = Btn("Документация", ButtonKind.Link, 150);
+            guide.Location = new Point(200, y + 60);
+            guide.Click += delegate { Native.OpenUrl("https://github.com/RoBiN19666/ZapretManager-Windows/blob/main/docs/guide.md"); };
+            _aboutCard.Controls.Add(guide);
+
             RoundButton tgproxy = Btn("TG WS Proxy", ButtonKind.Link, 130);
             tgproxy.Location = new Point(22, y + 60);
             tgproxy.Click += delegate { Native.OpenUrl("https://github.com/Flowseal/tg-ws-proxy"); };

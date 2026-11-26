@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
@@ -215,7 +215,7 @@ namespace ZapretManager
                 if (current.Length > 0) dlg.SelectedPath = Directory.Exists(current) ? current : Path.GetDirectoryName(current);
             }
             catch { }
-            if (dlg.ShowDialog(this) == DialogResult.OK) box.Text = dlg.SelectedPath;
+            if (DlgHost.Show(dlg, this) == DialogResult.OK) box.Text = dlg.SelectedPath;
         }
 
         private void PickServiceBat()
@@ -223,7 +223,7 @@ namespace ZapretManager
             OpenFileDialog dlg = new OpenFileDialog();
             dlg.Title = "Выберите service.bat в папке уже установленного zapret";
             dlg.Filter = "service.bat|service.bat|Все файлы (*.*)|*.*";
-            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            if (DlgHost.Show(dlg, this) != DialogResult.OK) return;
             string root = Path.GetDirectoryName(dlg.FileName);
             if (ZapretInstall.LooksValid(root))
             {
@@ -233,7 +233,7 @@ namespace ZapretManager
             }
             else
             {
-                MessageBox.Show(this, "В выбранной папке нет service.bat и bin\\winws.exe.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                DlgHost.Message(this, "В выбранной папке нет service.bat и bin\\winws.exe.", Text, MessageBoxIcon.Warning);
             }
         }
 
@@ -289,7 +289,7 @@ namespace ZapretManager
             }
             if (!Native.IsAdmin())
             {
-                MessageBox.Show(this, "Для установки нужны права администратора.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                DlgHost.Message(this, "Для установки нужны права администратора.", Text, MessageBoxIcon.Warning);
                 return;
             }
             _busy = true;
@@ -361,7 +361,7 @@ namespace ZapretManager
                         _btnSkip.Enabled = true;
                         _stage.Text = "Ошибка: " + ex.Message;
                         _progress.Value = 0;
-                        MessageBox.Show(this, "Установка не завершена:\n\n" + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        DlgHost.Message(this, "Установка не завершена:\n\n" + ex.Message, Text, MessageBoxIcon.Error);
                     });
                 }
             });

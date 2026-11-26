@@ -483,7 +483,7 @@ namespace ZapretManager
             OpenFileDialog dlg = new OpenFileDialog();
             dlg.Title = "Выберите service.bat в папке zapret";
             dlg.Filter = "service.bat|service.bat|Все файлы (*.*)|*.*";
-            if (dlg.ShowDialog() == DialogResult.OK)
+            if (DlgHost.Show(dlg, this.View.FindForm()) == DialogResult.OK)
             {
                 string root = Path.GetDirectoryName(dlg.FileName);
                 if (ZapretInstall.LooksValid(root)) Shell.SetRoot(root);
@@ -582,7 +582,7 @@ namespace ZapretManager
             if (!Shell.RequireAdmin("Установка zapret")) return;
             FolderBrowserDialog dlg = new FolderBrowserDialog();
             dlg.Description = "Куда установить zapret? Внутри будет создана папка zapret-discord-youtube-<версия>.";
-            if (dlg.ShowDialog() != DialogResult.OK) return;
+            if (DlgHost.Show(dlg, this.View.FindForm()) != DialogResult.OK) return;
 
             _working = true;
             Shell.Form.SetStatusHint("Установка zapret…");
