@@ -412,11 +412,19 @@ namespace ZapretManager
             _tray.MouseUp += delegate(object s, MouseEventArgs e)
             {
                 if (e.Button != MouseButtons.Right) return;
+                bool wasHidden = !Visible;
                 System.Drawing.Point at = Native.CursorPosition();
                 menu.Show(at);
-                Native.SetForegroundWindow(menu.Handle);
-                Log.Info(string.Format("Меню трея: курсор {0},{1}, меню {2},{3} {4}x{5}",
-                    at.X, at.Y, menu.Bounds.Left, menu.Bounds.Top, menu.Bounds.Width, menu.Bounds.Height));
+                if (!wasHidden) Native.SetForegroundWindow(menu.Handle);
+                // меню принадлежит процессу, и оболочка «заодно» показывает главное окно:
+                // если оно было свёрнуто в трей — возвращаем как было
+                if (wasHidden && Visible)
+                {
+                    Hide();
+                    ShowInTaskbar = false;
+                }
+                Log.Info(string.Format("Меню трея: курсор {0},{1}, меню {2},{3} {4}x{5}, окно было скрыто: {6}",
+                    at.X, at.Y, menu.Bounds.Left, menu.Bounds.Top, menu.Bounds.Width, menu.Bounds.Height, wasHidden));
             };
         }
 
