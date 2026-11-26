@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -670,7 +670,7 @@ namespace ZapretManager
 
     public static class AppInfo
     {
-        public const string Version = "1.1.0";
+        public const string Version = "1.2.0";
         public const string Title = "Zapret Manager";
 
         /// <summary>Служебный режим снимка окна (используется при отладке и для отчётов).</summary>

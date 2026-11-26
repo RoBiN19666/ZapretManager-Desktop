@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -356,6 +356,10 @@ namespace ZapretManager
 
             ContextMenuStrip menu = new ContextMenuStrip();
             menu.Items.Add("Открыть Zapret Manager", null, delegate { ShowFromTray(); });
+            menu.Items.Add("Свернуть в трей", null, delegate
+            {
+                if (Visible) HideToTray(true);
+            });
             menu.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem zapretItem = new ToolStripMenuItem("Запрет (обход DPI)");
             zapretItem.Click += delegate { TrayToggleZapret(); };
@@ -683,7 +687,7 @@ namespace ZapretManager
             _sidebar.BackColor = Theme.Sidebar;
             _sidebar.Paint += delegate(object s, PaintEventArgs e)
             {
-                using (LinearGradientBrush b = new LinearGradientBrush(_sidebar.ClientRectangle, Theme.SidebarTop, Theme.SidebarBottom, LinearGradientMode.Vertical))
+                using (SolidBrush b = new SolidBrush(Theme.Sidebar))
                 {
                     e.Graphics.FillRectangle(b, _sidebar.ClientRectangle);
                 }
@@ -904,6 +908,11 @@ namespace ZapretManager
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
+            if (WindowState == FormWindowState.Minimized && AppInfo.ShotPath == null && !AppInfo.ExitRequested
+                && _shell.Config.GetBool("MinimizeToTray", true) && _tray != null)
+            {
+                HideToTray(false);
+            }
             LayoutChrome();
             PositionToast();
             PositionStatusRight();
@@ -1029,8 +1038,31 @@ namespace ZapretManager
 
         private void StartUpdateCheck()
         {
-            if (!_shell.Install.IsValid) return;
             if (!_shell.Config.GetBool("CheckUpdatesOnStartup", true)) return;
+
+            // обновление самого менеджера из репозитория
+            _shell.RunBackground(delegate()
+            {
+                SelfUpdateInfo self = SelfUpdate.Check(true);
+                _shell.Ui(delegate()
+                {
+                    if (self.Ok && self.Available)
+                    {
+                        ShowToast("Доступна версия Zapret Manager " + self.Remote, LogLevel.Warn);
+                        Log.Warn("Доступно обновление менеджера " + self.Remote + " — страница «Обновление».");
+                        if (_tray != null)
+                        {
+                            try { _tray.ShowBalloonTip(5000, "Zapret Manager", "Доступна новая версия " + self.Remote + ". Откройте «Обновление».", ToolTipIcon.Info); } catch { }
+                        }
+                    }
+                    else if (!self.Ok)
+                    {
+                        Log.Info("Проверка обновления менеджера: " + self.Error);
+                    }
+                });
+            }, null);
+
+            if (!_shell.Install.IsValid) return;
             string local = _shell.LocalVersion;
             _shell.RunBackground(delegate()
             {

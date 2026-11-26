@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -29,6 +29,7 @@ namespace ZapretManager
             int shotScroll;
             if (int.TryParse(FindArgValue(args, "--shot-scroll"), out shotScroll)) AppInfo.ShotScroll = shotScroll;
             bool shotMode = !string.IsNullOrEmpty(AppInfo.ShotPath);
+            bool selfUpdateMode = HasFlag(args, "--self-update");
             AppInfo.TrayMode = HasFlag(args, "--tray");
             AppInfo.AutostartMode = HasFlag(args, "--autostart");
             if (AppInfo.AutostartMode) AppInfo.TrayMode = true;
@@ -68,6 +69,11 @@ namespace ZapretManager
             Log.FilePath = Path.Combine(AppPaths.DataDir, "manager.log");
 
             Log.Info("=== Zapret Manager " + AppInfo.Version + " запуск ===");
+            if (selfUpdateMode)
+            {
+                RunSelfUpdateMode();
+                return;
+            }
             Log.Info("Аргументы: [" + string.Join("] [", args) + "]");
             Log.Info("Права администратора: " + (Native.IsAdmin() ? "да" : "нет") + " / " + (limited ? "ограниченный режим" : "обычный режим"));
 
@@ -153,6 +159,30 @@ namespace ZapretManager
                     AppInfo.Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             catch { }
+        }
+
+        /// <summary>Служебный режим самообновления без интерфейса (--self-update).</summary>
+        private static void RunSelfUpdateMode()
+        {
+            try
+            {
+                SelfUpdateInfo info = SelfUpdate.Check(true);
+                Log.Info(string.Format("Самообновление: локальная {0}, в репозитории {1}, доступно={2}{3}",
+                    info.Local, info.Remote, info.Available, info.Ok ? "" : " (" + info.Error + ")"));
+                if (!info.Ok || !info.Available)
+                {
+                    Log.Info("Обновление не требуется.");
+                    return;
+                }
+                bool ok;
+                string pending;
+                string msg = SelfUpdate.Apply(info, null, out ok, out pending);
+                Log.Write(ok ? LogLevel.Ok : LogLevel.Error, "Самообновление: " + msg);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Самообновление: ошибка", ex);
+            }
         }
 
         private static bool HasFlag(string[] args, string flag)

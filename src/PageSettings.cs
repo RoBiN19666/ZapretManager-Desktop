@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
@@ -16,6 +16,7 @@ namespace ZapretManager
         private ToggleSwitch _tgCloseToTray;
         private ToggleSwitch _tgAutoZapret;
         private ToggleSwitch _tgAutoTg;
+        private ToggleSwitch _tgMinimize;
         private Label _autoStatus;
 
         private RoundButton[] _modeButtons = new RoundButton[4];
@@ -169,7 +170,7 @@ namespace ZapretManager
 
         private void BuildStartupCard()
         {
-            _startupCard = NewCard("Запуск и автозапуск", 322);
+            _startupCard = NewCard("Запуск и автозапуск", 376);
 
             _tgAutoStart = AddToggleRow(_startupCard, 40, "Запускать Zapret Manager при входе в Windows",
                 "Создаётся задача планировщика с наивысшими правами — запуск без запроса UAC", false, delegate
@@ -213,19 +214,27 @@ namespace ZapretManager
                     Shell.Config.Save();
                 });
 
-            _autoStatus = L("", Theme.Small, Theme.TextMuted, 22, 252);
+            _tgMinimize = AddToggleRow(_startupCard, 248, "Сворачивать в трей по кнопке «Свернуть»",
+                "Окно прячется в трей, а не висит в панели задач — приложение и сервисы продолжают работать", Shell.Config.GetBool("MinimizeToTray", true), delegate
+                {
+                    if (_suppress) return;
+                    Shell.Config.SetBool("MinimizeToTray", _tgMinimize.Checked);
+                    Shell.Config.Save();
+                });
+
+            _autoStatus = L("", Theme.Small, Theme.TextMuted, 22, 304);
             _autoStatus.AutoSize = false;
             _autoStatus.Width = 450;
             _autoStatus.Height = 16;
             _startupCard.Controls.Add(_autoStatus);
 
             RoundButton openTask = Btn("Планировщик заданий", ButtonKind.Ghost, 190);
-            openTask.Location = new Point(DesignWidth - 22 - 190, 244);
+            openTask.Location = new Point(DesignWidth - 22 - 190, 296);
             openTask.Click += delegate { Autostart.OpenTaskScheduler(); };
             _startupCard.Controls.Add(openTask);
 
             RoundButton wizard = Btn("Мастер установки", ButtonKind.Ghost, 170);
-            wizard.Location = new Point(DesignWidth - 22 - 190 - 180, 244);
+            wizard.Location = new Point(DesignWidth - 22 - 190 - 180, 296);
             wizard.Click += delegate
             {
                 using (SetupWizard w = new SetupWizard(Shell)) { w.ShowDialog(this.View.FindForm()); }
@@ -419,6 +428,7 @@ namespace ZapretManager
                 _tgCloseToTray.Checked = Shell.Config.GetBool("CloseToTray", true);
                 _tgAutoZapret.Checked = Shell.Config.GetBool("AutostartZapret", true);
                 _tgAutoTg.Checked = Shell.Config.GetBool("AutostartTgProxy", true);
+                _tgMinimize.Checked = Shell.Config.GetBool("MinimizeToTray", true);
             }
             finally { _suppress = false; }
         }

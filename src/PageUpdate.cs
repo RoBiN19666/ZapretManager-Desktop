@@ -31,6 +31,14 @@ namespace ZapretManager
         private ToggleSwitch _tgStartupCheck;
         private bool _suppress;
 
+        private Card _selfCard;
+        private Label _selfVersion;
+        private Label _selfStatus;
+        private RoundButton _btnSelfCheck;
+        private RoundButton _btnSelfUpdate;
+        private LineProgress _selfProgress;
+        private bool _selfBusy;
+
         public UpdatePage(Shell shell) : base(shell) { }
 
         public override string Key { get { return "update"; } }
@@ -42,6 +50,7 @@ namespace ZapretManager
         {
             BuildVersionCard();
             BuildUpdateCard();
+            BuildSelfCard();
             BuildFreshCard();
             BuildOptionsCard();
             Shell.UpdateStateChanged += RefreshState;
@@ -119,6 +128,128 @@ namespace ZapretManager
             View.Stack.Add(_updateCard);
         }
 
+        private void BuildSelfCard()
+        {
+            _selfCard = NewCard("Обновление Zapret Manager", 188);
+            _selfVersion = L("", Theme.Base, Theme.Text, 22, 42);
+            _selfCard.Controls.Add(_selfVersion);
+            _selfStatus = L("", Theme.Small, Theme.TextMuted, 22, 64);
+            _selfCard.Controls.Add(_selfStatus);
+
+            _btnSelfCheck = Btn("Проверить", ButtonKind.Secondary, 130);
+            _btnSelfCheck.Location = new Point(22, 96);
+            _btnSelfCheck.Click += delegate { CheckSelf(); };
+            _selfCard.Controls.Add(_btnSelfCheck);
+
+            _btnSelfUpdate = Btn("Обновить менеджер", ButtonKind.Primary, 190);
+            _btnSelfUpdate.Location = new Point(162, 96);
+            _btnSelfUpdate.Enabled = false;
+            _btnSelfUpdate.Click += delegate { UpdateSelf(); };
+            _selfCard.Controls.Add(_btnSelfUpdate);
+
+            _selfProgress = new LineProgress();
+            _selfProgress.Location = new Point(22, 142);
+            _selfProgress.Width = DesignWidth - 44;
+            _selfProgress.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            _selfCard.Controls.Add(_selfProgress);
+
+            _selfCard.Controls.Add(L("Источник: github.com/" + SelfUpdate.Repo + " • version.txt и ZapretManager.exe в ветке main",
+                Theme.Small, Theme.TextMuted, 22, 156));
+            View.Stack.Add(_selfCard);
+        }
+
+        private void CheckSelf()
+        {
+            _btnSelfCheck.Enabled = false;
+            _selfStatus.Text = "Проверка обновлений…";
+            Shell.RunBackground(delegate()
+            {
+                SelfUpdateInfo info = SelfUpdate.Check(true);
+                Shell.Ui(delegate()
+                {
+                    _btnSelfCheck.Enabled = true;
+                    ApplySelfInfo(info);
+                    if (!info.Ok) Shell.Notify("Не удалось проверить обновление менеджера: " + info.Error, LogLevel.Warn);
+                    else if (info.Available) Shell.Notify("Доступна новая версия менеджера " + info.Remote, LogLevel.Warn);
+                    else Shell.Notify("Zapret Manager " + info.Local + " — актуальная версия.", LogLevel.Ok);
+                });
+            }, null);
+        }
+
+        private void ApplySelfInfo(SelfUpdateInfo info)
+        {
+            if (info == null)
+            {
+                _selfVersion.Text = "Zapret Manager " + AppInfo.Version;
+                _selfStatus.Text = "Проверка не выполнялась.";
+                _btnSelfUpdate.Enabled = false;
+                return;
+            }
+            _selfVersion.Text = "Установлена версия " + info.Local;
+            if (!info.Ok)
+            {
+                _selfStatus.Text = "Не удалось проверить: " + info.Error;
+                _selfStatus.ForeColor = Theme.Warn;
+                _btnSelfUpdate.Enabled = false;
+                return;
+            }
+            if (info.Available)
+            {
+                _selfStatus.Text = "Доступна версия " + info.Remote + " — можно обновиться прямо отсюда.";
+                _selfStatus.ForeColor = Theme.Warn;
+                _btnSelfUpdate.Enabled = !_selfBusy;
+            }
+            else
+            {
+                _selfStatus.Text = "Установлена последняя версия.";
+                _selfStatus.ForeColor = Theme.Success;
+                _btnSelfUpdate.Enabled = false;
+            }
+        }
+
+        private void UpdateSelf()
+        {
+            if (_selfBusy) return;
+            SelfUpdateInfo info = SelfUpdate.Last;
+            if (info == null || !info.Ok || !info.Available) { Shell.Notify("Сначала проверьте обновления.", LogLevel.Warn); return; }
+            if (!Dlg.Confirm(this.View.FindForm(), "Обновить Zapret Manager?",
+                string.Format("Будет скачана версия {0} из репозитория {1}.\n\nПриложение закроется, заменит файл и запустится снова. Настройки, списки и компоненты не затрагиваются.",
+                    info.Remote, SelfUpdate.Repo), "Обновить")) return;
+
+            _selfBusy = true;
+            _btnSelfUpdate.Enabled = false;
+            _btnSelfCheck.Enabled = false;
+            _selfProgress.Value = 0;
+            string remote = info.Remote;
+
+            Shell.RunBackground(delegate()
+            {
+                bool ok;
+                string pending;
+                string msg = SelfUpdate.Apply(info, delegate(int percent, string stage)
+                {
+                    Shell.Ui(delegate() { _selfProgress.Value = percent; _selfStatus.Text = stage; });
+                }, out ok, out pending);
+
+                Shell.Ui(delegate()
+                {
+                    _selfBusy = false;
+                    _btnSelfCheck.Enabled = true;
+                    _selfProgress.Value = ok ? 100 : 0;
+                    _selfStatus.Text = msg;
+                    if (!ok)
+                    {
+                        _btnSelfUpdate.Enabled = true;
+                        Shell.Notify(msg, LogLevel.Error);
+                        return;
+                    }
+                    Shell.Notify("Обновление " + remote + " готово — перезапуск…", LogLevel.Ok);
+                    Shell.RefreshState(false);
+                    AppInfo.ExitRequested = true;
+                    Application.Exit();
+                });
+            }, null);
+        }
         private void BuildFreshCard()
         {
             _freshCard = NewCard("Установка с нуля", 132);
@@ -302,6 +433,19 @@ namespace ZapretManager
         public override void OnShow()
         {
             RefreshState();
+            if (SelfUpdate.Last == null)
+            {
+                _selfVersion.Text = "Установлена версия " + AppInfo.Version;
+                Shell.RunBackground(delegate()
+                {
+                    SelfUpdateInfo info = SelfUpdate.Check(false);
+                    Shell.Ui(delegate() { ApplySelfInfo(info); });
+                }, null);
+            }
+            else
+            {
+                ApplySelfInfo(SelfUpdate.Last);
+            }
         }
 
         public override void RefreshState()

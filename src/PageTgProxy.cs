@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
@@ -91,7 +91,7 @@ namespace ZapretManager
         private void BuildLinkCard()
         {
             _linkCard = NewCard("Подключение Telegram", 168);
-            _linkCard.Controls.Add(WrapLabel("Прокси работает локально: Telegram → 127.0.0.1:1443 → WebSocket → DC Telegram. Кнопка «Открыть в Telegram» подключает прокси автоматически; вручную — Настройки → Продвинутые → Тип подключения → Прокси → MTProto.",
+            _linkCard.Controls.Add(WrapLabel("Прокси работает локально: Telegram → 127.0.0.1:1443 → WebSocket → DC Telegram. Кнопка «Открыть в Telegram» подключает прокси автоматически; вручную — Настройки → Продвинутые → Тип подключения → Прокси → MTProto. У самого TG WS Proxy есть своя иконка в трее — это его штатный интерфейс (логи, настройки, ссылка).",
                 Theme.Small, Theme.TextMuted, 22, 40, DesignWidth - 60));
 
             _linkBox = new InputBox();

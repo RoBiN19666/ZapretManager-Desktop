@@ -12,11 +12,11 @@ namespace ZapretManager
         // Палитра под логотип: тёплый чёрный + оранжево-золотой акцент.
         public static Color Bg = Color.FromArgb(11, 10, 10);
         public static Color Sidebar = Color.FromArgb(16, 14, 13);
-        public static Color SidebarTop = Color.FromArgb(22, 18, 16);
-        public static Color SidebarBottom = Color.FromArgb(9, 8, 8);
-        public static Color Surface = Color.FromArgb(23, 20, 18);
-        public static Color SurfaceTop = Color.FromArgb(28, 24, 21);
-        public static Color SurfaceBottom = Color.FromArgb(19, 16, 15);
+        public static Color SidebarTop = Color.FromArgb(18, 16, 14);
+        public static Color SidebarBottom = Color.FromArgb(18, 16, 14);
+        public static Color Surface = Color.FromArgb(26, 22, 20);
+        public static Color SurfaceTop = Surface;
+        public static Color SurfaceBottom = Surface;
         public static Color SurfaceAlt = Color.FromArgb(38, 32, 27);
         public static Color Hover = Color.FromArgb(50, 43, 36);
         public static Color Border = Color.FromArgb(52, 44, 37);
@@ -28,8 +28,8 @@ namespace ZapretManager
         public static Color Accent = Color.FromArgb(249, 146, 56);
         public static Color AccentHover = Color.FromArgb(255, 172, 96);
         public static Color AccentPressed = Color.FromArgb(226, 116, 26);
-        public static Color AccentTop = Color.FromArgb(255, 166, 72);
-        public static Color AccentBottom = Color.FromArgb(240, 122, 24);
+        public static Color AccentTop = Color.FromArgb(245, 146, 63);
+        public static Color AccentBottom = Color.FromArgb(245, 146, 63);
         public static Color AccentDeep = Color.FromArgb(200, 92, 14);
         public static Color OnAccent = Color.FromArgb(46, 25, 8);
         public static Color Selection = Color.FromArgb(46, 37, 30);
@@ -166,12 +166,11 @@ namespace ZapretManager
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
-            Draw.FillRoundGradient(g, r, Radius, Theme.SurfaceTop, Theme.SurfaceBottom);
-            Draw.Gloss(g, new Rectangle(0, 0, Width - 1, Math.Min(Height - 1, 60)), Radius, 10);
+            Draw.FillRound(g, r, Radius, Theme.Surface);
             Draw.DrawRound(g, r, Radius, Theme.Border, 1f);
             if (AccentStripe != Color.Empty)
             {
-                Draw.FillRoundGradient(g, new Rectangle(1, 14, 3, Height - 28), 2, AccentStripe, Theme.WithAlpha(AccentStripe, 120));
+                Draw.FillRound(g, new Rectangle(1, 14, 3, Height - 28), 2, AccentStripe);
             }
             if (!string.IsNullOrEmpty(Header))
             {
@@ -229,7 +228,7 @@ namespace ZapretManager
             Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
             Color fill = Color.Transparent, border = Color.Transparent, text = Theme.Text;
             Color gradTop = Color.Empty, gradBottom = Color.Empty;
-            bool topEdge = false;
+
 
             switch (Kind)
             {
@@ -242,19 +241,17 @@ namespace ZapretManager
                     }
                     else
                     {
-                        if (_pressed) { gradTop = Theme.AccentBottom; gradBottom = Theme.AccentDeep; }
-                        else if (_hover) { gradTop = Theme.AccentHover; gradBottom = Theme.AccentPressed; }
-                        else { gradTop = Theme.AccentTop; gradBottom = Theme.AccentBottom; }
-                        border = Theme.WithAlpha(Color.White, 30);
+                        if (_pressed) fill = Theme.AccentPressed;
+                        else if (_hover) fill = Theme.AccentHover;
+                        else fill = Theme.Accent;
+                        border = Theme.WithAlpha(Color.White, 18);
                         text = Theme.OnAccent;
-                        topEdge = true;
                     }
                     break;
                 case ButtonKind.Secondary:
                     fill = !Enabled ? Color.FromArgb(36, 31, 27) : (_pressed ? Theme.SurfaceAlt : (_hover ? Theme.Hover : Color.FromArgb(44, 38, 32)));
                     border = _hover && Enabled ? Theme.BorderStrong : Theme.Border;
                     text = !Enabled ? Theme.TextMuted : Theme.Text;
-                    topEdge = Enabled;
                     break;
                 case ButtonKind.Danger:
                     fill = !Enabled ? Color.FromArgb(36, 31, 27) : Theme.WithAlpha(Theme.Danger, _hover ? 30 : 16);
@@ -271,10 +268,8 @@ namespace ZapretManager
                     break;
             }
 
-            if (gradTop != Color.Empty) Draw.FillRoundGradient(g, r, Radius, gradTop, gradBottom);
-            else if (fill != Color.Transparent) Draw.FillRound(g, r, Radius, fill);
+            if (fill != Color.Transparent) Draw.FillRound(g, r, Radius, fill);
             if (border != Color.Transparent) Draw.DrawRound(g, r, Radius, border, 1f);
-            if (topEdge && Enabled) Draw.TopHighlight(g, r, Radius);
 
             Rectangle textRect = ClientRectangle;
             if (!string.IsNullOrEmpty(Glyph) && GlyphSize() > 0)
@@ -410,11 +405,9 @@ namespace ZapretManager
             }
             else if (_pos > 0.02f)
             {
-                Color a = Blend(Color.FromArgb(64, 56, 48), Theme.AccentTop, _pos);
-                Color b = Blend(Color.FromArgb(52, 45, 39), Theme.AccentBottom, _pos);
-                Draw.FillRoundGradient(g, track, radius, a, b);
-                Draw.DrawRound(g, track, radius, Theme.WithAlpha(Color.White, 26), 1f);
-                Draw.TopHighlight(g, track, radius);
+                Color on = Blend(Color.FromArgb(64, 56, 48), Theme.Accent, _pos);
+                Draw.FillRound(g, track, radius, on);
+                Draw.DrawRound(g, track, radius, Theme.WithAlpha(Color.White, 18), 1f);
             }
             else
             {
@@ -473,8 +466,8 @@ namespace ZapretManager
             g.SmoothingMode = SmoothingMode.AntiAlias;
             if (Selected)
             {
-                Draw.FillRoundGradient(g, new Rectangle(10, 2, Width - 20, Height - 4), 9, Color.FromArgb(54, 43, 34), Color.FromArgb(39, 31, 25));
-                Draw.FillRoundGradient(g, new Rectangle(10, 11, 3, Height - 22), 2, Theme.AccentTop, Theme.AccentDeep);
+                Draw.FillRound(g, new Rectangle(10, 2, Width - 20, Height - 4), 9, Theme.Selection);
+                Draw.FillRound(g, new Rectangle(10, 11, 3, Height - 22), 2, Theme.Accent);
             }
             else if (_hover)
             {
@@ -550,7 +543,7 @@ namespace ZapretManager
             g.SmoothingMode = SmoothingMode.AntiAlias;
             Draw.FillRound(g, new Rectangle(0, 0, Width - 1, Height - 1), Height / 2, Theme.SurfaceAlt);
             int w = (int)((Width - 1) * _value / 100.0);
-            if (w > 2) Draw.FillRoundGradient(g, new Rectangle(0, 0, w, Height - 1), Height / 2, Theme.AccentTop, Theme.AccentBottom);
+            if (w > 2) Draw.FillRound(g, new Rectangle(0, 0, w, Height - 1), Height / 2, Theme.Accent);
         }
     }
 

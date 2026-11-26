@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -26,6 +26,8 @@ namespace ZapretManager
         private Label _updateLine;
         private RoundButton _btnCheckUpdate;
         private RoundButton _btnGoUpdate;
+        private Label _selfLine;
+        private RoundButton _btnSelfGo;
 
         private ToggleSwitch _tgGame;
         private ToggleSwitch _tgIpSet;
@@ -162,7 +164,7 @@ namespace ZapretManager
 
         private void BuildUpdateCard()
         {
-            _updateCard = NewCard("Обновления", 102);
+            _updateCard = NewCard("Обновления", 128);
             _updateTitle = L("", Theme.Bold, Theme.Text, 20, 44);
             _updateCard.Controls.Add(_updateTitle);
             _updateLine = L("", Theme.Small, Theme.TextMuted, 20, 66);
@@ -180,6 +182,17 @@ namespace ZapretManager
             _btnGoUpdate.Visible = false;
             _btnGoUpdate.Click += delegate { Shell.Form.Navigate("update"); };
             _updateCard.Controls.Add(_btnGoUpdate);
+
+            _selfLine = L("", Theme.Small, Theme.Warn, 22, 88);
+            _selfLine.Visible = false;
+            _updateCard.Controls.Add(_selfLine);
+
+            _btnSelfGo = Btn("Обновить менеджер", ButtonKind.Link, 170);
+            _btnSelfGo.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            _btnSelfGo.Location = new Point(DesignWidth - 20 - 170, 84);
+            _btnSelfGo.Visible = false;
+            _btnSelfGo.Click += delegate { Shell.Form.Navigate("update"); };
+            _updateCard.Controls.Add(_btnSelfGo);
         }
 
         private void BuildTgCard()
@@ -403,6 +416,11 @@ namespace ZapretManager
                 _tgAutoUpdate.Checked = st.CheckUpdates;
 
                 _updateTitle.Text = "Установлена версия zapret " + Shell.LocalVersion;
+                SelfUpdateInfo su = SelfUpdate.Last;
+                bool suAvail = su != null && su.Ok && su.Available;
+                _selfLine.Visible = suAvail;
+                _btnSelfGo.Visible = suAvail;
+                if (suAvail) _selfLine.Text = string.Format("Менеджер: доступна версия {0} (у вас {1})", su.Remote, su.Local);
                 UpdateCheckResult u = Shell.UpdateState;
                 if (u == null)
                 {
