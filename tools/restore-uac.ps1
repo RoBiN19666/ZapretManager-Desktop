@@ -1,4 +1,4 @@
-# Возвращает стандартные запросы подтверждения UAC (отменяет tools\relax-uac.ps1).
+# Возвращает стандартные запросы подтверждения UAC (5 / 1), если их отключали вручную.
 # Запускать от имени администратора.
 
 $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
