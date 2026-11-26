@@ -306,7 +306,7 @@ namespace ZapretManager
     }
 
     /// <summary>Всплывающий список для DarkSelect.</summary>
-    public sealed class SelectPopup : Form
+    public sealed class SelectPopup : Form, IMessageFilter
     {
         public int Result = -1;
         private readonly System.Collections.Generic.List<string> _items;
@@ -349,6 +349,8 @@ namespace ZapretManager
             }
 
             Deactivate += delegate { Close(); };
+            FormClosed += delegate { Application.RemoveMessageFilter(this); };
+            Application.AddMessageFilter(this);
             MouseWheel += delegate(object s, MouseEventArgs e) { ScrollBy(-e.Delta / 2); };
             MouseMove += delegate(object s, MouseEventArgs e)
             {
@@ -392,6 +394,36 @@ namespace ZapretManager
             if (_offset < 0) _offset = 0;
             if (_offset > maxOffset) _offset = maxOffset;
             Invalidate();
+        }
+
+        /// <summary>Колесо всегда крутит список, а не страницу под ним.</summary>
+        public bool PreFilterMessage(ref Message m)
+        {
+            const int WM_LBUTTONDOWN = 0x0201;
+            const int WM_RBUTTONDOWN = 0x0204;
+            const int WM_MBUTTONDOWN = 0x0207;
+            const int WM_MOUSEWHEEL = 0x020A;
+            if (m.Msg == WM_MOUSEWHEEL)
+            {
+                int delta = (short)((long)m.WParam >> 16);
+                ScrollBy(-delta / 2);
+                return true;
+            }
+            if (m.Msg == WM_LBUTTONDOWN || m.Msg == WM_RBUTTONDOWN || m.Msg == WM_MBUTTONDOWN)
+            {
+                if (!Bounds.Contains(Cursor.Position))
+                {
+                    Close();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) Application.RemoveMessageFilter(this);
+            base.Dispose(disposing);
         }
 
         private void EnsureVisible(int index)
