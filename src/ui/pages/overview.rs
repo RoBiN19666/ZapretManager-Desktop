@@ -7,7 +7,6 @@ use crate::engine::gamefilter::{GameFilterMode, GameFilterState};
 use crate::engine::log::{self, LogLevel};
 use crate::engine::ops;
 use crate::engine::tgproxy;
-use crate::engine::update::{self, UpdateCheckResult};
 use crate::engine::{paths, sys};
 
 use crate::ui::app::{App, Page};
@@ -185,79 +184,6 @@ impl App {
                         }
                     }
                 });
-            });
-        });
-
-        // обновления
-        let p2 = p;
-        w::card(ui, &p2, "Обновления", |ui| {
-            let title = if self.install.version.is_empty() {
-                "Версия zapret не определена".to_string()
-            } else {
-                format!("Установлена версия zapret {}", self.install.version)
-            };
-            ui.label(RichText::new(title).size(13.5).color(p2.text).strong());
-            let mut line = String::new();
-            let mut show_update = false;
-            let mut local_unknown = false;
-            match &self.update_state {
-                None => {
-                    line = if self.ini.get_bool("CheckUpdatesOnStartup", true) {
-                        "Проверка обновлений выполняется…".to_string()
-                    } else {
-                        "Автоматическая проверка при запуске отключена.".to_string()
-                    };
-                }
-                Some(UpdateCheckResult {
-                    ok: false,
-                    error,
-                    ..
-                }) => {
-                    line = format!("Не удалось проверить обновления: {}", error);
-                }
-                Some(res) => {
-                    local_unknown = res.local_unknown;
-                    if res.update_available {
-                        show_update = true;
-                        line = format!(
-                            "Доступна новая версия {}. Ваши списки и настройки сохранятся.",
-                            res.remote_version
-                        );
-                    } else if res.local_unknown {
-                        show_update = true;
-                        line = "Не удалось прочитать версию из service.bat — откройте «Обновление» и поставьте нужную версию вручную.".to_string();
-                    } else {
-                        line = "У вас последняя версия.".to_string();
-                    }
-                }
-            }
-            let _ = local_unknown;
-            ui.label(RichText::new(&line).size(12.0).color(p2.text_dim));
-            if let Some(info) = &self.self_update {
-                if info.ok && info.available {
-                    ui.label(
-                        RichText::new(format!(
-                            "Менеджер: доступна версия {} (у вас {})",
-                            info.remote, info.local
-                        ))
-                        .size(12.0)
-                        .color(p2.warn),
-                    );
-                }
-            }
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if w::secondary(ui, &p2, "Проверить").clicked() {
-                    self.check_updates();
-                }
-                if show_update && w::primary(ui, &p2, "Обновить сейчас").clicked() {
-                    self.page = Page::Update;
-                }
-                if self.self_update.as_ref().map(|i| i.ok && i.available).unwrap_or(false)
-                    && w::link(ui, &p2, "Обновить менеджер").clicked()
-                {
-                    self.page = Page::Update;
-                }
             });
         });
 
@@ -532,5 +458,3 @@ fn uptime_text(seconds: u64) -> String {
     }
 }
 
-#[allow(dead_code)]
-fn unused(_: &UpdateCheckResult, _: &update::UpdateOptions) {}

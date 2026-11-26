@@ -93,7 +93,7 @@ impl Page {
             Page::TgProxy => "TG-прокси",
             Page::Settings => "Настройки",
             Page::Lists => "Списки",
-            Page::Update => "Обновление",
+            Page::Update => "Установленные версии",
             Page::Diagnostics => "Диагностика",
             Page::Tools => "Инструменты",
             Page::About => "О программе",
@@ -109,7 +109,7 @@ impl Page {
             Page::TgProxy => "Ускорение Telegram через WebSocket (TG WS Proxy)",
             Page::Settings => "Игровой фильтр, IP-список, фейк-пакеты и прочие параметры",
             Page::Lists => "Домены и IP, к которым применяется ускорение",
-            Page::Update => "Обновление zapret с сохранением ваших списков",
+            Page::Update => "Все компоненты и обновления в одном месте",
             Page::Diagnostics => "Поиск конфликтов и типичных проблем с ускорением",
             Page::Tools => "Служба, hosts, тест стратегий и файлы",
             Page::About => "Версия, ссылки и поддержка проекта",
@@ -491,6 +491,9 @@ pub struct UpdatePageState {
     pub progress: u32,
     pub stage: String,
     pub running: bool,
+    pub all_running: bool,
+    pub all_pending: u8,
+    pub all_self: bool,
 }
 
 impl Default for UpdatePageState {
@@ -505,6 +508,9 @@ impl Default for UpdatePageState {
             progress: 0,
             stage: String::new(),
             running: false,
+            all_running: false,
+            all_pending: 0,
+            all_self: false,
         }
     }
 }
@@ -1422,6 +1428,7 @@ impl App {
                             self.notify(format!("Ошибка установки TG WS Proxy: {}", e), LogLevel::Error);
                         }
                     }
+                    self.all_update_step();
                 }
                 Msg::TgPrepared(messages) => {
                     self.pages.tg.working = false;
@@ -1468,6 +1475,9 @@ impl App {
                     if tag == "update" {
                         self.pages.update.progress = percent;
                         self.pages.update.stage = stage;
+                        if percent >= 100 {
+                            self.pages.update.running = false;
+                        }
                     } else if tag == "self" {
                         self.pages.update.progress = percent;
                         self.pages.update.stage = stage;
@@ -1513,6 +1523,7 @@ impl App {
                             self.pages.update.hint = format!("Ошибка: {}", e);
                         }
                     }
+                    self.all_update_step();
                 }
                 Msg::BackupDone(result) => match result {
                     Ok((restored, message)) => {
@@ -1900,10 +1911,13 @@ impl App {
         let local = self.install.version.clone();
         self.pages.update.running = true;
         self.pages.update.stage = "Проверка обновлений…".to_string();
+        self.pages.tg.working = true;
+        self.pages.tg.stage = "Проверка обновлений…".to_string();
         self.spawn_bg(move |tx| {
             let result = crate::engine::update::check_update(&local, true);
             let _ = tx.send(Msg::Compare(Box::new(result)));
             let _ = tx.send(Msg::SelfCheck(Box::new(crate::engine::update::self_check(true))));
+            let _ = tx.send(Msg::TgLatest(crate::engine::tgproxy::check_latest()));
             let _ = tx.send(Msg::Progress("update", 100, "Готово".to_string()));
         });
     }

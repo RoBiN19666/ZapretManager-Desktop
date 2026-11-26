@@ -9,55 +9,216 @@ use crate::ui::app::{App, Msg};
 use crate::ui::widgets as w;
 
 impl App {
-    pub(crate) fn page_update(&mut self, ui: &mut Ui) {
+    fn versions_card(&mut self, ui: &mut Ui) {
         let p = self.p;
-        let valid = self.install.is_valid();
+        let manager_current = crate::APP_VERSION.to_string();
+        let manager_latest = self
+            .self_update
+            .as_ref()
+            .map(|i| i.remote.clone())
+            .unwrap_or_default();
+        let manager_ok = self
+            .self_update
+            .as_ref()
+            .map(|i| i.ok)
+            .unwrap_or(false);
+        let manager_avail = self
+            .self_update
+            .as_ref()
+            .map(|i| i.ok && i.available)
+            .unwrap_or(false);
 
-        w::card(ui, &p, "Установленная версия", |ui| {
-            ui.label(
-                RichText::new(if valid {
-                    format!(
-                        "zapret {}",
-                        if self.install.version.is_empty() {
-                            "— версия не определена"
-                        } else {
-                            &self.install.version
-                        }
-                    )
+        let zapret_current = if self.install.version.is_empty() {
+            "не найден".to_string()
+        } else {
+            self.install.version.clone()
+        };
+        let zapret_latest = self
+            .update_state
+            .as_ref()
+            .map(|s| {
+                if s.remote_version.is_empty() {
+                    s.release
+                        .as_ref()
+                        .map(|r| r.tag.clone())
+                        .unwrap_or_default()
                 } else {
-                    "zapret не найден".to_string()
-                })
-                .size(15.0)
-                .strong()
-                .color(p.text),
+                    s.remote_version.clone()
+                }
+            })
+            .unwrap_or_default();
+        let zapret_ok = self.update_state.as_ref().map(|s| s.ok).unwrap_or(false);
+        let zapret_avail = self
+            .update_state
+            .as_ref()
+            .map(|s| s.ok && s.update_available && s.release.is_some())
+            .unwrap_or(false);
+
+        let tg_current = if self.pages.tg.state.version.is_empty() {
+            if self.pages.tg.state.installed {
+                "?".to_string()
+            } else {
+                "не установлен".to_string()
+            }
+        } else {
+            self.pages.tg.state.version.clone()
+        };
+        let tg_latest = self.pages.tg.latest.clone().unwrap_or_default();
+        let tg_avail = self
+            .pages
+            .tg
+            .latest
+            .as_ref()
+            .map(|latest| {
+                !self.pages.tg.state.installed
+                    || crate::util::version_cmp(latest, &self.pages.tg.state.version)
+                        == std::cmp::Ordering::Greater
+            })
+            .unwrap_or(false);
+        let tg_checked = self.pages.tg.latest.is_some()
+            || !self.pages.tg.check_error.is_empty();
+        let busy = self.pages.update.running || self.pages.update.all_running;
+        let mut do_manager = false;
+        let mut do_zapret = false;
+        let mut do_tg = false;
+        let mut check_all = false;
+        let mut update_all = false;
+
+        w::card(ui, &p, "Установленные версии", |ui| {
+            w::small(
+                ui,
+                &p,
+                "Все компоненты в одном месте. «Проверить всё» обновляет данные о версиях, затем можно обновить по отдельности или всё сразу.",
             );
-            ui.label(
-                RichText::new(if valid {
-                    self.install.root.clone()
+            ui.add_space(6.0);
+            if version_row(
+                ui,
+                &p,
+                "Zapret Manager",
+                &manager_current,
+                if manager_latest.is_empty() { "—" } else { &manager_latest },
+                &if manager_avail {
+                    "доступно обновление".to_string()
+                } else if manager_ok {
+                    "актуально".to_string()
                 } else {
-                    "Установите zapret или укажите папку в «Настройки» → «Папка zapret».".to_string()
-                })
-                .size(11.5)
-                .color(p.text_muted),
-            );
+                    "не проверялось".to_string()
+                },
+                if manager_avail { p.warn } else { p.text_muted },
+                if manager_avail { Some("Обновить") } else { None },
+                !busy,
+            ) {
+                do_manager = true;
+            }
+            if version_row(
+                ui,
+                &p,
+                "zapret (Flowseal)",
+                &zapret_current,
+                if zapret_latest.is_empty() { "—" } else { &zapret_latest },
+                &if zapret_avail {
+                    "доступно обновление".to_string()
+                } else if zapret_ok {
+                    "актуально".to_string()
+                } else {
+                    "не проверялось".to_string()
+                },
+                if zapret_avail { p.warn } else { p.text_muted },
+                if zapret_avail { Some("Обновить") } else { None },
+                !busy,
+            ) {
+                do_zapret = true;
+            }
+            if version_row(
+                ui,
+                &p,
+                "TG WS Proxy",
+                &tg_current,
+                if tg_latest.is_empty() { "—" } else { &tg_latest },
+                &if tg_avail {
+                    if self.pages.tg.state.installed {
+                        "доступно обновление".to_string()
+                    } else {
+                        "не установлен".to_string()
+                    }
+                } else if tg_checked {
+                    "актуально".to_string()
+                } else {
+                    "не проверялось".to_string()
+                },
+                if tg_avail { p.warn } else { p.text_muted },
+                if tg_avail {
+                    Some(if self.pages.tg.state.installed {
+                        "Обновить"
+                    } else {
+                        "Установить"
+                    })
+                } else {
+                    None
+                },
+                !busy,
+            ) {
+                do_tg = true;
+            }
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if w::secondary(ui, &p, "Проверить обновления").clicked() {
-                    self.check_updates();
+            if self.pages.update.all_running {
+                w::progress_bar(ui, &p, self.pages.update.progress as f32 / 100.0);
+                w::muted(ui, &p, &self.pages.update.stage);
+            } else if !self.pages.update.hint.is_empty() {
+                w::muted(ui, &p, &self.pages.update.hint);
+            }
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(!busy, egui::Button::new("Проверить всё"))
+                    .clicked()
+                {
+                    check_all = true;
                 }
-                if !valid && w::ghost(ui, &p, "Открыть настройки папки").clicked() {
-                    self.page = crate::ui::app::Page::Settings;
-                    self.on_navigate(crate::ui::app::Page::Settings);
-                }
-                if !self.pages.update.stage.is_empty() {
-                    ui.label(
-                        RichText::new(&self.pages.update.stage)
-                            .size(11.5)
-                            .color(p.text_muted),
-                    );
+                if (manager_avail || zapret_avail || tg_avail)
+                    && ui
+                        .add_enabled(!busy, egui::Button::new("Обновить всё"))
+                        .clicked()
+                {
+                    update_all = true;
                 }
             });
+            if !self.pages.tg.check_error.is_empty() {
+                w::muted(ui, &p, &format!("TG WS Proxy: {}", self.pages.tg.check_error));
+            }
         });
+
+        if check_all {
+            self.check_updates();
+        }
+        if do_manager {
+            self.apply_self_update();
+        }
+        if do_zapret {
+            if let Some(release) = self
+                .update_state
+                .as_ref()
+                .and_then(|s| s.release.clone())
+            {
+                let options = self.pages.update.options.clone();
+                self.install_update(release, options);
+            }
+        }
+        if do_tg {
+            if let Some(tag) = self.pages.tg.latest.clone() {
+                let dir = crate::engine::tgproxy::dir_or_default(&self.ini);
+                self.install_tg(tag, dir);
+            }
+        }
+        if update_all {
+            self.start_all_updates();
+        }
+    }
+
+    pub(crate) fn page_update(&mut self, ui: &mut Ui) {
+        let p = self.p;
+
+        self.versions_card(ui);
 
         let release = self
             .update_state
@@ -174,62 +335,7 @@ impl App {
                     _ => "Проверяем…".to_string(),
                 };
                 ui.label(RichText::new(text).size(12.5).color(p.text_dim));
-                if w::secondary(ui, &p, "Проверить обновления").clicked() {
-                    self.check_updates();
-                }
             }
-        });
-
-        w::card(ui, &p, "Обновление Zapret Manager", |ui| {
-            ui.label(
-                RichText::new(format!("Установлена версия {}", crate::APP_VERSION))
-                    .size(13.0)
-                    .color(p.text),
-            );
-            match &self.self_update {
-                Some(info) if info.ok && info.available => {
-                    ui.label(
-                        RichText::new(format!("Доступна версия {}.", info.remote))
-                            .size(12.0)
-                            .color(p.warn),
-                    );
-                    if !self.pages.update.running
-                        && w::primary(ui, &p, "Обновить менеджер").clicked()
-                    {
-                        self.apply_self_update();
-                    }
-                }
-                Some(info) if info.ok => {
-                    ui.label(
-                        RichText::new("Установлена актуальная версия.")
-                            .size(12.0)
-                            .color(p.text_muted),
-                    );
-                }
-                Some(info) => {
-                    ui.label(
-                        RichText::new(format!("Не удалось проверить: {}", info.error))
-                            .size(12.0)
-                            .color(p.text_dim),
-                    );
-                }
-                None => {
-                    ui.label(RichText::new("Проверка не выполнялась.").size(12.0).color(p.text_dim));
-                }
-            }
-            ui.add_space(6.0);
-            if w::ghost(ui, &p, "Проверить").clicked() {
-                let tx = self.tx.clone();
-                self.spawn_bg(move |_tx| {
-                    let info = update::self_check(true);
-                    let _ = tx.send(Msg::SelfCheck(Box::new(info)));
-                });
-            }
-            w::hint(
-                ui,
-                &p,
-                "Источник: github.com/RoBiN19666/ZapretManager-Desktop • GitHub Releases, файл ZapretManager.exe с SHA-256",
-            );
         });
 
         w::card(ui, &p, "Версия zapret (сборки Flowseal)", |ui| {
@@ -354,6 +460,77 @@ impl App {
         });
     }
 
+    /// Запустить все доступные обновления: zapret, TG WS Proxy, затем менеджер.
+    pub(crate) fn start_all_updates(&mut self) {
+        if self.pages.update.all_running {
+            return;
+        }
+        let zapret = self
+            .update_state
+            .as_ref()
+            .filter(|s| s.ok && s.update_available && s.release.is_some())
+            .and_then(|s| s.release.clone());
+        let tg = self.pages.tg.latest.clone().filter(|latest| {
+            !self.pages.tg.state.installed
+                || crate::util::version_cmp(latest, &self.pages.tg.state.version)
+                    == std::cmp::Ordering::Greater
+        });
+        let self_update = self
+            .self_update
+            .as_ref()
+            .map(|i| i.ok && i.available)
+            .unwrap_or(false);
+        if zapret.is_none() && tg.is_none() && !self_update {
+            self.notify("Обновлений нет — всё актуально.", LogLevel::Info);
+            return;
+        }
+        self.pages.update.all_running = true;
+        self.pages.update.all_pending = 0;
+        self.pages.update.all_self = self_update;
+        if let Some(release) = zapret {
+            self.pages.update.all_pending += 1;
+            let options = self.pages.update.options.clone();
+            self.install_update(release, options);
+        }
+        if let Some(tag) = tg {
+            self.pages.update.all_pending += 1;
+            let dir = crate::engine::tgproxy::dir_or_default(&self.ini);
+            self.install_tg(tag, dir);
+        }
+        if self.pages.update.all_pending == 0 {
+            self.pages.update.all_running = false;
+            if self.pages.update.all_self {
+                self.pages.update.all_self = false;
+                self.apply_self_update();
+            } else {
+                self.notify("Все доступные обновления установлены.", LogLevel::Ok);
+            }
+        }
+    }
+
+    /// Вызывается после завершения одного из обновлений.
+    pub(crate) fn all_update_step(&mut self) {
+        if !self.pages.update.all_running {
+            return;
+        }
+        self.pages.update.all_pending = self.pages.update.all_pending.saturating_sub(1);
+        if self.pages.update.all_pending > 0 {
+            self.pages.update.stage = format!(
+                "Обновление: осталось {}…",
+                self.pages.update.all_pending
+            );
+            return;
+        }
+        self.pages.update.all_running = false;
+        if self.pages.update.all_self {
+            self.pages.update.all_self = false;
+            self.notify("Компоненты обновлены. Обновляю менеджер…", LogLevel::Ok);
+            self.apply_self_update();
+        } else {
+            self.notify("Все доступные обновления установлены.", LogLevel::Ok);
+        }
+    }
+
     fn install_by_tag(&mut self, tag: String) {
         let current = self.install.version.clone();
         let older = !current.is_empty()
@@ -432,6 +609,58 @@ impl crate::ui::app::UpdatePageState {
     pub(crate) fn selected_release(&self) -> usize {
         self.releases_idx.min(self.releases.len().saturating_sub(1))
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn version_row(
+    ui: &mut Ui,
+    p: &crate::ui::theme::Palette,
+    name: &str,
+    current: &str,
+    latest: &str,
+    status: &str,
+    status_color: egui::Color32,
+    action: Option<&str>,
+    enabled: bool,
+) -> bool {
+    let mut clicked = false;
+    egui::Frame::none()
+        .fill(p.editor)
+        .stroke(egui::Stroke::new(1.0, p.border))
+        .rounding(egui::Rounding::same(7))
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [150.0, 18.0],
+                    egui::Label::new(RichText::new(name).size(12.5).strong().color(p.text)),
+                );
+                ui.add_sized(
+                    [90.0, 18.0],
+                    egui::Label::new(
+                        RichText::new(format!("сейчас {}", current))
+                            .size(11.5)
+                            .color(p.text_dim),
+                    ),
+                );
+                ui.add_sized(
+                    [90.0, 18.0],
+                    egui::Label::new(
+                        RichText::new(format!("доступно {}", latest))
+                            .size(11.5)
+                            .color(p.text_muted),
+                    ),
+                );
+                if let Some(label) = action {
+                    if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                        clicked = true;
+                    }
+                }
+            });
+            ui.label(RichText::new(status).size(11.0).color(status_color));
+        });
+    ui.add_space(4.0);
+    clicked
 }
 
 fn format_published(raw: &str) -> String {

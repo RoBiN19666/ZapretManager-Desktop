@@ -174,79 +174,6 @@ impl App {
             });
         });
 
-        w::card(ui, &p, "Установка и обновление", |ui| {
-            ui.label(
-                RichText::new(if st.installed {
-                    format!(
-                        "Установленная версия: {}",
-                        if st.version.is_empty() { "?" } else { &st.version }
-                    )
-                } else {
-                    "TG WS Proxy ещё не установлен".to_string()
-                })
-                .size(12.5)
-                .color(p.text),
-            );
-            if let Some(latest) = &self.pages.tg.latest {
-                let newer = crate::util::version_cmp(latest, &st.version) == std::cmp::Ordering::Greater;
-                ui.label(
-                    RichText::new(if newer {
-                        format!("Доступна новая версия: {}", latest)
-                    } else {
-                        "Установлена актуальная версия.".to_string()
-                    })
-                    .size(12.0)
-                    .color(if newer { p.warn } else { p.text_muted }),
-                );
-            } else if !self.pages.tg.check_error.is_empty() {
-                ui.label(
-                    RichText::new(format!("Ошибка: {}", self.pages.tg.check_error))
-                        .size(12.0)
-                        .color(p.danger),
-                );
-            }
-            if !self.pages.tg.stage.is_empty() {
-                ui.label(
-                    RichText::new(&self.pages.tg.stage)
-                        .size(11.5)
-                        .color(p.text_muted),
-                );
-            }
-            if self.pages.tg.progress > 0 && self.pages.tg.progress < 100 {
-                w::progress_bar(ui, &p, self.pages.tg.progress as f32 / 100.0);
-            }
-            ui.add_space(6.0);
-            ui.horizontal_wrapped(|ui| {
-                if w::secondary(ui, &p, "Проверить обновления").clicked() {
-                    self.pages.tg.working = true;
-                    self.pages.tg.stage = "Проверка обновлений…".to_string();
-                    self.pages.tg.check_error.clear();
-                    self.spawn_bg(move |tx| {
-                        let result = tgproxy::check_latest();
-                        let _ = tx.send(Msg::TgLatest(result));
-                    });
-                }
-                if w::primary(ui, &p, "Скачать и установить").clicked() {
-                    if let Some(tag) = self.pages.tg.latest.clone() {
-                        let dir = tgproxy::dir_or_default(&self.ini);
-                        self.install_tg(tag, dir);
-                    } else {
-                        self.notify(
-                            "Сначала нажмите «Проверить обновления».",
-                            LogLevel::Warn,
-                        );
-                    }
-                }
-                if w::ghost(ui, &p, "Открыть папку").clicked() {
-                    let dir = tgproxy::dir_or_default(&self.ini);
-                    crate::engine::sys::open_folder(&dir);
-                }
-                if w::ghost(ui, &p, "config.json").clicked() {
-                    crate::engine::sys::select_in_explorer(&tgproxy::proxy_config_path());
-                }
-            });
-        });
-
         w::card(ui, &p, "Автозапуск", |ui| {
             let mut auto = self.ini.get_bool("AutostartTgProxy", true);
             if w::toggle_row(
@@ -385,7 +312,7 @@ impl App {
         });
     }
 
-    fn install_tg(&mut self, tag: String, dir: std::path::PathBuf) {
+    pub(crate) fn install_tg(&mut self, tag: String, dir: std::path::PathBuf) {
         self.pages.tg.working = true;
         self.pages.tg.progress = 0;
         self.pages.tg.stage = format!("Устанавливаю TG WS Proxy {}…", tag);
