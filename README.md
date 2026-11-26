@@ -169,6 +169,27 @@ Defender иногда помечает `ZapretManager.exe` как `Trojan:Win32/
 Если хэш совпал — восстановите файл из карантина и отправьте ложное
 срабатывание в Microsoft. Подробно: [SECURITY.md](SECURITY.md).
 
+## Подпись кода
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by
+[SignPath Foundation](https://signpath.org/).
+
+Релизы `ZapretManager.exe` собираются в GitHub Actions
+([`.github/workflows/release.yml`](.github/workflows/release.yml)) из тега и
+подписываются Authenticode в SignPath. Подпись включается, когда в репозитории
+заданы `SIGNPATH_API_TOKEN` и переменные `SIGNPATH_*`; до этого релизы выходят
+неподписанными, и workflow пишет об этом предупреждение.
+
+- Коммиты и ревью: [владелец репозитория](https://github.com/RoBiN19666).
+- Утверждение подписи релиза: [владелец репозитория](https://github.com/RoBiN19666).
+
+**Конфиденциальность.** Приложение не собирает телеметрию и не отправляет
+данные на сторонние серверы по своей инициативе. Сеть используется только для
+запросов, которые инициирует пользователь или включённые им настройки:
+проверка обновлений и скачивание компонентов с GitHub, обновление списков,
+проверка сайтов и DNS/ICMP-диагностика. Автопроверку обновлений можно
+отключить в «Настройках».
+
 ## Лицензия
 
 MIT — см. [LICENSE](LICENSE). Copyright (c) 2026 RoBiN19666.
