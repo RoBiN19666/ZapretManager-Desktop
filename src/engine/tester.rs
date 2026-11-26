@@ -192,8 +192,10 @@ impl StrategyTestRow {
     pub fn healthy_groups(&self) -> usize {
         self.groups.iter().filter(|g| g.healthy()).count()
     }
+    /// Оценка «как в официальном тесте»: сначала общее число прошедших
+    /// целей, затем число рабочих сервисов (групп с ≥60 % целей).
     pub fn score(&self) -> (usize, usize) {
-        (self.healthy_groups(), self.passed())
+        (self.passed(), self.healthy_groups())
     }
     pub fn best_candidate(&self) -> bool {
         self.error.is_empty() && self.total() > 0
@@ -202,8 +204,8 @@ impl StrategyTestRow {
 
 /// Отсортировать результаты от лучшего к худшему.
 ///
-/// Сначала идут стратегии с наибольшим числом рабочих групп, затем — с
-/// наибольшим числом прошедших целей. Не запустившиеся стратегии уходят вниз.
+/// Сначала идут стратегии с наибольшим числом прошедших целей, затем — с
+/// наибольшим числом рабочих групп. Не запустившиеся стратегии уходят вниз.
 pub fn sort_rows(rows: &mut [StrategyTestRow]) {
     rows.sort_by(|a, b| {
         let a_ok = a.best_candidate();
@@ -903,7 +905,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(row.healthy_groups(), 2);
-        assert_eq!(row.score(), (2, 6));
+        assert_eq!(row.score(), (6, 2));
     }
 
     #[test]
