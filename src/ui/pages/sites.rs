@@ -118,7 +118,7 @@ impl App {
             });
         });
 
-        w::card(ui, &p, "Адреса для обхода", |ui| {
+        w::card(ui, &p, "Адреса для ускорения", |ui| {
             w::small(
                 ui,
                 &p,
@@ -279,7 +279,7 @@ impl App {
         if !self.pages.sites.editor.trim().is_empty() {
             self.confirm(
                 "Заменить список адресов?",
-                "Текущий список в поле «Адреса для обхода» будет заменён результатами наблюдения.",
+                "Текущий список в поле «Адреса для ускорения» будет заменён результатами наблюдения.",
                 "Продолжить",
                 false,
                 move |app_state| app_state.start_watch(app),
@@ -358,7 +358,7 @@ impl App {
             self.pages.sites.status = format!("{} Файл: {}", message, path);
             self.refresh_state(true);
             self.notify(
-                "Если bypass запущен, перезапустите его, чтобы новые домены подхватились.",
+                "Если ускорение запущено, перезапустите его, чтобы новые домены подхватились.",
                 LogLevel::Warn,
             );
         }

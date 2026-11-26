@@ -102,14 +102,14 @@ impl Page {
     pub fn subtitle(&self) -> &'static str {
         match self {
             Page::Overview => "Состояние защиты, быстрые действия и журнал",
-            Page::Strategies => "Выбор и запуск стратегий обхода (general*.bat)",
+            Page::Strategies => "Выбор и запуск стратегий ускорения (general*.bat)",
             Page::Test => "Автоматический прогон стратегий с наглядными результатами",
             Page::Sites => "Диагностика блокировки и добавление адресов в списки",
             Page::TgProxy => "Ускорение Telegram через WebSocket (TG WS Proxy)",
             Page::Settings => "Игровой фильтр, IP-список, фейк-пакеты и прочие параметры",
-            Page::Lists => "Домены и IP, к которым применяется обход",
+            Page::Lists => "Домены и IP, к которым применяется ускорение",
             Page::Update => "Обновление zapret с сохранением ваших списков",
-            Page::Diagnostics => "Поиск конфликтов и типичных проблем с обходом",
+            Page::Diagnostics => "Поиск конфликтов и типичных проблем с ускорением",
             Page::Tools => "Служба, hosts, тест стратегий и файлы",
             Page::About => "Версия, ссылки и поддержка проекта",
         }
@@ -393,7 +393,7 @@ pub fn list_files() -> Vec<ListFileInfo> {
             label: "Мои домены",
             official: false,
             tracked: false,
-            hint: "Домены, которые нужно обходить (добавляются к официальному списку). Файл может быть пустым.",
+            hint: "Домены, которые нужно ускорять (добавляются к официальному списку). Файл может быть пустым.",
             template: "# Мои домены (файл может быть пустым)\r\n",
         },
         ListFileInfo {
@@ -401,7 +401,7 @@ pub fn list_files() -> Vec<ListFileInfo> {
             label: "Исключения",
             official: false,
             tracked: false,
-            hint: "Домены, которые обходить НЕ нужно (перекрывают оба списка). Файл может быть пустым.",
+            hint: "Домены, которые ускорять НЕ нужно (перекрывают оба списка). Файл может быть пустым.",
             template: "# Исключения (файл может быть пустым)\r\n",
         },
         ListFileInfo {
@@ -409,7 +409,7 @@ pub fn list_files() -> Vec<ListFileInfo> {
             label: "Исключения IP",
             official: false,
             tracked: false,
-            hint: "IP-подсети, которые обходить не нужно. Файл может быть пустым.",
+            hint: "IP-подсети, которые ускорять не нужно. Файл может быть пустым.",
             template: "# Исключения IP (файл может быть пустым)\r\n",
         },
         official(
@@ -1102,7 +1102,7 @@ impl App {
                 }
                 Msg::StartDone(result) => {
                     self.status_hint = if result.ok {
-                        format!("Bypass запущен (PID {})", result.pid)
+                        format!("Ускорение запущено (PID {})", result.pid)
                     } else {
                         String::new()
                     };
@@ -1668,7 +1668,7 @@ impl App {
         if self.auto_heal_attempts >= 3 {
             self.auto_heal_armed = false;
             self.notify(
-                "Автолечение: три попытки поднять bypass не удались. Проверьте журнал и драйвер WinDivert.",
+                "Автолечение: три попытки поднять ускорение не удались. Проверьте журнал и драйвер WinDivert.",
                 LogLevel::Warn,
             );
             return;
@@ -2028,18 +2028,18 @@ impl App {
                         if self.state.winws_running { p.success } else { p.text_muted },
                         self.state.winws_running,
                     );
-                    let bypass = if self.state.winws_running {
+                    let accel_text = if self.state.winws_running {
                         let name = if self.state.matched_strategy.is_empty() {
                             "пользовательская"
                         } else {
                             &self.state.matched_strategy
                         };
-                        format!("Bypass: работает — {}", name)
+                        format!("Ускорение: работает — {}", name)
                     } else {
-                        "Bypass: не запущен".to_string()
+                        "Ускорение: не запущено".to_string()
                     };
                     ui.label(
-                        RichText::new(bypass)
+                        RichText::new(accel_text)
                             .size(11.5)
                             .color(if self.state.winws_running { p.text } else { p.text_muted }),
                     );

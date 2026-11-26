@@ -93,7 +93,7 @@ fn task_xml(exe: &Path, args: &str) -> String {
         r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Zapret Manager — обход DPI для Discord и YouTube</Description>
+    <Description>Zapret Manager — ускорение соединения для Discord и YouTube</Description>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>

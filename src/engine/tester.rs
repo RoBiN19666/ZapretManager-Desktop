@@ -274,7 +274,7 @@ fn check_target(target: &TestTarget, timeout_ms: u32, deep: bool) -> (bool, u64,
     }
 }
 
-/// Проверить цели на уже запущенном bypass, без остановки и baseline.
+/// Проверить цели на уже запущенном ускорении, без остановки и baseline.
 /// Нужно автоподбору после применения лучшей стратегии.
 pub fn verify_current(
     install: &ZapretInstall,
@@ -287,7 +287,7 @@ pub fn verify_current(
         .filter(|g| selected_groups.iter().any(|s| s.eq_ignore_ascii_case(&g.name)))
         .collect();
     let mut row = StrategyTestRow {
-        strategy_name: "Текущий bypass".to_string(),
+        strategy_name: "Текущее ускорение".to_string(),
         ..Default::default()
     };
     if groups.is_empty() {
@@ -369,7 +369,7 @@ pub fn run_candidates(
     ops.kill_winws();
     std::thread::sleep(Duration::from_millis(300));
 
-    // Базовая проверка: цели, доступные без обхода, из оценки исключаются.
+    // Базовая проверка: цели, доступные без ускорения, из оценки исключаются.
     let mut baseline_targets: Vec<TestTarget> = groups.iter().flat_map(|g| g.targets.clone()).collect();
     let baseline_results: Vec<bool> = {
         let index = std::sync::atomic::AtomicUsize::new(0);
@@ -400,7 +400,7 @@ pub fn run_candidates(
     let _ = &baseline_targets;
     if baseline_reachable > 0 {
         log::warn(format!(
-            "Тест: без обхода доступно целей {} — они исключены из оценки стратегий.",
+            "Тест: без ускорения доступно целей {} — они исключены из оценки стратегий.",
             baseline_reachable
         ));
     }
@@ -510,11 +510,11 @@ pub fn run_candidates(
             if let Some(prev) = install.find_strategy(&before.matched_strategy) {
                 let r = ops.start(prev);
                 if !r.ok {
-                    log::warn(format!("Не удалось восстановить bypass после теста: {}", r.message));
+                    log::warn(format!("Не удалось восстановить ускорение после теста: {}", r.message));
                 }
             }
         } else if before.winws_running {
-            log::warn("Тест: bypass был запущен, но стратегия не сопоставлена — после теста он остался выключен.");
+            log::warn("Тест: ускорение было запущено, но стратегия не сопоставлена — после теста он остался выключен.");
         }
     }
     rows
@@ -832,7 +832,7 @@ pub fn run_official_test(install: &ZapretInstall) -> Result<(), String> {
     cmd.args([
         "-NoProfile",
         "-ExecutionPolicy",
-        "Bypass",
+        "Ускорение",
         "-File",
         &script.to_string_lossy(),
     ])

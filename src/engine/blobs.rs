@@ -135,7 +135,7 @@ fn download_candidates(name: &str) -> Vec<String> {
 pub fn repair(install: &ZapretInstall) -> String {
     let audit = audit(install);
     if audit.is_ok() {
-        return "Все файлы обхода (blobs) на месте.".to_string();
+        return "Все файлы ускорения (blobs) на месте.".to_string();
     }
     let mut downloaded = Vec::new();
     let mut failed = Vec::new();
@@ -170,7 +170,7 @@ pub fn repair(install: &ZapretInstall) -> String {
                 let _ = std::fs::remove_file(&temp);
                 downloaded.push(name.clone());
                 log::ok(format!(
-                    "Докачан файл обхода: {} -> {}",
+                    "Докачан файл ускорения: {} -> {}",
                     name,
                     blob.path.to_string_lossy()
                 ));
@@ -195,7 +195,7 @@ pub fn repair(install: &ZapretInstall) -> String {
             " Не удалось найти: {}. Обновите zapret.",
             failed.join(", ")
         ));
-        log::warn(format!("Не найдены файлы обхода: {}", failed.join(", ")));
+        log::warn(format!("Не найдены файлы ускорения: {}", failed.join(", ")));
     }
     message
 }
@@ -203,10 +203,10 @@ pub fn repair(install: &ZapretInstall) -> String {
 /// Короткий отчёт для диагностики.
 pub fn summary(audit: &BlobAudit) -> String {
     if audit.is_ok() {
-        format!("Все файлы обхода на месте ({} ссылок).", audit.referenced.len())
+        format!("Все файлы ускорения на месте ({} ссылок).", audit.referenced.len())
     } else {
         format!(
-            "Не хватает файлов обхода: {}",
+            "Не хватает файлов ускорения: {}",
             audit.missing_names().join(", ")
         )
     }

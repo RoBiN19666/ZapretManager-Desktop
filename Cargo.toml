@@ -1,9 +1,9 @@
 ﻿[package]
 name = "zapret-manager"
-version = "2.3.2"
+version = "2.4.0"
 edition = "2021"
 rust-version = "1.80"
-description = "Zapret Manager — обход DPI для Discord и YouTube (Rust)"
+description = "Zapret Manager — ускорение соединения для Discord и YouTube (Rust)"
 license = "MIT"
 authors = ["RoBiN19666"]
 

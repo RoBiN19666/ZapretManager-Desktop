@@ -545,7 +545,7 @@ pub fn update_now(
     let service_installed = snap.installed;
     let service_strategy = snap.strategy.clone();
 
-    progress(44, "Остановка bypass…");
+    progress(44, "Остановка ускорения…");
     if service_installed {
         let _ = super::service::stop("zapret");
         let _ = ops::wait_service("zapret", "остановлена", Duration::from_secs(25));
@@ -621,10 +621,10 @@ pub fn update_now(
         }
     }
 
-    // Перезапуск bypass.
+    // Перезапуск ускорения.
     let mut rescanned = install.clone();
     rescanned.rescan();
-    progress(95, "Перезапуск bypass…");
+    progress(95, "Перезапуск ускорения…");
     if options.restart_after {
         let ops2 = ZapretOps::new(rescanned.clone());
         if service_installed {

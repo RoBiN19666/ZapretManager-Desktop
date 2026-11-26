@@ -409,7 +409,7 @@ impl ZapretOps {
             }
         }
         if msg.is_empty() {
-            msg = "Bypass уже остановлен.".to_string();
+            msg = "Ускорение уже остановлено.".to_string();
         }
         msg.trim().to_string()
     }
@@ -471,16 +471,16 @@ impl ZapretOps {
         if service::exists("zapret") {
             service::label(
                 "zapret",
-                "Zapret — обход DPI (Zapret Manager)",
-                "Обход DPI для Discord и YouTube. Запускает winws.exe; управляется Zapret Manager.",
+                "Zapret — ускорение соединения (Zapret Manager)",
+                "Ускорение соединения для Discord и YouTube. Запускает winws.exe; управляется Zapret Manager.",
             );
         }
         for name in ["WinDivert", "WinDivert14"] {
             if service::exists(name) {
                 service::label(
                     name,
-                    "WinDivert — драйвер обхода DPI (Zapret Manager)",
-                    "Драйвер перехвата пакетов WinDivert, используется winws.exe для обхода DPI.",
+                    "WinDivert — драйвер ускорения соединения (Zapret Manager)",
+                    "Драйвер перехвата пакетов WinDivert, используется winws.exe для ускорения соединения.",
                 );
             }
         }
@@ -509,9 +509,9 @@ impl ZapretOps {
         let bin_path = format!("\"{}\" {} ", self.install.winws_exe().to_string_lossy(), args);
         service::create(
             "zapret",
-            "Zapret — обход DPI (Zapret Manager)",
+            "Zapret — ускорение соединения (Zapret Manager)",
             &bin_path,
-            "Обход DPI для Discord и YouTube. Запускает winws.exe; управляется Zapret Manager.",
+            "Ускорение соединения для Discord и YouTube. Запускает winws.exe; управляется Zapret Manager.",
         )?;
 
         let _ = sys::reg_set_string(
@@ -709,7 +709,7 @@ impl ZapretOps {
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_default();
                 log::ok(format!("Активный фейк {} заменён на {}", active_file_name, name));
-                format!("Активный фейк заменён на «{}». Перезапустите bypass, чтобы применить.", name)
+                format!("Активный фейк заменён на «{}». Перезапустите ускорение, чтобы применить.", name)
             }
             Err(e) => {
                 log::error(format!("Не удалось заменить фейк: {}", e));

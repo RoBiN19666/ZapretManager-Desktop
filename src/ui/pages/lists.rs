@@ -112,7 +112,7 @@ impl App {
                 self.pages.lists.dirty = false;
                 self.pages.lists.info = self.lists_info();
                 self.notify(
-                    format!("Список сохранён: {}. Перезапустите bypass, чтобы применить.", file.name),
+                    format!("Список сохранён: {}. Перезапустите ускорение, чтобы применить.", file.name),
                     LogLevel::Ok,
                 );
             }
@@ -575,7 +575,7 @@ impl App {
         self.pages.lists.notes = lists::analyze(&self.pages.lists.editor);
         self.pages.lists.info = self.lists_info();
         self.notify(
-            format!("Перенесено строк: {} → {}. Перезапустите bypass.", moved, user_name),
+            format!("Перенесено строк: {} → {}. Перезапустите ускорение.", moved, user_name),
             LogLevel::Ok,
         );
     }

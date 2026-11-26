@@ -61,7 +61,7 @@ impl App {
                 );
                 ui.add_space(10.0);
                 // zapret
-                ui.label(RichText::new("Запрет (обход DPI для Discord и YouTube)").size(13.0).strong().color(p.text));
+                ui.label(RichText::new("Ускорение (для Discord и YouTube)").size(13.0).strong().color(p.text));
                 let status = if self.install.is_valid() {
                     format!(
                         "Уже установлен: {} (версия {})",

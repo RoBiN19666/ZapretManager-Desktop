@@ -121,7 +121,7 @@ pub fn run(
             "Система",
             "Права администратора",
             Severity::Error,
-            "Приложение запущено без прав администратора — запуск bypass и управление службами недоступны."
+            "Приложение запущено без прав администратора — запуск ускорения и управление службами недоступны."
                 .to_string(),
             "Запустите Zapret Manager от имени администратора.",
         );
@@ -180,7 +180,7 @@ pub fn run(
                 "Драйвер WinDivert",
                 Severity::Error,
                 "Файл WinDivert64.sys не найден в папке bin.".to_string(),
-                "Без драйвера bypass не работает. Обновите или переустановите zapret.",
+                "Без драйвера ускорение не работает. Обновите или переустановите zapret.",
             );
         }
 
@@ -191,7 +191,7 @@ pub fn run(
                 "Путь установки",
                 Severity::Warn,
                 format!("Путь содержит кириллицу: {}", install.root),
-                "Если bypass не работает, перенесите папку, например, в C:\\zapret.",
+                "Если ускорение не работает, перенесите папку, например, в C:\\zapret.",
             );
         } else {
             b.add(
@@ -252,12 +252,12 @@ pub fn run(
         );
     }
 
-    step("Состояние bypass…");
+    step("Состояние ускорения…");
     let state = ops.get_state();
     let snap = service::query("zapret");
     if state.winws_running {
         b.add(
-            "Bypass",
+            "Ускорение",
             "Процесс winws.exe",
             Severity::Ok,
             "winws.exe запущен.".to_string(),
@@ -265,10 +265,10 @@ pub fn run(
         );
     } else if !snap.installed {
         b.add(
-            "Bypass",
+            "Ускорение",
             "Процесс winws.exe",
             Severity::Warn,
-            "Bypass не запущен.".to_string(),
+            "Ускорение не запущено.".to_string(),
             "Запустите стратегию на странице «Стратегии».",
         );
     }
@@ -278,7 +278,7 @@ pub fn run(
             message.push_str(&format!(", стратегия: {}", snap.strategy));
         }
         b.add(
-            "Bypass",
+            "Ускорение",
             "Служба zapret",
             if snap.status == "работает" {
                 Severity::Ok
@@ -292,7 +292,7 @@ pub fn run(
     if valid {
         if ops.service_points_elsewhere() {
             b.add(
-                "Bypass",
+                "Ускорение",
                 "Папка службы",
                 Severity::Warn,
                 format!(
@@ -306,18 +306,18 @@ pub fn run(
             );
         } else if ops.service_path_missing() {
             b.add(
-                "Bypass",
+                "Ускорение",
                 "Папка службы",
                 Severity::Error,
                 "Служба zapret указывает на несуществующую папку.".to_string(),
-                "После перезагрузки bypass не запустится. Переустановите службу из текущей папки.",
+                "После перезагрузки ускорение не запустится. Переустановите службу из текущей папки.",
             );
         }
     }
     let windivert = service::query("WinDivert");
     if !state.winws_running && windivert.installed && windivert.status == "работает" {
         b.add(
-            "Bypass",
+            "Ускорение",
             "Зависший драйвер WinDivert",
             Severity::Error,
             "Служба WinDivert активна, но winws.exe не запущен — драйвер занят и блокирует запуск."
@@ -332,7 +332,7 @@ pub fn run(
         if mode == "loaded" {
             if lines > 1000 {
                 b.add(
-                    "Bypass",
+                    "Ускорение",
                     "IPSet список",
                     Severity::Ok,
                     format!("Загружен полный список: {} строк.", lines),
@@ -340,7 +340,7 @@ pub fn run(
                 );
             } else {
                 b.add(
-                    "Bypass",
+                    "Ускорение",
                     "IPSet список",
                     Severity::Warn,
                     format!("Загружен полный список: {} строк.", lines),
@@ -350,7 +350,7 @@ pub fn run(
         } else {
             let backup_lines = super::ops::count_list_lines(&install.ipset_backup());
             b.add(
-                "Bypass",
+                "Ускорение",
                 "IPSet список",
                 Severity::Ok,
                 format!(
@@ -550,25 +550,25 @@ pub fn run(
     if conflicts.is_empty() {
         b.add(
             "Конфликты",
-            "Другие bypass-службы",
+            "Другие службы ускорения",
             Severity::Ok,
-            "Конкурирующих bypass-служб не найдено.".to_string(),
+            "Конкурирующих служб ускорения не найдено.".to_string(),
             "",
         );
     } else {
         b.add(
             "Конфликты",
-            "Другие bypass-службы",
+            "Другие службы ускорения",
             Severity::Error,
             format!("Найдены конкурирующие службы: {}", join_names(&conflicts)),
-            "Остановите и удалите их, иначе два bypass будут мешать друг другу.",
+            "Остановите и удалите их, иначе два ускорения будут мешать друг другу.",
         );
         b.action("conflicts", "Удалить конфликты");
     }
 
     if windivert.installed && windivert.status == "работает" && !state.winws_running {
         b.add(
-            "Bypass",
+            "Ускорение",
             "Служба WinDivert",
             Severity::Warn,
             "Служба WinDivert запущена без winws.exe.".to_string(),
@@ -611,7 +611,7 @@ pub fn run(
             "Шифрованный DNS (DoH)",
             Severity::Ok,
             "Шифрованный DNS в системе не настроен.".to_string(),
-            "Включите «Шифрованный DNS» в настройках Windows 11 или в браузере — так обход работает стабильнее.",
+            "Включите «Шифрованный DNS» в настройках Windows 11 или в браузере — так ускорение работает стабильнее.",
         );
     }
 
@@ -700,20 +700,20 @@ pub fn run(
     }
 
     if valid {
-        step("Файлы обхода winws…");
+        step("Файлы ускорения winws…");
         let audit = blobs::audit(install);
         if audit.is_ok() {
             b.add(
-                "Обход",
-                "Файлы обхода (blobs)",
+                "Ускорение",
+                "Файлы ускорения (blobs)",
                 Severity::Ok,
                 blobs::summary(&audit),
                 "",
             );
         } else {
             b.add(
-                "Обход",
-                "Файлы обхода (blobs)",
+                "Ускорение",
+                "Файлы ускорения (blobs)",
                 Severity::Error,
                 blobs::summary(&audit),
                 "Не хватает .bin-файлов, на которые ссылаются стратегии. Их можно докачать из официальных репозиториев.",
@@ -725,7 +725,7 @@ pub fn run(
     let discord = super::ops::discord_cache_dirs();
     if discord.is_empty() {
         b.add(
-            "Bypass",
+            "Ускорение",
             "Кэш Discord",
             Severity::Ok,
             "Установки Discord не найдены.".to_string(),
@@ -734,7 +734,7 @@ pub fn run(
     } else {
         let dirs: Vec<String> = discord.iter().map(|p| p.to_string_lossy().to_string()).collect();
         b.add(
-            "Bypass",
+            "Ускорение",
             "Кэш Discord",
             Severity::Ok,
             format!("Найдены установки Discord: {}", dirs.join(", ")),

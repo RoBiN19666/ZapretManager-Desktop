@@ -45,7 +45,7 @@ impl App {
                 );
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new("Графическая оболочка для обхода DPI в Discord и YouTube")
+                    RichText::new("Графическая оболочка для ускорения соединения в Discord и YouTube")
                         .size(13.0)
                         .color(p.text_dim),
                 );
@@ -55,7 +55,7 @@ impl App {
         w::card(ui, &p, "О программе", |ui| {
             ui.label(
                 RichText::new(
-                    "Zapret Manager — неофициальная графическая оболочка. Обход DPI выполняет проект zapret (bol-van), сборка и стратегии — zapret-discord-youtube (Flowseal), прокси Telegram — TG WS Proxy (Flowseal). Сам обход выполняют winws.exe и драйвер WinDivert из состава zapret.",
+                    "Zapret Manager — неофициальная графическая оболочка. Ускорение соединения выполняет проект zapret (bol-van), сборка и стратегии — zapret-discord-youtube (Flowseal), прокси Telegram — TG WS Proxy (Flowseal). Само ускорение выполняют winws.exe и драйвер WinDivert из состава zapret.",
                 )
                 .size(12.5)
                 .color(p.text_dim),

@@ -384,7 +384,7 @@ fn section_candidates(section: &[String], pools: &Pools) -> Vec<(String, Vec<(St
             ));
         }
     }
-    // Пары, которые чаще всего влияют на обход.
+    // Пары, которые чаще всего влияют на ускорение.
     let pair_names = [
         ("--dpi-desync-repeats", "--dpi-desync-split-pos"),
         ("--dpi-desync-split-seqovl", "--dpi-desync-split-pos"),
