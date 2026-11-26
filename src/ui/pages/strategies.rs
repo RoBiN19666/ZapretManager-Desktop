@@ -108,6 +108,14 @@ impl App {
                         .color(p.text_muted),
                 );
             });
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(
+                    "BASE — базовая  ·  ALT — альтернативная, пробуйте по порядку  ·  EXP — экспериментальная  ·  SIMPLE — упрощённая  ·  FAKE TLS — автоподбор",
+                )
+                .size(10.5)
+                .color(p.text_muted),
+            );
             ui.add_space(6.0);
             let mut toggle_fav: Option<String> = None;
             egui::Frame::none()
@@ -129,7 +137,7 @@ impl App {
                                 let s = &strategies[idx];
                                 let is_selected = idx == selected;
                                 let (rect, resp) = ui.allocate_exact_size(
-                                    egui::vec2(ui.available_width(), 38.0),
+                                    egui::vec2(ui.available_width(), 34.0),
                                     egui::Sense::click(),
                                 );
                                 let star_rect = egui::Rect::from_center_size(
@@ -148,18 +156,11 @@ impl App {
                                 }
                                 let is_active = !active.is_empty() && s.name.eq_ignore_ascii_case(&active);
                                 ui.painter().text(
-                                    egui::pos2(rect.left() + 12.0, rect.top() + 12.0),
-                                    egui::Align2::LEFT_TOP,
+                                    egui::pos2(rect.left() + 12.0, rect.center().y),
+                                    egui::Align2::LEFT_CENTER,
                                     &s.name,
                                     egui::FontId::new(13.0, egui::FontFamily::Name("bold".into())),
                                     if is_selected { p.text } else { p.text_dim },
-                                );
-                                ui.painter().text(
-                                    egui::pos2(rect.left() + 12.0, rect.top() + 26.0),
-                                    egui::Align2::LEFT_TOP,
-                                    &s.description,
-                                    egui::FontId::new(10.5, egui::FontFamily::Proportional),
-                                    p.text_muted,
                                 );
                                 let is_fav = favorites.contains(&s.name.to_lowercase());
                                 ui.painter().text(
