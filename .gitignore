@@ -2,18 +2,13 @@
 data/
 *.log
 
-# Артефакты сборки и разработки
+# Rust: артефакты сборки
+/target/
+target/
 *.pdb
-tools/*.exe
-tools/*.png
-tools/*.log
-tools/*.txt
-_safety-backup/
 
 # Сам zapret в репозиторий менеджера не кладём — его ставит мастер установки
 zapret-discord-youtube-*/
-
-# Резервные копии, создаваемые автообновлением
 zapret-discord-youtube-*_backup_*/
 
 # Служебные файлы Windows
@@ -23,6 +18,11 @@ desktop.ini
 # Сборка и дистрибутив: exe живёт в GitHub Releases, а не в гите
 /ZapretManager.exe
 dist/
-
-# Сборка: сгенерированный файл версии
 build/
+
+# Инструменты: временные файлы
+tools/*.exe
+tools/*.png
+tools/*.log
+tools/*.txt
+_safety-backup/
