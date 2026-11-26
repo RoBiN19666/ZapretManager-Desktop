@@ -131,7 +131,17 @@ fn prune(dir: &Path, keep: usize) -> std::io::Result<()> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().map(|e| e.eq_ignore_ascii_case("zmb")).unwrap_or(false))
+        .filter(|p| {
+            if !p.extension().map(|e| e.eq_ignore_ascii_case("zmb")).unwrap_or(false) {
+                return false;
+            }
+            let name = p
+                .file_name()
+                .map(|n| n.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            // Ручные копии пользователя не удаляем.
+            name.starts_with("pre-restore-") || name.starts_with("auto-")
+        })
         .collect();
     files.sort_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
     while files.len() > keep {
