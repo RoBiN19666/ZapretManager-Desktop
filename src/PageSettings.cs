@@ -18,6 +18,7 @@ namespace ZapretManager
         private ToggleSwitch _tgAutoTg;
         private ToggleSwitch _tgMinimize;
         private DarkSelect _themeSelect;
+        private DarkSelect _scaleSelect;
         private Label _autoStatus;
 
         private RoundButton[] _modeButtons = new RoundButton[4];
@@ -266,7 +267,7 @@ namespace ZapretManager
 
         private void BuildMiscCard()
         {
-            _miscCard = NewCard("Прочее", 210);
+            _miscCard = NewCard("Прочее", 258);
 
             _miscCard.Controls.Add(L("Оформление", Theme.Small, Theme.TextDim, 22, 38));
             _themeSelect = new DarkSelect();
@@ -281,7 +282,36 @@ namespace ZapretManager
                 Shell.Notify("Оформление: " + _themeSelect.SelectedItem.ToLowerInvariant(), LogLevel.Ok);
             };
             _miscCard.Controls.Add(_themeSelect);
-            _tgManagerUpdate = AddToggleRow(_miscCard, 84, "Проверять обновления при запуске менеджера",
+
+            _miscCard.Controls.Add(L("Масштаб интерфейса", Theme.Small, Theme.TextDim, 22, 80));
+            _scaleSelect = new DarkSelect();
+            _scaleSelect.Location = new Point(150, 78);
+            _scaleSelect.Width = 120;
+            _scaleSelect.SetItems(new System.Collections.Generic.List<string>(new string[] { "90%", "100%", "110%" }),
+                Shell.Config.Get("UiScale", "100") + "%");
+            _scaleSelect.SelectedIndexChanged += delegate
+            {
+                if (_suppress) return;
+                string percent = "100";
+                switch (_scaleSelect.SelectedIndex)
+                {
+                    case 0: percent = "90"; break;
+                    case 1: percent = "100"; break;
+                    case 2: percent = "110"; break;
+                    case 3: percent = "125"; break;
+                    case 4: percent = "150"; break;
+                }
+                Shell.Config.Set("UiScale", percent);
+                Shell.Config.Save();
+                float scale = 1f;
+                float.TryParse(percent, out scale);
+                Theme.InitFonts(scale / 100f);
+                Shell.Form.ApplyTheme(Theme.Mode);
+                Shell.Notify("Масштаб интерфейса: " + percent + "%.", LogLevel.Ok);
+            };
+            _miscCard.Controls.Add(_scaleSelect);
+
+            _tgManagerUpdate = AddToggleRow(_miscCard, 120, "Проверять обновления при запуске менеджера",
                 "При старте и далее раз в 6 часов проверять GitHub (zapret, TG WS Proxy, менеджер)", Shell.Config.GetBool("CheckUpdatesOnStartup", true), delegate
                 {
                     if (_suppress) return;
@@ -291,7 +321,7 @@ namespace ZapretManager
                 });
 
             RoundButton tcp = Btn("Включить TCP timestamps", ButtonKind.Secondary, 210);
-            tcp.Location = new Point(22, 148);
+            tcp.Location = new Point(22, 190);
             tcp.Click += delegate
             {
                 if (!Shell.RequireAdmin("TCP timestamps")) return;
@@ -301,7 +331,7 @@ namespace ZapretManager
             _miscCard.Controls.Add(tcp);
 
             RoundButton dc = Btn("Очистить кэш Discord", ButtonKind.Secondary, 190);
-            dc.Location = new Point(244, 148);
+            dc.Location = new Point(244, 190);
             dc.Click += delegate
             {
                 if (!Dlg.Confirm(this.View.FindForm(), "Очистить кэш Discord?", "Discord будет закрыт, а папки Cache, Code Cache и GPUCache удалены.", "Очистить")) return;

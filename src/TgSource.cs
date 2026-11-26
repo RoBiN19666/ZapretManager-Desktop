@@ -43,6 +43,12 @@ namespace ZapretManager
         public static string VenvDir { get { return Path.Combine(RootDir, ".venv"); } }
         public static string VenvPython { get { return Path.Combine(VenvDir, @"Scripts\pythonw.exe"); } }
         public static string VenvConsolePython { get { return Path.Combine(VenvDir, @"Scripts\python.exe"); } }
+        /// <summary>Портативный Python (embeddable-сборка python.org) — не требует установки у пользователя.</summary>
+        public static string PortableDir { get { return Path.Combine(RootDir, "python"); } }
+        public static string PortablePython { get { return Path.Combine(PortableDir, "pythonw.exe"); } }
+        public static string PortableConsole { get { return Path.Combine(PortableDir, "python.exe"); } }
+        public static string PortableSitePackages { get { return Path.Combine(PortableDir, @"Lib\site-packages"); } }
+        public const string PythonVersion = "3.13.5";
         public static string MarkerPath { get { return Path.Combine(RootDir, "prepared.txt"); } }
         public static string ScriptPath { get { return Path.Combine(SrcDir, @"proxy\tg_ws_proxy.py"); } }
 
@@ -52,7 +58,7 @@ namespace ZapretManager
             {
                 try
                 {
-                    return File.Exists(VenvPython) && File.Exists(ScriptPath) && File.Exists(MarkerPath);
+                    return (File.Exists(PortablePython) || File.Exists(VenvPython)) && File.Exists(ScriptPath) && File.Exists(MarkerPath);
                 }
                 catch { return false; }
             }
@@ -192,38 +198,155 @@ namespace ZapretManager
                 try { Directory.Delete(tmp, true); } catch { }
                 try { File.Delete(zip); } catch { }
 
-                if (progress != null) progress(40, "Создаём виртуальное окружение…");
-                string venvOut = Run(python, "-m venv \"" + VenvDir + "\"", 180000);
-                if (!File.Exists(VenvConsolePython)) return "Не удалось создать venv: " + Trim(venvOut);
+                if (progress != null) progress(40, "Готовим портативный Python " + PythonVersion + " (≈10 МБ)…");
+                string portableError = EnsurePortable(progress, out python);
+                if (portableError.Length > 0) return portableError;
 
-                if (progress != null) progress(60, "Устанавливаем зависимости (httpx, certifi, cryptography)…");
-                StringBuilder args = new StringBuilder();
-                args.Append("-m pip install --disable-pip-version-check --no-input ");
-                foreach (string pkg in RequiredPackages) args.Append("\"").Append(pkg).Append("\" ");
-                string pipOut = Run(VenvConsolePython, args.ToString(), 420000);
-                if (pipOut.IndexOf("ERROR", StringComparison.OrdinalIgnoreCase) >= 0 || !File.Exists(VenvPython))
-                    return "Не удалось установить зависимости: " + Trim(pipOut);
+                if (progress != null) progress(70, "Устанавливаем зависимости (httpx, certifi, cryptography)…");
+                if (!File.Exists(PortableSitePackages) || !HasPackages(python)) 
+                {
+                    string pipError = InstallPackages(python, progress);
+                    if (pipError.Length > 0) return pipError;
+                }
 
                 if (progress != null) progress(92, "Проверяем запуск…");
-                string check = Run(VenvConsolePython, "\"" + ScriptPath + "\" --help", 30000);
+                string check = Run(PortableConsole, "\"" + ScriptPath + "\" --help", 40000, PortablePythonPath());
                 if (check.IndexOf("usage", StringComparison.OrdinalIgnoreCase) < 0 && check.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0)
                     return "Прокси не запускается из исходников: " + Trim(check);
 
                 File.WriteAllText(MarkerPath,
                     "версия: " + refName + Environment.NewLine +
                     "python: " + python + Environment.NewLine +
+                    "портативный: да" + Environment.NewLine +
                     "подготовлено: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm") + Environment.NewLine,
                     new UTF8Encoding(false));
 
                 if (progress != null) progress(100, "Готово");
                 ok = true;
-                Log.Ok("Тихий режим TG WS Proxy подготовлен (" + refName + ", " + python + ").");
-                return "Готово: исходники " + refName + " и зависимости установлены в " + RootDir;
+                Log.Ok("Тихий режим TG WS Proxy подготовлен (" + refName + ", портативный Python " + PythonVersion + ").");
+                return "Готово: исходники " + refName + " и портативный Python установлены в " + RootDir;
             }
             catch (Exception ex)
             {
                 Log.Error("Не удалось подготовить тихий режим TG WS Proxy", ex);
                 return "Ошибка подготовки: " + ex.Message;
+            }
+        }
+
+        /// <summary>Путь site-packages портативного Python (для PYTHONPATH).</summary>
+        public static string PortablePythonPath()
+        {
+            return PortableSitePackages;
+        }
+
+        /// <summary>Скачивает embeddable-сборку Python с python.org и распаковывает рядом.</summary>
+        private static string EnsurePortable(Action<int, string> progress, out string pythonExe)
+        {
+            pythonExe = PortableConsole;
+            if (File.Exists(PortableConsole)) return "";
+
+            string zip = Path.Combine(Path.GetTempPath(), "python-embed-" + PythonVersion + ".zip");
+            string url = "https://www.python.org/ftp/python/" + PythonVersion + "/python-" + PythonVersion + "-embed-amd64.zip";
+            try
+            {
+                Web.Download(url, zip, delegate(int percent, long read, long total)
+                {
+                    if (progress != null) progress(percent < 0 ? 45 : 40 + (int)(percent * 0.18), "Скачивание Python: " + (percent < 0 ? 0 : percent) + "%");
+                }, 300000);
+
+                if (Directory.Exists(PortableDir)) Directory.Delete(PortableDir, true);
+                Directory.CreateDirectory(PortableDir);
+                ZipFile.ExtractToDirectory(zip, PortableDir);
+                try { File.Delete(zip); } catch { }
+
+                Directory.CreateDirectory(PortableSitePackages);
+                string pth = null;
+                foreach (string file in Directory.GetFiles(PortableDir, "python*._pth")) { pth = file; break; }
+                if (pth != null)
+                {
+                    string content = File.ReadAllText(pth);
+                    if (content.IndexOf("site-packages", StringComparison.OrdinalIgnoreCase) < 0)
+                        content += Environment.NewLine + @"Lib\site-packages" + Environment.NewLine;
+                    if (content.IndexOf("import site", StringComparison.OrdinalIgnoreCase) < 0)
+                        content += "import site" + Environment.NewLine;
+                    File.WriteAllText(pth, content);
+                }
+
+                if (!File.Exists(PortableConsole)) return "Не удалось распаковать портативный Python.";
+                Log.Ok("Портативный Python " + PythonVersion + " распакован в " + PortableDir);
+                return "";
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Не удалось скачать портативный Python", ex);
+                return "Не удалось скачать Python с python.org: " + ex.Message;
+            }
+        }
+
+        /// <summary>Ставит pip (get-pip.py) и нужные пакеты в портативный Python.</summary>
+        private static string InstallPackages(string python, Action<int, string> progress)
+        {
+            try
+            {
+                if (!Directory.Exists(Path.Combine(PortableDir, @"Lib\site-packages\pip")))
+                {
+                    if (progress != null) progress(72, "Ставим pip в портативный Python…");
+                    string getPip = Path.Combine(Path.GetTempPath(), "get-pip.py");
+                    Web.Download("https://bootstrap.pypa.io/get-pip.py", getPip, null, 180000);
+                    string pipSetup = Run(PortableConsole, "\"" + getPip + "\" --no-warn-script-location --disable-pip-version-check", 300000, PortablePythonPath());
+                    try { File.Delete(getPip); } catch { }
+                    if (!Directory.Exists(Path.Combine(PortableDir, @"Lib\site-packages\pip")))
+                        return "Не удалось установить pip: " + Trim(pipSetup);
+                }
+
+                if (progress != null) progress(80, "Устанавливаем пакеты (httpx, certifi, cryptography)…");
+                StringBuilder args = new StringBuilder();
+                args.Append("-m pip install --no-warn-script-location --disable-pip-version-check --no-input ");
+                foreach (string pkg in RequiredPackages) args.Append("\"").Append(pkg).Append("\" ");
+                string pipOut = Run(PortableConsole, args.ToString(), 600000, PortablePythonPath());
+                if (!HasPackages(python)) return "Не удалось установить зависимости: " + Trim(pipOut);
+                return "";
+            }
+            catch (Exception ex)
+            {
+                return "Ошибка установки зависимостей: " + ex.Message;
+            }
+        }
+
+        private static bool HasPackages(string python)
+        {
+            string output = Run(PortableConsole, "-c \"import httpx, certifi; print(httpx.__version__)\"", 60000, PortablePythonPath());
+            return output.Trim().Length > 0 && output.IndexOf("Error", StringComparison.OrdinalIgnoreCase) < 0;
+        }
+
+        private static string Run(string exe, string arguments, int timeoutMs, string pythonPath)
+        {
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo(exe, arguments);
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.WorkingDirectory = PortableDir;
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError = true;
+                if (!string.IsNullOrEmpty(pythonPath)) psi.EnvironmentVariables["PYTHONPATH"] = pythonPath;
+                using (Process p = Process.Start(psi))
+                {
+                    string output = "";
+                    Thread reader = new Thread(delegate()
+                    {
+                        try { output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd(); } catch { }
+                    });
+                    reader.IsBackground = true;
+                    reader.Start();
+                    if (!p.WaitForExit(timeoutMs)) { try { p.Kill(); } catch { } return output; }
+                    reader.Join(2000);
+                    return output;
+                }
+            }
+            catch (Exception ex)
+            {
+                return "ERR: " + ex.Message;
             }
         }
 

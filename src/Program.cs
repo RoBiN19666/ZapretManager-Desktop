@@ -124,6 +124,9 @@ namespace ZapretManager
             Log.Info("Права администратора: " + (Native.IsAdmin() ? "да" : "нет") + " / " + (limited ? "ограниченный режим" : "обычный режим"));
 
             AppConfig config = AppConfig.Load(AppConfig.DefaultPath());
+            float uiScale = 1f;
+            float.TryParse(config.Get("UiScale", "100"), out uiScale);
+            Theme.InitFonts(uiScale / 100f);
             Theme.Apply(config.Get("Theme", "auto"));
             string preferred = rootArg;
             if (string.IsNullOrEmpty(preferred)) preferred = config.Get("Root", "");

@@ -55,6 +55,13 @@ namespace ZapretManager
         /// <summary>Подгоняет шрифты под DPI экрана: макет нарисован в пикселях 96 DPI.</summary>
         public static void InitFonts()
         {
+            InitFonts(1f);
+        }
+
+        /// <summary>Шрифты под DPI и пользовательский масштаб интерфейса (1.0 = 100%).</summary>
+        public static void InitFonts(float userScale)
+        {
+            if (userScale <= 0.2f) userScale = 1f;
             float dpi = 96f;
             try
             {
@@ -62,8 +69,8 @@ namespace ZapretManager
             }
             catch { }
             if (dpi < 96f) dpi = 96f;
-            _fontScale = dpi / 96f;
-            if (_fontScale > 1.001f)
+            _fontScale = (dpi / 96f) / userScale;
+            if (_fontScale > 1.001f || _fontScale < 0.999f)
             {
                 Font old = Base;
                 Base = new Font("Segoe UI", 9.5f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
