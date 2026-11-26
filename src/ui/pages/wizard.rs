@@ -1,0 +1,281 @@
+//! Мастер первой настройки (модальное окно).
+
+use eframe::egui::{self, RichText};
+
+use crate::engine::log::LogLevel;
+use crate::engine::install::ZapretInstall;
+use crate::engine::{paths, tgproxy, update};
+
+use crate::ui::app::{App, Msg, WizardState};
+use crate::ui::widgets as w;
+
+impl App {
+    pub(crate) fn open_wizard(&mut self) {
+        if self.pages.wizard.is_some() {
+            return;
+        }
+        let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
+        let default_zapret = std::path::Path::new(&local)
+            .join("ZapretManager")
+            .join("zapret")
+            .to_string_lossy()
+            .to_string();
+        self.pages.wizard = Some(WizardState {
+            zapret_dir: default_zapret,
+            tg_dir: tgproxy::default_dir().to_string_lossy().to_string(),
+            install_zapret: !self.install.is_valid(),
+            install_tg: !tgproxy::get_state(&self.ini).installed,
+            stage: String::new(),
+            progress: 0,
+            running: false,
+            error: String::new(),
+            done: false,
+        });
+    }
+
+    pub(crate) fn show_wizard(&mut self, ctx: &egui::Context) {
+        let Some(mut wizard) = self.pages.wizard.take() else {
+            return;
+        };
+        let p = self.p;
+        let mut close = false;
+        let mut install = false;
+        egui::Window::new("Первая настройка Zapret Manager")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .default_width(660.0)
+            .frame(
+                egui::Frame::window(&ctx.style())
+                    .fill(p.surface)
+                    .stroke(egui::Stroke::new(1.0, p.border_strong)),
+            )
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new(
+                        "Отметьте, что нужно установить. Скачиваются официальные сборки: zapret (bol-van) в варианте zapret-discord-youtube (Flowseal) и TG WS Proxy (Flowseal). Позже это можно повторить из «Инструменты» → «Мастер установки».",
+                    )
+                    .size(12.0)
+                    .color(p.text_dim),
+                );
+                ui.add_space(10.0);
+                // zapret
+                ui.label(RichText::new("Запрет (обход DPI для Discord и YouTube)").size(13.0).strong().color(p.text));
+                let status = if self.install.is_valid() {
+                    format!(
+                        "Уже установлен: {} (версия {})",
+                        self.install.root,
+                        if self.install.version.is_empty() {
+                            "?"
+                        } else {
+                            &self.install.version
+                        }
+                    )
+                } else {
+                    "Не найден — можно скачать и установить сейчас.".to_string()
+                };
+                ui.label(
+                    RichText::new(status)
+                        .size(11.5)
+                        .color(if self.install.is_valid() { p.success } else { p.warn }),
+                );
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Папка для установки:").size(11.5).color(p.text_dim));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut wizard.zapret_dir)
+                            .desired_width(360.0)
+                            .interactive(!self.install.is_valid()),
+                    );
+                    if w::ghost(ui, &p, "Обзор…").clicked() {
+                        if let Some(dir) = rfd::FileDialog::new()
+                            .set_title("Выберите папку")
+                            .pick_folder()
+                        {
+                            wizard.zapret_dir = dir.to_string_lossy().to_string();
+                        }
+                    }
+                });
+                if !self.install.is_valid() {
+                    w::toggle_row(
+                        ui,
+                        &p,
+                        "Скачать и установить (последняя версия)",
+                        "",
+                        &mut wizard.install_zapret,
+                    );
+                }
+                ui.add_space(8.0);
+                // tg
+                ui.label(RichText::new("TG WS Proxy (ускорение Telegram через WebSocket)").size(13.0).strong().color(p.text));
+                let tg_state = tgproxy::get_state(&self.ini);
+                let tg_status = if tg_state.installed {
+                    format!(
+                        "Уже установлен: {}{}",
+                        tg_state.dir.to_string_lossy(),
+                        if tg_state.version.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" (версия {})", tg_state.version)
+                        }
+                    )
+                } else {
+                    "Не найден. Прокси слушает 127.0.0.1:1443 и сворачивается в трей.".to_string()
+                };
+                ui.label(
+                    RichText::new(tg_status)
+                        .size(11.5)
+                        .color(if tg_state.installed { p.success } else { p.warn }),
+                );
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Папка для установки:").size(11.5).color(p.text_dim));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut wizard.tg_dir)
+                            .desired_width(360.0)
+                            .interactive(!tg_state.installed),
+                    );
+                    if w::ghost(ui, &p, "Обзор…").clicked() {
+                        if let Some(dir) = rfd::FileDialog::new()
+                            .set_title("Выберите папку")
+                            .pick_folder()
+                        {
+                            wizard.tg_dir = dir.to_string_lossy().to_string();
+                        }
+                    }
+                });
+                if !tg_state.installed {
+                    w::toggle_row(
+                        ui,
+                        &p,
+                        "Скачать и установить (~21 МБ)",
+                        "",
+                        &mut wizard.install_tg,
+                    );
+                }
+                ui.add_space(10.0);
+                if wizard.running {
+                    w::progress_bar(ui, &p, wizard.progress as f32 / 100.0);
+                    ui.label(
+                        RichText::new(&wizard.stage)
+                            .size(11.5)
+                            .color(p.text_muted),
+                    );
+                }
+                if !wizard.error.is_empty() {
+                    ui.label(RichText::new(&wizard.error).size(12.0).color(p.danger));
+                }
+                if wizard.done {
+                    ui.label(
+                        RichText::new("Готово.")
+                            .size(12.5)
+                            .color(p.success),
+                    );
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if w::secondary(ui, &p, "Пропустить").clicked() && !wizard.running {
+                        close = true;
+                    }
+                    let label = if self.install.is_valid() {
+                        "Проверить настройки"
+                    } else {
+                        "Установить и продолжить"
+                    };
+                    if w::primary(ui, &p, label).clicked() && !wizard.running && !wizard.done {
+                        install = true;
+                    }
+                    if wizard.done && w::primary(ui, &p, "Закрыть").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        if install {
+            wizard.running = true;
+            wizard.error.clear();
+            wizard.stage = "Получение информации о последней версии zapret…".to_string();
+            let install_zapret = wizard.install_zapret && !self.install.is_valid();
+            let install_tg = wizard.install_tg && !tgproxy::get_state(&self.ini).installed;
+            let zapret_dir = wizard.zapret_dir.clone();
+            let tg_dir = wizard.tg_dir.clone();
+            self.spawn_bg(move |tx| {
+                let mut errors = Vec::new();
+                if install_zapret {
+                    let parent = std::path::PathBuf::from(&zapret_dir);
+                    let target = parent.join("zapret");
+                    match update::get_latest_release(update::ZAPRET_REPO).and_then(|release| {
+                        update::install_fresh(&release, &target, |percent, stage| {
+                            let _ = tx.send(Msg::Progress("wizard", percent, stage.to_string()));
+                        })
+                    }) {
+                        Ok(install) => {
+                            let _ = tx.send(Msg::Installed(Box::new(install)));
+                        }
+                        Err(e) => errors.push(format!("zapret: {}", e)),
+                    }
+                }
+                if install_tg {
+                    let _ = tx.send(Msg::Progress(
+                        "wizard",
+                        60,
+                        "Установка TG WS Proxy…".to_string(),
+                    ));
+                    match tgproxy::check_latest() {
+                        Ok((tag, _)) => {
+                            let mut ini = crate::engine::config::Ini::load(&paths::config_path());
+                            let tx2 = tx.clone();
+                            let result = tgproxy::install(
+                                &tag,
+                                std::path::Path::new(&tg_dir),
+                                &mut ini,
+                                |percent, stage| {
+                                    let _ = tx2.send(Msg::Progress("wizard", percent, stage.to_string()));
+                                },
+                            );
+                            if let Err(e) = result {
+                                errors.push(format!("TG WS Proxy: {}", e));
+                            }
+                        }
+                        Err(e) => errors.push(format!("TG WS Proxy: {}", e)),
+                    }
+                }
+                if errors.is_empty() {
+                    let _ = tx.send(Msg::WizardDone(Ok(
+                        "Установка завершена.".to_string(),
+                    )));
+                } else {
+                    let _ = tx.send(Msg::WizardDone(Err(errors.join("; "))));
+                }
+            });
+            self.pages.wizard = Some(wizard);
+        } else if close {
+            self.ini.set("SetupDone", &crate::engine::sys::local_now().to_string());
+            let _ = self.ini.save();
+            self.pages.wizard = None;
+        } else {
+            wizard.running = self.pages.wizard.as_ref().map(|x| x.running).unwrap_or(false);
+            self.pages.wizard = Some(wizard);
+        }
+    }
+
+    pub(crate) fn handle_wizard_msg(&mut self, result: Result<String, String>) {
+        let Some(wizard) = self.pages.wizard.as_mut() else {
+            return;
+        };
+        wizard.running = false;
+        match result {
+            Ok(message) => {
+                wizard.done = true;
+                wizard.progress = 100;
+                wizard.stage = message;
+                self.ini.set("SetupDone", &crate::engine::sys::local_now().to_string());
+                let _ = self.ini.save();
+                self.notify("Мастер установки: готово.", LogLevel::Ok);
+            }
+            Err(error) => {
+                wizard.stage = String::new();
+                wizard.error = format!("Ошибка: {}", error);
+                self.notify(format!("Установка не завершена: {}", error), LogLevel::Error);
+            }
+        }
+        let _ = ZapretInstall::detect("");
+    }
+}
