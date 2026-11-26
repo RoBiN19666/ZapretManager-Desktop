@@ -193,17 +193,10 @@ impl App {
                             .size(12.0)
                             .color(p.warn),
                     );
-                    if w::primary(ui, &p, "Обновить менеджер").clicked() {
-                        self.confirm(
-                            "Обновить Zapret Manager?",
-                            &format!(
-                                "Будет скачана версия {} из репозитория RoBiN19666/ZapretManager-Desktop.\n\nПриложение закроется, заменит файл и запустится снова. Настройки, списки и компоненты не затрагиваются.",
-                                info.remote
-                            ),
-                            "Обновить",
-                            false,
-                            |app| app.apply_self_update(),
-                        );
+                    if !self.pages.update.running
+                        && w::primary(ui, &p, "Обновить менеджер").clicked()
+                    {
+                        self.apply_self_update();
                     }
                 }
                 Some(info) if info.ok => {
@@ -422,10 +415,12 @@ impl App {
         });
     }
 
-    fn apply_self_update(&mut self) {
+    pub(crate) fn apply_self_update(&mut self) {
         let Some(info) = self.self_update.clone() else {
             return;
         };
+        self.pages.update.running = true;
+        self.pages.update.hint = "Скачивание обновления менеджера…".to_string();
         self.spawn_bg(move |tx| {
             let result = update::self_apply(&info);
             let _ = tx.send(Msg::SelfApplyDone(result));

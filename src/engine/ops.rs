@@ -440,6 +440,22 @@ impl ZapretOps {
         self.tcp_timestamps_enabled()
     }
 
+    pub fn disable_tcp_timestamps(&self) -> Option<bool> {
+        if self.tcp_timestamps_enabled() == Some(false) {
+            return Some(false);
+        }
+        let r = process::run(
+            "netsh.exe",
+            &["interface", "tcp", "set", "global", "timestamps=disabled"],
+            Duration::from_secs(10),
+        );
+        if r.exit_code != 0 {
+            log::warn(format!("netsh timestamps=disabled: {}", r.all()));
+            return self.tcp_timestamps_enabled();
+        }
+        self.tcp_timestamps_enabled()
+    }
+
     pub fn tcp_timestamps_enabled(&self) -> Option<bool> {
         let r = process::run(
             "cmd.exe",

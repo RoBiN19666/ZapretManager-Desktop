@@ -351,6 +351,8 @@ pub struct SettingsState {
     pub ipset_info: String,
     pub autostart_enabled: bool,
     pub autostart_checked: Option<Instant>,
+    pub tcp_ts: Option<bool>,
+    pub tcp_ts_checked: Option<Instant>,
 }
 
 impl Default for SettingsState {
@@ -369,6 +371,8 @@ impl Default for SettingsState {
             ipset_info: String::new(),
             autostart_enabled: false,
             autostart_checked: None,
+            tcp_ts: None,
+            tcp_ts_checked: None,
         }
     }
 }
@@ -1441,10 +1445,14 @@ impl App {
                 },
                 Msg::SelfApplyDone(result) => match result {
                     Ok(message) => {
+                        self.pages.update.running = false;
                         self.notify(message, LogLevel::Ok);
                         self.exit_requested = true;
                     }
-                    Err(e) => self.notify(e, LogLevel::Error),
+                    Err(e) => {
+                        self.pages.update.running = false;
+                        self.notify(e, LogLevel::Error);
+                    }
                 },
                 Msg::Releases(result) => {
                     match result {
@@ -1598,7 +1606,13 @@ impl App {
             Color32::from_black_alpha(140),
         );
         let mut go_updates = false;
+        let mut go_self = false;
         let mut close = false;
+        let manager_update = self
+            .self_update
+            .as_ref()
+            .map(|i| i.ok && i.available)
+            .unwrap_or(false);
         egui::Window::new("Доступны обновления")
             .collapsible(false)
             .resizable(false)
@@ -1642,7 +1656,11 @@ impl App {
                 }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if w::primary(ui, &p, "Открыть обновления").clicked() {
+                    if manager_update && w::primary(ui, &p, "Обновить менеджер").clicked() {
+                        go_self = true;
+                        close = true;
+                    }
+                    if w::secondary(ui, &p, "Открыть обновления").clicked() {
                         go_updates = true;
                         close = true;
                     }
@@ -1651,6 +1669,9 @@ impl App {
                     }
                 });
             });
+        if go_self {
+            self.apply_self_update();
+        }
         if go_updates {
             self.page = Page::Update;
             self.on_navigate(Page::Update);

@@ -394,17 +394,45 @@ impl App {
                 );
             }
             ui.add_space(8.0);
+            if self
+                .pages
+                .settings
+                .tcp_ts_checked
+                .map(|t| t.elapsed() > std::time::Duration::from_secs(10))
+                .unwrap_or(true)
+            {
+                self.pages.settings.tcp_ts =
+                    ZapretOps::new(self.install.clone()).tcp_timestamps_enabled();
+                self.pages.settings.tcp_ts_checked = Some(std::time::Instant::now());
+            }
+            let tcp_on = self.pages.settings.tcp_ts == Some(true);
             ui.horizontal(|ui| {
-                if w::secondary(ui, &p2, "Включить TCP timestamps").clicked() {
+                let label = if tcp_on {
+                    "Выключить TCP timestamps"
+                } else {
+                    "Включить TCP timestamps"
+                };
+                if w::secondary(ui, &p2, label).clicked() {
                     if self.require_admin("TCP timestamps") {
+                        let enable = !tcp_on;
+                        self.pages.settings.tcp_ts = Some(enable);
+                        self.pages.settings.tcp_ts_checked = Some(std::time::Instant::now());
                         let ops = ZapretOps::new(self.install.clone());
                         self.spawn_bg(move |tx| {
-                            let ok = ops.enable_tcp_timestamps() == Some(true);
+                            let ok = if enable {
+                                ops.enable_tcp_timestamps() == Some(true)
+                            } else {
+                                ops.disable_tcp_timestamps() == Some(false)
+                            };
                             let _ = tx.send(crate::ui::app::Msg::Notify(
                                 if ok {
-                                    "TCP timestamps включены.".to_string()
+                                    if enable {
+                                        "TCP timestamps включены.".to_string()
+                                    } else {
+                                        "TCP timestamps выключены.".to_string()
+                                    }
                                 } else {
-                                    "Не удалось включить TCP timestamps.".to_string()
+                                    "Не удалось изменить TCP timestamps.".to_string()
                                 },
                                 if ok { LogLevel::Ok } else { LogLevel::Error },
                             ));
