@@ -1689,7 +1689,6 @@ impl App {
             Rounding::ZERO,
             Color32::from_black_alpha(140),
         );
-        let mut go_updates = false;
         let mut go_self = false;
         let mut close = false;
         let manager_update = self
@@ -1744,10 +1743,6 @@ impl App {
                         go_self = true;
                         close = true;
                     }
-                    if w::secondary(ui, &p, "Открыть обновления").clicked() {
-                        go_updates = true;
-                        close = true;
-                    }
                     if w::secondary(ui, &p, "Позже").clicked() {
                         close = true;
                     }
@@ -1755,10 +1750,6 @@ impl App {
             });
         if go_self {
             self.apply_self_update();
-        }
-        if go_updates {
-            self.page = Page::Update;
-            self.on_navigate(Page::Update);
         }
         if close {
             let key = Self::update_notice_key(&items);
