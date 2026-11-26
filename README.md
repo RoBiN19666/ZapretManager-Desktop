@@ -1,5 +1,7 @@
 # Zapret Manager
 
+[![Скачать с GitHub Releases](https://img.shields.io/github/v/release/RoBiN19666/ZapretManager-Windows?style=for-the-badge&label=%D1%81%D0%BA%D0%B0%D1%87%D0%B0%D1%82%D1%8C)](https://github.com/RoBiN19666/ZapretManager-Windows/releases/latest)
+
 **Подробное руководство:** [docs/guide.md](docs/guide.md) — все страницы, списки, доктор сайтов,
 проверка приложений, прокси, автозапуск, командная строка и частые проблемы.
 
