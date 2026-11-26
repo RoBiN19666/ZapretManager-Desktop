@@ -69,7 +69,11 @@ namespace ZapretManager
             }
             catch { }
             if (dpi < 96f) dpi = 96f;
-            _fontScale = (dpi / 96f) / userScale;
+            // На HiDPI шрифты уменьшаем лишь частично: иначе текст становится мелким и «мыльным»,
+            // а фиксированный макет всё равно требует некоторого запаса.
+            float dpiFactor = dpi / 96f;
+            float soften = 1f + (dpiFactor - 1f) * 0.45f;
+            _fontScale = soften / userScale;
             if (_fontScale > 1.001f || _fontScale < 0.999f)
             {
                 Font old = Base;
