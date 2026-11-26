@@ -21,6 +21,7 @@ namespace ZapretManager
         private RoundButton _btnRestart;
 
         private InputBox _linkBox;
+        private Label _linkHint;
         private RoundButton _btnTgOpen;
         private RoundButton _btnTgCopy;
 
@@ -96,12 +97,13 @@ namespace ZapretManager
 
         private void BuildLinkCard()
         {
-            _linkCard = NewCard("Подключение Telegram", 168);
-            _linkCard.Controls.Add(WrapLabel("Прокси работает локально: Telegram → 127.0.0.1:1443 → WebSocket → DC Telegram. Кнопка «Открыть в Telegram» подключает прокси автоматически; вручную — Настройки → Продвинутые → Тип подключения → Прокси → MTProto. У самого TG WS Proxy есть своя иконка в трее — это его штатный интерфейс (логи, настройки, ссылка).",
-                Theme.Small, Theme.TextMuted, 22, 40, DesignWidth - 60));
+            _linkCard = NewCard("Подключение Telegram", 200);
+            _linkHint = WrapLabel("Прокси работает локально: Telegram → 127.0.0.1:1443 → WebSocket → DC Telegram. Кнопка «Открыть в Telegram» подключает прокси сама; вручную — Настройки → Продвинутые → Тип подключения → Прокси → MTProto. У TG WS Proxy своя иконка в трее — это его штатный интерфейс.",
+                Theme.Small, Theme.TextMuted, 22, 40, DesignWidth - 250);
+            _linkCard.Controls.Add(_linkHint);
 
             _linkBox = new InputBox();
-            _linkBox.Location = new Point(22, 96);
+            _linkBox.Location = new Point(22, 112);
             _linkBox.Width = DesignWidth - 44 - 200 - 12;
             _linkBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             _linkBox.Box.ReadOnly = true;
@@ -109,18 +111,17 @@ namespace ZapretManager
 
             _btnTgOpen = Btn("Открыть в Telegram", ButtonKind.Primary, 200);
             _btnTgOpen.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            _btnTgOpen.Location = new Point(DesignWidth - 20 - 200, 96);
+            _btnTgOpen.Location = new Point(DesignWidth - 20 - 200, 112);
             _btnTgOpen.Height = 34;
             _btnTgOpen.Click += delegate { OpenInTelegram(); };
             _linkCard.Controls.Add(_btnTgOpen);
 
             _btnTgCopy = Btn("Скопировать ссылку", ButtonKind.Ghost, 170);
-            _btnTgCopy.Location = new Point(22, 136);
+            _btnTgCopy.Location = new Point(22, 154);
             _btnTgCopy.Click += delegate { CopyLink(); };
             _linkCard.Controls.Add(_btnTgCopy);
             View.Stack.Add(_linkCard);
         }
-
         private void BuildUpdateCard()
         {
             _updateCard = NewCard("Установка и обновление", 214);
@@ -501,7 +502,13 @@ namespace ZapretManager
                     ? "TG WS Proxy не установлен"
                     : (st.Link.Length > 0 ? st.Link : "Секрет появится после первого запуска прокси");
                 _btnTgOpen.Enabled = st.Installed;
-                _btnTgCopy.Enabled = st.Link.Length > 0;
+                        _btnTgCopy.Enabled = st.Link.Length > 0;
+            if (_linkHint != null)
+            {
+                _linkHint.Text = string.Format("Прокси работает локально: Telegram → {0}:{1} → WebSocket → DC Telegram. Кнопка «Открыть в Telegram» подключает прокси сама; вручную — Настройки → Продвинутые → Тип подключения → Прокси → MTProto. У TG WS Proxy своя иконка в трее — это его штатный интерфейс.",
+                    st.Host, st.Port);
+                _linkHint.Height = TextRenderer.MeasureText(_linkHint.Text, _linkHint.Font, new Size(_linkHint.Width, 2000), TextFormatFlags.WordBreak).Height + 4;
+            }
 
                 _versionLine.Text = st.Installed
                     ? string.Format("Установленная версия: {0}", st.Version.Length > 0 ? st.Version : "неизвестна")
