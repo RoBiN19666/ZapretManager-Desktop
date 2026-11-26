@@ -3212,7 +3212,7 @@ dependencies = [
 
 [[package]]
 name = "zapret-manager"
-version = "2.8.1"
+version = "2.8.2"
 dependencies = [
  "eframe",
  "native-tls",

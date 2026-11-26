@@ -5,6 +5,7 @@ use std::io::Cursor;
 use eframe::egui::{Color32, ColorImage};
 
 const APP_ICON_PNG: &[u8] = include_bytes!("../../assets/app-icon.png");
+const SIDEBAR_LOGO_PNG: &[u8] = include_bytes!("../../assets/lock.png");
 const LOGO_WIDE_PNG: &[u8] = include_bytes!("../../assets/logo-wide.png");
 const BOOSTY_PNG: &[u8] = include_bytes!("../../assets/boosty.png");
 const DONATION_ALERTS_PNG: &[u8] = include_bytes!("../../assets/donationalerts.png");
@@ -60,7 +61,7 @@ pub fn window_icon() -> Option<egui::IconData> {
 
 /// Иконка приложения без квадратной подложки — для сайдбара.
 pub fn app_icon_image() -> Option<ColorImage> {
-    decode_png(APP_ICON_PNG)
+    decode_png(SIDEBAR_LOGO_PNG)
 }
 
 /// Широкий логотип «Zapret Manager» для страницы «О программе».
