@@ -26,6 +26,7 @@ pub mod tester;
 pub mod tgproxy;
 pub mod tgsource;
 pub mod textfile;
+pub mod uninstall;
 pub mod update;
 
 pub use log::{LogLevel, LogLine};

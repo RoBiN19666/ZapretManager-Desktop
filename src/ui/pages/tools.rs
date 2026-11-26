@@ -4,7 +4,7 @@ use eframe::egui::{RichText, Ui};
 
 use crate::engine::log::LogLevel;
 use crate::engine::ops::ZapretOps;
-use crate::engine::{backup, paths, sys, tester, tgproxy};
+use crate::engine::{backup, paths, sys, tester, tgproxy, uninstall};
 
 use crate::ui::app::App;
 use crate::ui::widgets as w;
@@ -202,6 +202,113 @@ impl App {
                 }
             });
         });
+        w::card(ui, &p, "Удаление", |ui| {
+            w::small(
+                ui,
+                &p,
+                "Можно удалить отдельные компоненты или всё сразу. Удаление необратимо; при необходимости сначала сделайте резервную копию.",
+            );
+            ui.add_space(6.0);
+            let root = self.install.root.clone();
+            let mut keep_lists = self.ini.get_bool("RemoveKeepLists", true);
+            if w::toggle_row(
+                ui,
+                &p,
+                "Сохранить списки при удалении zapret",
+                "Папка lists будет скопирована в data\\removed-zapret-lists",
+                &mut keep_lists,
+            ) {
+                self.ini.set_bool("RemoveKeepLists", keep_lists);
+                let _ = self.ini.save();
+            }
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                if w::secondary(ui, &p, "Открыть папку zapret").clicked() {
+                    let path = std::path::Path::new(&root);
+                    if path.is_dir() {
+                        sys::open_folder(path);
+                    } else {
+                        self.notify("Папка zapret не найдена.", LogLevel::Warn);
+                    }
+                }
+                if w::secondary(ui, &p, "Удалить zapret").clicked() {
+                    let keep = keep_lists;
+                    let root = root.clone();
+                    self.confirm(
+                        "Удалить zapret?",
+                        &format!(
+                            "Будут остановлены служба и winws.exe, удалены папка\n{}\nслужба zapret, WinDivert и записи из hosts.{}",
+                            root,
+                            if keep {
+                                "\n\nСписки будут сохранены в data\\removed-zapret-lists."
+                            } else {
+                                ""
+                            }
+                        ),
+                        "Удалить zapret",
+                        true,
+                        move |app| match uninstall::remove_zapret(&app.install, keep) {
+                            Ok(message) => {
+                                app.notify(message, LogLevel::Ok);
+                                app.install = crate::engine::install::ZapretInstall::new("");
+                                app.ops = ZapretOps::new(app.install.clone());
+                                app.refresh_state(true);
+                            }
+                            Err(e) => app.notify(e, LogLevel::Error),
+                        },
+                    );
+                }
+                if w::secondary(ui, &p, "Удалить TG WS Proxy").clicked() {
+                    self.confirm(
+                        "Удалить TG WS Proxy?",
+                        "Прокси будет остановлен, его папка, тихий режим, данные в %APPDATA%\\TgWsProxy и автозапуск будут удалены.",
+                        "Удалить TG WS Proxy",
+                        true,
+                        |app| match uninstall::remove_tg(&mut app.ini) {
+                            Ok(message) => {
+                                app.notify(message, LogLevel::Ok);
+                                app.refresh_tg_state();
+                            }
+                            Err(e) => app.notify(e, LogLevel::Error),
+                        },
+                    );
+                }
+                if w::danger(ui, &p, "Очистить данные менеджера").clicked() {
+                    self.confirm(
+                        "Очистить данные менеджера?",
+                        "Будут удалены настройки, журнал, резервные копии и отчёты. Приложение закроется, чтобы освободить файлы.",
+                        "Очистить данные",
+                        true,
+                        |app| match uninstall::clean_manager_data() {
+                            Ok(message) => {
+                                app.notify(message, LogLevel::Ok);
+                                app.exit_requested = true;
+                            }
+                            Err(e) => app.notify(e, LogLevel::Error),
+                        },
+                    );
+                }
+                if w::danger(ui, &p, "Удалить всё").clicked() {
+                    self.confirm(
+                        "Удалить Zapret Manager полностью?",
+                        "Будут удалены zapret, TG WS Proxy, службы, автозапуск, настройки, журнал, резервные копии, отчёты и сам ZapretManager.exe. Приложение закроется.",
+                        "Удалить всё",
+                        true,
+                        |app| {
+                            let result = uninstall::remove_everything(&app.install, &mut app.ini);
+                            match result {
+                                Ok(message) => {
+                                    app.notify(message, LogLevel::Ok);
+                                    app.exit_requested = true;
+                                }
+                                Err(e) => app.notify(e, LogLevel::Error),
+                            }
+                        },
+                    );
+                }
+            });
+        });
+
         w::card(ui, &p, "Резервная копия", |ui| {
             w::small(
                 ui,
