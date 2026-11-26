@@ -675,7 +675,7 @@ impl App {
             page: initial_page,
             p,
             dark,
-            ctx_dark: dark,
+            ctx_dark: !dark,
             toast: None,
             confirm: None,
             tx,
