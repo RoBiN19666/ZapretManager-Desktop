@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -25,6 +25,7 @@ namespace ZapretManager
         private Label _info;
         private Label _pathLabel;
         private RoundButton _btnSave;
+        private RoundButton _btnDedupe;
         private RoundButton _btnAdd;
         private RoundButton _btnNotepad;
         private RoundButton _btnReset;
@@ -65,7 +66,7 @@ namespace ZapretManager
 
         private void BuildEditorCard()
         {
-            _card = NewCard("Файлы списков", 410);
+            _card = NewCard("Файлы списков", 442);
 
             _fileList = new DarkList();
             _fileList.Location = new Point(20, 44);
@@ -127,10 +128,17 @@ namespace ZapretManager
             _info = L("", Theme.Small, Theme.TextMuted, 268, y + 38);
             _card.Controls.Add(_info);
 
+            _btnDedupe = Btn("Убрать дубликаты", ButtonKind.Link, 160);
+            _btnDedupe.Location = new Point(268, y + 64);
+            _btnDedupe.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+            _btnDedupe.Visible = false;
+            _btnDedupe.Click += delegate { DedupeNow(); };
+            _card.Controls.Add(_btnDedupe);
+
             _card.Resize += delegate
             {
                 int w = _card.ClientSize.Width;
-                _editor.Size = new Size(w - 288, Math.Max(80, _card.ClientSize.Height - 158));
+                _editor.Size = new Size(w - 288, Math.Max(80, _card.ClientSize.Height - 190));
                 _fileList.Height = Math.Max(80, _card.ClientSize.Height - 108);
             };
 
@@ -300,9 +308,18 @@ namespace ZapretManager
             }
             string extra = "";
             if (!f.Official && entries == 0) extra = "  •  файл пуст — так нельзя для списка доменов";
+
+            List<ListNote> notes = ListAudit.Analyze(_editor.Text);
+            int dupes = ListAudit.CountKind(notes, "dup");
+            int wild = ListAudit.CountKind(notes, "wildcard");
+            string issues = "";
+            if (dupes > 0) issues += string.Format("  •  дубликатов: {0}", dupes);
+            if (wild > 0) issues += string.Format("  •  «*.» не поддерживается: {0}", wild);
+
             string state = _dirty ? "Есть несохранённые изменения" : "Сохранено";
-            _info.Text = string.Format("{0}  •  строк: {1}, записей: {2}{3}", state, lines, entries, extra);
-            _info.ForeColor = entries == 0 && !f.Official ? Theme.Warn : Theme.TextMuted;
+            _info.Text = string.Format("{0}  •  строк: {1}, записей: {2}{3}{4}", state, lines, entries, extra, issues);
+            _info.ForeColor = (entries == 0 && !f.Official) || dupes > 0 || wild > 0 ? Theme.Warn : Theme.TextMuted;
+            if (_btnDedupe != null) _btnDedupe.Visible = dupes > 0;
         }
 
         // ---------- разметка добавленных строк ----------
@@ -320,6 +337,12 @@ namespace ZapretManager
                 string[] lines = text.Split('\n');
                 List<string> baseline = _changes.BaselineEntries;
                 bool inBlock = false;
+                HashSet<string> duplicated = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                HashSet<string> seenEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (ListNote note in ListAudit.Analyze(text))
+                {
+                    if (note.Kind == "dup") duplicated.Add(note.Entry);
+                }
                 int pos = 0;
                 for (int i = 0; i < lines.Length; i++)
                 {
@@ -331,6 +354,15 @@ namespace ZapretManager
                     if (inBlock || (trimmed.Length > 0 && !trimmed.StartsWith("#") && !ListChanges.Contains(baseline, trimmed)))
                     {
                         color = Color.FromArgb(140, 226, 170);   // добавлено вами
+                    }
+                    string norm = ListAudit.Normalize(trimmed);
+                    if (norm.StartsWith("*."))
+                    {
+                        color = Color.FromArgb(255, 194, 74);    // недопустимая звёздочка
+                    }
+                    if (norm.Length > 0 && duplicated.Contains(norm))
+                    {
+                        color = Color.FromArgb(255, 120, 105);   // повтор
                     }
                     else if (trimmed.StartsWith("#"))
                     {
@@ -409,6 +441,21 @@ namespace ZapretManager
         {
             ListFile f = SelectedFile();
             if (f == null) return;
+
+            // Чистим список перед сохранением: «*.домен» → «домен», повторы — убираем
+            int fixedWild, removedDup;
+            string prepared = ListAudit.FixWildcards(_editor.Text, out fixedWild);
+            prepared = ListAudit.RemoveDuplicates(prepared, out removedDup);
+            if (fixedWild > 0 || removedDup > 0)
+            {
+                _loading = true;
+                _editor.Text = prepared.Replace("\r\n", "\n").Replace("\n", "\r\n");
+                _loading = false;
+                _dirty = true;
+                ApplyMarks();
+                UpdateInfo();
+                Shell.Notify(string.Format("Список почищен: убрано повторов {0}, заменено «*.» {1}.", removedDup, fixedWild), LogLevel.Ok);
+            }
             if (f.Official && _changes == null)
             {
                 Shell.Notify("Официальные списки можно править — изменения будут помечены. Перезагрузите страницу.", LogLevel.Warn);
@@ -520,6 +567,24 @@ namespace ZapretManager
             ApplyMarks();
             UpdateChangesCard();
             Shell.Notify("Текущее содержимое зафиксировано как официальное.", LogLevel.Ok);
+        }
+
+        private void DedupeNow()
+        {
+            int removed;
+            string text = ListAudit.RemoveDuplicates(_editor.Text, out removed);
+            if (removed == 0)
+            {
+                Shell.Notify("Повторов нет.", LogLevel.Ok);
+                return;
+            }
+            _loading = true;
+            _editor.Text = text.Replace("\r\n", "\n").Replace("\n", "\r\n");
+            _loading = false;
+            _dirty = true;
+            ApplyMarks();
+            UpdateInfo();
+            Shell.Notify(string.Format("Удалено повторов: {0}. Не забудьте сохранить.", removed), LogLevel.Ok);
         }
 
         private void AddEmptyLine()

@@ -260,7 +260,7 @@ namespace ZapretManager
         {
             _miscCard = NewCard("Прочее", 150);
             _tgManagerUpdate = AddToggleRow(_miscCard, 40, "Проверять обновления при запуске менеджера",
-                "При старте программы запрашивать GitHub и показывать уведомление о новой версии", Shell.Config.GetBool("CheckUpdatesOnStartup", true), delegate
+                "При старте и далее раз в 6 часов проверять GitHub (zapret, TG WS Proxy, менеджер)", Shell.Config.GetBool("CheckUpdatesOnStartup", true), delegate
                 {
                     if (_suppress) return;
                     Shell.Config.SetBool("CheckUpdatesOnStartup", _tgManagerUpdate.Checked);
