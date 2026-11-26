@@ -943,7 +943,7 @@ namespace ZapretManager
                 if (c.Width != w) c.Width = w;
                 y += c.Height + Gap;
             }
-            ContentHeight = y + Theme.Px(120);   // нижний отступ: последняя карточка не упирается в край
+            ContentHeight = y + Theme.Px(16);   // небольшой нижний отступ, без «пустоты» на весь экран
             EventHandler h = LayoutDone;
             if (h != null) h(this, EventArgs.Empty);
         }

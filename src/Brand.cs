@@ -14,6 +14,8 @@ namespace ZapretManager
         private static Bitmap _icon;
         private static Bitmap _logo;
         private static Bitmap _lock;
+        private static Bitmap _boosty;
+        private static Bitmap _donationAlerts;
 
         public static Bitmap Icon
         {
@@ -31,6 +33,16 @@ namespace ZapretManager
             get { EnsureLoaded(); return _lock; }
         }
 
+        public static Bitmap Boosty
+        {
+            get { EnsureLoaded(); return _boosty; }
+        }
+
+        public static Bitmap DonationAlerts
+        {
+            get { EnsureLoaded(); return _donationAlerts; }
+        }
+
         private static void EnsureLoaded()
         {
             if (_loaded) return;
@@ -38,6 +50,8 @@ namespace ZapretManager
             _icon = Load("app-icon.png");
             _logo = Load("logo-wide.png");
             _lock = Load("lock.png");
+            _boosty = Load("boosty.png");
+            _donationAlerts = Load("donationalerts.png");
         }
 
         private static Bitmap Load(string name)

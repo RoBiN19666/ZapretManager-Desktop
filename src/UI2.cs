@@ -615,6 +615,80 @@ namespace ZapretManager
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
         }
     }
+    /// <summary>Кликабельный логотип сайта-доната (без текстовой «пилюли»).</summary>
+    public sealed class DonationLogo : Control
+    {
+        private readonly Image _image;
+        private readonly string _url;
+        private readonly ToolTip _tip = new ToolTip();
+        private bool _hover;
+
+        public DonationLogo(Image image, string url, string caption)
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+            _image = image;
+            _url = url;
+            Size = new Size(40, 40);
+            Cursor = Cursors.Hand;
+            BackColor = Color.Transparent;
+            TabStop = true;
+            AccessibleRole = AccessibleRole.PushButton;
+            AccessibleName = caption;
+            _tip.SetToolTip(this, caption);
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+
+        protected override void OnClick(EventArgs e)
+        {
+            base.OnClick(e);
+            try { if (!string.IsNullOrEmpty(_url)) Native.OpenUrl(_url); } catch { }
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Space || e.KeyCode == Keys.Enter)
+            {
+                OnClick(EventArgs.Empty);
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+            base.OnKeyDown(e);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
+            if (_hover) Draw.FillRound(g, r, Theme.Px(9), Theme.Hover);
+            Rectangle img = new Rectangle(Theme.Px(4), Theme.Px(4), Width - Theme.Px(8), Height - Theme.Px(8));
+            if (_image != null)
+            {
+                InterpolationMode old = g.InterpolationMode;
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                using (GraphicsPath path = Shape.Round(img, Theme.Px(8)))
+                {
+                    g.SetClip(path);
+                    g.DrawImage(_image, img);
+                    g.ResetClip();
+                }
+                g.InterpolationMode = old;
+            }
+            Draw.DrawRound(g, r, Theme.Px(9), _hover ? Theme.BorderStrong : Theme.Border, 1f);
+            if (Focused) ControlPaint.DrawFocusRectangle(g, new Rectangle(2, 2, Width - 5, Height - 5), Theme.Text, Color.Transparent);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _tip.Dispose();
+            base.Dispose(disposing);
+        }
+    }
+
     /// <summary>Строка результата проверки.</summary>
     public class CheckRow : Panel
     {

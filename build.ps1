@@ -50,7 +50,7 @@ $cscArgs += "/debug-"
 $cscArgs += "/out:`"$out`""
 $cscArgs += "/win32manifest:`"$(Join-Path $src 'app.manifest')`""
 if (Test-Path $icon) { $cscArgs += "/win32icon:`"$icon`"" }
-foreach ($res in @("app-icon.png", "logo-wide.png", "lock.png")) {
+foreach ($res in @("app-icon.png", "logo-wide.png", "lock.png", "boosty.png", "donationalerts.png")) {
     $resPath = Join-Path $assets $res
     if (Test-Path $resPath) { $cscArgs += "/resource:`"$resPath`"" }
 }

@@ -237,21 +237,21 @@ namespace ZapretManager
 
             _aboutCard.Controls.Add(L("Поддержать проект", Theme.Small, Theme.TextDim, 22, y + 100));
 
-            LinkBadge boosty = new LinkBadge("Boosty", "https://boosty.to/robin19666", Color.FromArgb(255, 107, 0));
-            boosty.Location = new Point(22, y + 124);
+            DonationLogo boosty = new DonationLogo(Brand.Boosty, "https://boosty.to/robin19666", "Boosty — поддержать проект");
+            boosty.Location = new Point(22, y + 120);
             _aboutCard.Controls.Add(boosty);
 
-            LinkBadge donate = new LinkBadge("DonationAlerts", "https://www.donationalerts.com/r/robin19666", Color.FromArgb(255, 138, 0));
-            donate.Location = new Point(22 + boosty.Width + 10, y + 124);
+            DonationLogo donate = new DonationLogo(Brand.DonationAlerts, "https://www.donationalerts.com/r/robin19666", "DonationAlerts — поддержать проект");
+            donate.Location = new Point(22 + 52, y + 120);
             _aboutCard.Controls.Add(donate);
 
             _aboutCard.Controls.Add(L("На хлебушек", Theme.Small, Theme.TextMuted,
-                22 + boosty.Width + 10 + donate.Width + 12, y + 130));
+                22 + 52 + 52, y + 132));
 
-            Label v = L("Настройки и журнал: " + AppPaths.DataDir, Theme.Small, Theme.TextMuted, 22, y + 164);
+            Label v = L("Настройки и журнал: " + AppPaths.DataDir, Theme.Small, Theme.TextMuted, 22, y + 176);
             _aboutCard.Controls.Add(v);
 
-            _aboutCard.Height = y + 164 + 16 + 16;
+            _aboutCard.Height = y + 176 + 16 + 16;
             View.Stack.Add(_aboutCard);
         }
         private void InstallService()
