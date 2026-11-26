@@ -62,6 +62,19 @@ namespace ZapretManager
 
     public static class Native
     {
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT { public int X; public int Y; }
+
+        [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+
+        /// <summary>Позиция курсора в физических пикселях экрана.</summary>
+        public static System.Drawing.Point CursorPosition()
+        {
+            POINT p;
+            if (GetCursorPos(out p)) return new System.Drawing.Point(p.X, p.Y);
+            return System.Windows.Forms.Cursor.Position;
+        }
+
         [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);

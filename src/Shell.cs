@@ -373,11 +373,6 @@ namespace ZapretManager
             menu.Renderer = new DarkMenuRenderer();
             menu.ShowImageMargin = false;
             menu.Items.Add("Открыть Zapret Manager", null, delegate { ShowFromTray(); });
-            menu.Items.Add("Свернуть в трей", null, delegate
-            {
-                if (Visible) HideToTray(true);
-            });
-            menu.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem zapretItem = new ToolStripMenuItem("Запрет (обход DPI)");
             zapretItem.Click += delegate { TrayToggleZapret(); };
             ToolStripMenuItem tgItem = new ToolStripMenuItem("TG WS Proxy");
@@ -400,7 +395,14 @@ namespace ZapretManager
                 try { tgOn = TgProxy.GetState(_shell.Config).Running; } catch { }
                 tgItem.Text = tgOn ? "Остановить TG WS Proxy" : "Запустить TG WS Proxy";
             };
-            _tray.ContextMenuStrip = menu;
+            // меню показываем сами в точке курсора: при развёрнутом окне системная
+            // привязка ContextMenuStrip промахивается мимо иконки в трее
+            _tray.MouseUp += delegate(object s, MouseEventArgs e)
+            {
+                if (e.Button != MouseButtons.Right) return;
+                menu.Show(Native.CursorPosition());
+                Native.SetForegroundWindow(menu.Handle);
+            };
         }
 
         private void TrayToggleZapret()
