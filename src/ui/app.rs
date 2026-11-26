@@ -622,6 +622,7 @@ pub struct App {
     auto_heal_attempts: u32,
     auto_heal_last: Instant,
     pub(crate) about_logo: Option<egui::TextureHandle>,
+    pub(crate) sidebar_logo: Option<egui::TextureHandle>,
     pub(crate) about_boosty: Option<egui::TextureHandle>,
     pub(crate) about_donation: Option<egui::TextureHandle>,
     pub(crate) winws_mem: Option<u64>,
@@ -706,6 +707,7 @@ impl App {
             auto_heal_attempts: 0,
             auto_heal_last: Instant::now(),
             about_logo: None,
+            sidebar_logo: None,
             about_boosty: None,
             about_donation: None,
             winws_mem: None,
@@ -2061,15 +2063,36 @@ impl App {
                 ui.add_space(18.0);
                 ui.horizontal(|ui| {
                     ui.add_space(18.0);
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(34.0, 34.0), Sense::hover());
-                    ui.painter().rect_filled(rect, Rounding::same(9), p.accent);
-                    ui.painter().text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "Z",
-                        FontId::new(19.0, egui::FontFamily::Name("bold".into())),
-                        p.on_accent,
-                    );
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(38.0, 38.0), Sense::hover());
+                    if self.sidebar_logo.is_none() {
+                        if let Some(image) = crate::ui::assets::app_icon_image() {
+                            self.sidebar_logo = Some(ctx.load_texture(
+                                "sidebar-logo",
+                                image,
+                                egui::TextureOptions::LINEAR,
+                            ));
+                        }
+                    }
+                    if let Some(logo) = &self.sidebar_logo {
+                        ui.painter().image(
+                            logo.id(),
+                            rect,
+                            egui::Rect::from_min_max(
+                                egui::pos2(0.0, 0.0),
+                                egui::pos2(1.0, 1.0),
+                            ),
+                            Color32::WHITE,
+                        );
+                    } else {
+                        ui.painter().rect_filled(rect, Rounding::same(9), p.accent);
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "Z",
+                            FontId::new(19.0, egui::FontFamily::Name("bold".into())),
+                            p.on_accent,
+                        );
+                    }
                     ui.vertical(|ui| {
                         ui.label(
                             RichText::new("Zapret Manager")

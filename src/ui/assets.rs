@@ -58,6 +58,11 @@ pub fn window_icon() -> Option<egui::IconData> {
     })
 }
 
+/// Иконка приложения без квадратной подложки — для сайдбара.
+pub fn app_icon_image() -> Option<ColorImage> {
+    decode_png(APP_ICON_PNG)
+}
+
 /// Широкий логотип «Zapret Manager» для страницы «О программе».
 pub fn logo_wide() -> Option<ColorImage> {
     decode_png(LOGO_WIDE_PNG)

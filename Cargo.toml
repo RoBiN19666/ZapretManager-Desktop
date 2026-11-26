@@ -1,6 +1,6 @@
 ﻿[package]
 name = "zapret-manager"
-version = "2.7.6"
+version = "2.7.7"
 edition = "2021"
 rust-version = "1.80"
 description = "Zapret Manager — ускорение соединения для Discord и YouTube (Rust)"
