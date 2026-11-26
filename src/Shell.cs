@@ -412,7 +412,7 @@ namespace ZapretManager
             _tray.MouseUp += delegate(object s, MouseEventArgs e)
             {
                 if (e.Button != MouseButtons.Right) return;
-                System.Drawing.Point at = Cursor.Position;
+                System.Drawing.Point at = Native.CursorPosition();
                 menu.Show(at);
                 Native.SetForegroundWindow(menu.Handle);
                 Log.Info(string.Format("Меню трея: курсор {0},{1}, меню {2},{3} {4}x{5}",

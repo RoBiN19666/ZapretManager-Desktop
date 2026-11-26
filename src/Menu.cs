@@ -180,7 +180,7 @@ namespace ZapretManager
 
                 DarkMenu menu = new DarkMenu();
                 menu.Items.Add(new ToolStripMenuItem("Проверка позиции"));
-                menu.Show(owner, physical);
+                menu.Show(physical);
                 Application.DoEvents();
                 Log.Info(string.Format("Меню: {0},{1} {2}x{3}, DPI меню {4}, формы {5}",
                     menu.Bounds.Left, menu.Bounds.Top, menu.Bounds.Width, menu.Bounds.Height,
