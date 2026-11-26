@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -153,6 +153,57 @@ namespace ZapretManager
             return "";
         }
 
+        /// <summary>Список последних релизов репозитория (для выбора конкретной версии).</summary>
+        public static System.Collections.Generic.List<ReleaseInfo> ListReleases(string repo, int count)
+        {
+            System.Collections.Generic.List<ReleaseInfo> list = new System.Collections.Generic.List<ReleaseInfo>();
+            int perPage = Math.Max(1, Math.Min(50, count));
+            string url = string.Format("https://api.github.com/repos/{0}/releases?per_page={1}", repo, perPage);
+            string json = Web.GetString(url, 25000);
+            JavaScriptSerializer js = new JavaScriptSerializer();
+            js.MaxJsonLength = 16 * 1024 * 1024;
+            object[] arr = js.DeserializeObject(json) as object[];
+            if (arr == null) return list;
+            foreach (object item in arr)
+            {
+                Dictionary<string, object> rel = item as Dictionary<string, object>;
+                if (rel == null) continue;
+                ReleaseInfo info = ToRelease(rel);
+                if (info != null && !string.IsNullOrEmpty(info.Tag)) list.Add(info);
+            }
+            return list;
+        }
+
+        /// <summary>Релиз по конкретному тегу; если API недоступен — синтетический релиз по архиву тега.</summary>
+        public static ReleaseInfo ReleaseByTag(string repo, string tag)
+        {
+            if (string.IsNullOrEmpty(tag)) throw new ApplicationException("Не указан тег версии.");
+            try
+            {
+                string url = string.Format("https://api.github.com/repos/{0}/releases/tags/{1}", repo, Uri.EscapeDataString(tag));
+                string json = Web.GetString(url, 20000);
+                JavaScriptSerializer js = new JavaScriptSerializer();
+                js.MaxJsonLength = 16 * 1024 * 1024;
+                Dictionary<string, object> rel = js.DeserializeObject(json) as Dictionary<string, object>;
+                if (rel != null) return ToRelease(rel);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Не удалось получить релиз " + tag + " через API: " + ex.Message);
+            }
+
+            ReleaseInfo synthetic = new ReleaseInfo();
+            synthetic.Tag = tag;
+            synthetic.Name = "zapret-discord-youtube " + tag;
+            synthetic.HtmlUrl = string.Format("https://github.com/{0}/releases/tag/{1}", repo, tag);
+            synthetic.Body = "Версия " + tag + " (сборка Flowseal).";
+            AssetInfo zip = new AssetInfo();
+            zip.Name = "zapret-discord-youtube-" + tag + ".zip";
+            zip.Url = string.Format("https://github.com/{0}/releases/download/{1}/zapret-discord-youtube-{1}.zip", repo, tag);
+            synthetic.Assets.Add(zip);
+            return synthetic;
+        }
+
         public static string ZipUrl(ReleaseInfo rel)
         {
             AssetInfo zip = rel.FindZip();
@@ -175,6 +226,15 @@ namespace ZapretManager
                 if (va != vb) return va < vb ? -1 : 1;
             }
             return 0;
+        }
+
+        /// <summary>Тег без префикса v: "v1.10.4" → "1.10.4".</summary>
+        public static string NormalizeTag(string tag)
+        {
+            if (string.IsNullOrEmpty(tag)) return "";
+            string t = tag.Trim();
+            if (t.StartsWith("v", StringComparison.OrdinalIgnoreCase)) t = t.Substring(1);
+            return t;
         }
 
         private static int[] Parts(string v)

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
@@ -39,6 +39,17 @@ namespace ZapretManager
         private LineProgress _selfProgress;
         private bool _selfBusy;
 
+        private DarkSelect _versionSelect;
+        private Label _versionHint;
+        private RoundButton _btnVersionLoad;
+        private RoundButton _btnVersionInstall;
+        private LineProgress _versionProgress;
+        private System.Collections.Generic.List<ReleaseInfo> _releases;
+        private bool _versionBusy;
+        private bool _versionsTried;
+        private InputBox _manualTag;
+        private RoundButton _btnManualInstall;
+
         public UpdatePage(Shell shell) : base(shell) { }
 
         public override string Key { get { return "update"; } }
@@ -51,6 +62,7 @@ namespace ZapretManager
             BuildVersionCard();
             BuildUpdateCard();
             BuildSelfCard();
+            BuildVersionsCard();
             BuildFreshCard();
             BuildOptionsCard();
             Shell.UpdateStateChanged += RefreshState;
@@ -128,6 +140,187 @@ namespace ZapretManager
             View.Stack.Add(_updateCard);
         }
 
+        private void BuildVersionsCard()
+        {
+            Card card = NewCard("Версия zapret (сборки Flowseal)", 224);
+            card.Controls.Add(WrapLabel("Можно поставить не только последнюю, но и любую другую версию — например, откатиться назад, если в новой что-то сломалось. Списки и настройки сохраняются.",
+                Theme.Small, Theme.TextDim, 22, 40, DesignWidth - 60));
+
+            _versionSelect = new DarkSelect();
+            _versionSelect.Location = new Point(22, 88);
+            _versionSelect.Width = 300;
+            card.Controls.Add(_versionSelect);
+
+            _btnVersionLoad = Btn("Загрузить список", ButtonKind.Secondary, 170);
+            _btnVersionLoad.Location = new Point(332, 86);
+            _btnVersionLoad.Click += delegate { LoadVersions(); };
+            card.Controls.Add(_btnVersionLoad);
+
+            _btnVersionInstall = Btn("Установить версию", ButtonKind.Primary, 180);
+            _btnVersionInstall.Location = new Point(512, 86);
+            _btnVersionInstall.Enabled = false;
+            _btnVersionInstall.Click += delegate { InstallChosenVersion(); };
+            card.Controls.Add(_btnVersionInstall);
+
+            card.Controls.Add(L("Или тег вручную:", Theme.Small, Theme.TextMuted, 22, 130));
+            _manualTag = new InputBox();
+            _manualTag.Location = new Point(150, 128);
+            _manualTag.Width = 150;
+            card.Controls.Add(_manualTag);
+
+            _btnManualInstall = Btn("Поставить по тегу", ButtonKind.Secondary, 180);
+            _btnManualInstall.Location = new Point(312, 126);
+            _btnManualInstall.Click += delegate { InstallManualTag(); };
+            card.Controls.Add(_btnManualInstall);
+
+            _versionHint = L("Список версий ещё не загружен.", Theme.Small, Theme.TextMuted, 22, 168);
+            card.Controls.Add(_versionHint);
+
+            _versionProgress = new LineProgress();
+            _versionProgress.Location = new Point(22, 192);
+            _versionProgress.Width = DesignWidth - 44;
+            _versionProgress.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            _versionProgress.Visible = false;
+            card.Controls.Add(_versionProgress);
+
+            View.Stack.Add(card);
+        }
+
+        private void LoadVersions()
+        {
+            if (_versionBusy) return;
+            _versionBusy = true;
+            _versionBusy = false;
+            _versionBusy = true;
+            _btnVersionLoad.Enabled = false;
+            _btnVersionInstall.Enabled = false;
+            _versionHint.Text = "Загрузка списка версий…";
+            _versionHint.ForeColor = Theme.TextMuted;
+
+            Shell.RunBackground(delegate()
+            {
+                string error = "";
+                System.Collections.Generic.List<ReleaseInfo> list = null;
+                try { list = GitHub.ListReleases(GitHub.OfficialRepo, 20); }
+                catch (Exception ex) { error = ex.Message; }
+
+                Shell.Ui(delegate()
+                {
+                    _versionBusy = false;
+                    _btnVersionLoad.Enabled = true;
+                    if (list == null || list.Count == 0)
+                    {
+                        _versionHint.Text = error.Length > 0
+                            ? "Не удалось загрузить список: " + error + ". GitHub ограничивает частоту запросов — попробуйте позже."
+                            : "GitHub не вернул ни одного релиза.";
+                        _versionHint.ForeColor = Theme.Warn;
+                        return;
+                    }
+                    _releases = list;
+                    System.Collections.Generic.List<string> items = new System.Collections.Generic.List<string>();
+                    int selected = 0;
+                    string local = Shell.LocalVersion;
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        string tag = list[i].Tag;
+                        bool current = string.Equals(Versions.NormalizeTag(tag), local, StringComparison.OrdinalIgnoreCase);
+                        items.Add(current ? tag + "   •   установлена" : tag);
+                        if (current) selected = i;
+                    }
+                    _versionSelect.SetItems(items, items[selected]);
+                    _versionSelect.SelectedIndex = selected;
+                    _versionHint.Text = string.Format("Доступно версий: {0}. Установлена {1}.", list.Count, local);
+                    Log.Info(string.Format("Список версий Flowseal: {0} шт., установлена {1}, первая {2}.", list.Count, local, list[0].Tag));
+                    _versionHint.ForeColor = Theme.TextMuted;
+                    _btnVersionInstall.Enabled = true;
+                });
+            }, null);
+        }
+
+        private void InstallChosenVersion()
+        {
+            if (_versionBusy || _releases == null) return;
+            int index = _versionSelect.SelectedIndex;
+            if (index < 0 || index >= _releases.Count) { Shell.Notify("Выберите версию в списке.", LogLevel.Warn); return; }
+            InstallRelease(_releases[index]);
+        }
+
+        private void InstallManualTag()
+        {
+            string tag = (_manualTag.Text ?? "").Trim();
+            if (tag.Length == 0) { Shell.Notify("Введите тег версии, например 1.9.9d.", LogLevel.Warn); return; }
+            if (!System.Text.RegularExpressions.Regex.IsMatch(tag, "^v?[0-9][0-9a-zA-Z.]*$"))
+            {
+                Shell.Notify("Тег выглядит некорректно: " + tag, LogLevel.Warn);
+                return;
+            }
+            ReleaseInfo rel;
+            try { rel = GitHub.ReleaseByTag(GitHub.OfficialRepo, tag); }
+            catch (Exception ex) { Shell.Notify("Не удалось получить версию " + tag + ": " + ex.Message, LogLevel.Error); return; }
+            InstallRelease(rel);
+        }
+
+        private void InstallRelease(ReleaseInfo rel)
+        {
+            if (rel == null) return;
+            string local = Shell.LocalVersion;
+            string tag = Versions.NormalizeTag(rel.Tag);
+            if (string.Equals(tag, local, StringComparison.OrdinalIgnoreCase))
+            {
+                Shell.Notify("Эта версия уже установлена.", LogLevel.Warn);
+                return;
+            }
+            bool downgrade = Versions.Compare(tag, local) < 0;
+            if (!Shell.RequireAdmin("Установка версии")) return;
+            if (!Dlg.Confirm(this.View.FindForm(), downgrade ? "Откатиться на версию " + tag + "?" : "Установить версию " + tag + "?",
+                string.Format("Будет скачана и установлена сборка {0} с официального репозитория Flowseal{1}.\n\nВаши списки, IP-лист и настройки сохраняются, bypass на время установки останавливается.",
+                    rel.Tag, downgrade ? " (это более старая версия, чем установленная " + local + ")" : ""), "Установить")) return;
+
+            _versionBusy = true;
+            _btnVersionInstall.Enabled = false;
+            _btnVersionLoad.Enabled = false;
+            _versionProgress.Visible = true;
+            _versionProgress.Value = 0;
+            Shell.Form.SetStatusHint("Установка версии " + tag + "…");
+
+            UpdateOptions opt = new UpdateOptions();
+            opt.CreateBackup = _tgBackup.Checked;
+            opt.RestartAfter = _tgRestart.Checked;
+            opt.PreserveUserLists = true;
+            opt.UpdateOfficialLists = _tgLists.Checked;
+
+            Updater upd = new Updater(Shell.Install, Shell.Ops, delegate(UpdateProgress p)
+            {
+                Shell.Ui(delegate()
+                {
+                    _versionProgress.Value = p.Percent;
+                    _versionHint.Text = p.Stage.Length > 0 ? p.Stage : _versionHint.Text;
+                    if (!p.Finished) return;
+                    _versionBusy = false;
+                    _btnVersionInstall.Enabled = true;
+                    _btnVersionLoad.Enabled = true;
+                    _versionProgress.Visible = false;
+                    Shell.Form.SetStatusHint("");
+                    if (p.Ok)
+                    {
+                        _versionHint.Text = "Установлено: " + tag + ". " + p.Summary.Replace("\n", " ");
+                        _versionHint.ForeColor = Theme.Success;
+                        Shell.Notify("Версия " + tag + " установлена.", LogLevel.Ok);
+                        Shell.Install.Rescan();
+                        Shell.RefreshState(true);
+                        UpdateChecker.Last = null;
+                        _releases = null;
+                    }
+                    else
+                    {
+                        _versionHint.Text = "Ошибка: " + p.Error;
+                        _versionHint.ForeColor = Theme.Warn;
+                        Shell.Notify("Не удалось установить версию: " + p.Error, LogLevel.Error);
+                    }
+                });
+            });
+            Shell.RunBackground(delegate() { upd.UpdateNow(rel, opt); }, null);
+        }
         private void BuildSelfCard()
         {
             _selfCard = NewCard("Обновление Zapret Manager", 188);
@@ -450,6 +643,11 @@ namespace ZapretManager
 
         public override void RefreshState()
         {
+            if (!_versionsTried && !_versionBusy && _releases == null)
+            {
+                _versionsTried = true;
+                LoadVersions();
+            }
             _suppress = true;
             try
             {
