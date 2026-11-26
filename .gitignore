@@ -1,0 +1,21 @@
+# Настройки и журнал приложения
+data/
+*.log
+
+# Артефакты сборки и разработки
+*.pdb
+tools/*.exe
+tools/*.png
+tools/*.log
+tools/*.txt
+_safety-backup/
+
+# Сам zapret в репозиторий менеджера не кладём — его ставит мастер установки
+zapret-discord-youtube-*/
+
+# Резервные копии, создаваемые автообновлением
+zapret-discord-youtube-*_backup_*/
+
+# Служебные файлы Windows
+Thumbs.db
+desktop.ini
