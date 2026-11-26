@@ -12,6 +12,7 @@ use windows_sys::Win32::Graphics::Gdi::{
 use windows_sys::Win32::UI::Controls::{
     DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_DISABLED, ODS_SELECTED, ODT_MENU,
 };
+use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow};
 use windows_sys::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
     NOTIFYICONDATAW,
@@ -145,6 +146,21 @@ static MENU_STYLE: Mutex<MenuStyle> = Mutex::new(MenuStyle {
     border: rgb(52, 44, 37),
 });
 
+static MENU_SCALE: Mutex<f32> = Mutex::new(1.0);
+
+fn current_menu_scale() -> f32 {
+    MENU_SCALE.lock().map(|s| *s).unwrap_or(1.0)
+}
+
+fn menu_scale_for_window(hwnd: HWND) -> f32 {
+    let dpi = unsafe {
+        let window_dpi = GetDpiForWindow(hwnd);
+        let system_dpi = GetDpiForSystem();
+        window_dpi.max(system_dpi).max(96)
+    };
+    (dpi as f32 / 96.0).clamp(1.0, 2.5)
+}
+
 struct TrayMenuItem {
     id: u32,
     text: String,
@@ -205,6 +221,7 @@ unsafe fn draw_menu_item(lparam: LPARAM) -> LRESULT {
         return 0;
     }
     let item = &*(dis.itemData as *const TrayMenuItem);
+    let scale = current_menu_scale();
     let style = MENU_STYLE
         .lock()
         .map(|s| *s)
@@ -229,10 +246,10 @@ unsafe fn draw_menu_item(lparam: LPARAM) -> LRESULT {
 
     if item.separator {
         let mut line = dis.rcItem;
-        line.left += 12;
-        line.right -= 12;
+        line.left += (12.0 * scale) as i32;
+        line.right -= (12.0 * scale) as i32;
         line.top = (line.top + line.bottom) / 2;
-        line.bottom = line.top + 1;
+        line.bottom = line.top + (scale.round() as i32).max(1);
         let brush = CreateSolidBrush(style.border as COLORREF);
         FillRect(dis.hDC, &line, brush);
         let _ = DeleteObject(brush as _);
@@ -247,12 +264,12 @@ unsafe fn draw_menu_item(lparam: LPARAM) -> LRESULT {
         style.text
     };
     SetBkMode(dis.hDC, TRANSPARENT as i32);
-    let icon_font = make_menu_font("Segoe MDL2 Assets", 16);
+    let icon_font = make_menu_font("Segoe MDL2 Assets", (16.0 * scale).round() as i32);
     let old = SelectObject(dis.hDC, icon_font as _);
     SetTextColor(dis.hDC, if item.enabled { style.accent } else { style.muted } as COLORREF);
     let mut icon_rect = dis.rcItem;
-    icon_rect.left += 14;
-    icon_rect.right = icon_rect.left + 22;
+    icon_rect.left += (14.0 * scale) as i32;
+    icon_rect.right = icon_rect.left + (22.0 * scale) as i32;
     let icon = wide(item.icon);
     DrawTextW(
         dis.hDC,
@@ -264,12 +281,12 @@ unsafe fn draw_menu_item(lparam: LPARAM) -> LRESULT {
     SelectObject(dis.hDC, old);
     let _ = DeleteObject(icon_font as _);
 
-    let text_font = make_menu_font("Segoe UI", 14);
+    let text_font = make_menu_font("Segoe UI", (14.0 * scale).round() as i32);
     let old = SelectObject(dis.hDC, text_font as _);
     SetTextColor(dis.hDC, text_color as COLORREF);
     let mut text_rect = dis.rcItem;
-    text_rect.left += 42;
-    text_rect.right -= 32;
+    text_rect.left += (42.0 * scale) as i32;
+    text_rect.right -= (32.0 * scale) as i32;
     let text = wide(&item.text);
     DrawTextW(
         dis.hDC,
@@ -282,12 +299,12 @@ unsafe fn draw_menu_item(lparam: LPARAM) -> LRESULT {
     let _ = DeleteObject(text_font as _);
 
     if item.check {
-        let check_font = make_menu_font("Segoe MDL2 Assets", 14);
+        let check_font = make_menu_font("Segoe MDL2 Assets", (14.0 * scale).round() as i32);
         let old = SelectObject(dis.hDC, check_font as _);
         SetTextColor(dis.hDC, style.accent as COLORREF);
         let mut check_rect = dis.rcItem;
-        check_rect.right -= 14;
-        check_rect.left = check_rect.right - 18;
+        check_rect.right -= (14.0 * scale) as i32;
+        check_rect.left = check_rect.right - (18.0 * scale) as i32;
         let check = wide("\u{E73E}");
         DrawTextW(
             dis.hDC,
@@ -306,8 +323,11 @@ unsafe fn measure_menu_item(lparam: LPARAM) -> LRESULT {
     let mis = &mut *(lparam as *mut MEASUREITEMSTRUCT);
     let separator = mis.itemData != 0
         && (*(mis.itemData as *const TrayMenuItem)).separator;
-    mis.itemWidth = MENU_WIDTH;
-    mis.itemHeight = if separator { 9 } else { MENU_ITEM_HEIGHT };
+    let scale = current_menu_scale();
+    mis.itemWidth = (MENU_WIDTH as f32 * scale).round() as u32;
+    mis.itemHeight = ((if separator { 9.0 } else { MENU_ITEM_HEIGHT as f32 }) * scale)
+        .round()
+        .max(if separator { 6.0 } else { 28.0 }) as u32;
     1
 }
 
@@ -324,6 +344,9 @@ fn show_menu(hwnd: HWND) {
     };
     let light = Ini::load(&paths::config_path()).get("Theme", "auto") == "light";
     set_menu_style(light);
+    if let Ok(mut scale) = MENU_SCALE.lock() {
+        *scale = menu_scale_for_window(hwnd);
+    }
     unsafe {
         let menu = CreatePopupMenu();
         if menu.is_null() {

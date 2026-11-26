@@ -7,7 +7,7 @@ pub mod ui;
 pub mod util;
 
 /// Версия приложения (показывается в интерфейсе и в журнале).
-pub const APP_VERSION: &str = "2.7.0";
+pub const APP_VERSION: &str = "2.7.1";
 pub const APP_TITLE: &str = "Zapret Manager";
 
 /// Пути, которые нужны всем частям приложения.
