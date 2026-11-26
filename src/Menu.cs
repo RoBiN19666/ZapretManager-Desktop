@@ -164,6 +164,33 @@ namespace ZapretManager
     /// <summary>Служебный предпросмотр меню для скриншотов (--menu-shot).</summary>
     public static class MenuPreview
     {
+        public static void RunAtCursor(string path)
+        {
+            System.Drawing.Point physical = Native.CursorPosition();
+            Log.Info(string.Format("Курсор: GetCursorPos {0},{1}", physical.X, physical.Y));
+            using (Form owner = new Form())
+            {
+                owner.StartPosition = FormStartPosition.Manual;
+                owner.Location = new System.Drawing.Point(physical.X - 20, physical.Y - 20);
+                owner.ShowInTaskbar = false;
+                owner.FormBorderStyle = FormBorderStyle.None;
+                owner.Size = new Size(10, 10);
+                owner.Opacity = 0.01;
+                owner.Show();
+
+                DarkMenu menu = new DarkMenu();
+                menu.Items.Add(new ToolStripMenuItem("Проверка позиции"));
+                menu.Show(owner, physical);
+                Application.DoEvents();
+                Log.Info(string.Format("Меню: {0},{1} {2}x{3}, DPI меню {4}, формы {5}",
+                    menu.Bounds.Left, menu.Bounds.Top, menu.Bounds.Width, menu.Bounds.Height,
+                    menu.DeviceDpi, owner.DeviceDpi));
+                menu.Close();
+                owner.Close();
+            }
+        }
+
+
         public static void Run(string path)
         {
             DarkMenu menu = new DarkMenu();

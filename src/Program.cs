@@ -41,6 +41,7 @@ namespace ZapretManager
             bool restoreUacMode = HasFlag(args, "--restore-uac");
             bool cleanupMode = HasFlag(args, "--cleanup");
             string menuShotPath = FindArgValue(args, "--menu-shot");
+            bool menuCursorProbe = HasFlag(args, "--menu-probe");
             string appWatch = FindArgValue(args, "--app-watch");
             AppInfo.TrayMode = HasFlag(args, "--tray");
             AppInfo.AutostartMode = HasFlag(args, "--autostart");
@@ -116,6 +117,12 @@ namespace ZapretManager
                 string guardError;
                 int guardScanned;
                 System.Collections.Generic.List<string> guardHosts = SiteGuard.NewBrowserHosts(out guardError, out guardScanned);
+            }
+            if (menuCursorProbe)
+            {
+                Theme.Apply("dark");
+                MenuPreview.RunAtCursor("");
+                return;
             }
             if (!string.IsNullOrEmpty(menuShotPath))
             {

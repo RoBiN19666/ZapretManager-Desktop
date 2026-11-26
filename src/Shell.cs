@@ -407,13 +407,16 @@ namespace ZapretManager
                 try { tgOn = TgProxy.GetState(_shell.Config).Running; } catch { }
                 tgItem.Text = tgOn ? "Остановить TG WS Proxy" : "Запустить TG WS Proxy";
             };
-            // меню показываем сами в точке курсора: при развёрнутом окне системная
-            // привязка ContextMenuStrip промахивается мимо иконки в трее
+            // позиционируем сами, но координатами WinForms: они уже пересчитаны
+            // в систему координат процесса, в отличие от «сырого» GetCursorPos
             _tray.MouseUp += delegate(object s, MouseEventArgs e)
             {
                 if (e.Button != MouseButtons.Right) return;
-                menu.Show(Native.CursorPosition());
+                System.Drawing.Point at = Cursor.Position;
+                menu.Show(at);
                 Native.SetForegroundWindow(menu.Handle);
+                Log.Info(string.Format("Меню трея: курсор {0},{1}, меню {2},{3} {4}x{5}",
+                    at.X, at.Y, menu.Bounds.Left, menu.Bounds.Top, menu.Bounds.Width, menu.Bounds.Height));
             };
         }
 
