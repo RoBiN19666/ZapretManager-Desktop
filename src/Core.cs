@@ -1766,6 +1766,7 @@ namespace ZapretManager
                 res.Message = string.Format("Стратегия «{0}» запущена (PID {1}).", strategy.Name, p.Id)
                     + (tcpWasOff ? " TCP timestamps были выключены и включены (системная настройка)." : "");
                 Log.Ok(res.Message);
+                LabelServices();
                 return res;
             }
             catch (Exception ex)
@@ -1892,12 +1893,43 @@ namespace ZapretManager
 
         // ---------- Служба ----------
 
+        /// <summary>Понятные имена и описания для служб, которые создаёт/использует менеджер.</summary>
+        public void LabelServices()
+        {
+            if (!Native.IsAdmin()) return;
+            try { if (QueryService("zapret").Installed) TryLabel("zapret", "Zapret — обход DPI (Zapret Manager)", "Обход DPI для Discord и YouTube. Запускает winws.exe; управляется Zapret Manager."); } catch { }
+            foreach (string name in new string[] { "WinDivert", "WinDivert14" })
+            {
+                try
+                {
+                    if (QueryService(name).Installed)
+                        TryLabel(name, "WinDivert — драйвер обхода DPI (Zapret Manager)", "Драйвер перехвата пакетов WinDivert, используется winws.exe для обхода DPI.");
+                }
+                catch { }
+            }
+        }
+
+        private static void TryLabel(string service, string displayName, string description)
+        {
+            // sc config не меняет DisplayName у некоторых работающих драйверов,
+            // поэтому пишем значения напрямую в ключ службы (нужны права администратора).
+            try
+            {
+                using (RegistryKey k = Registry.LocalMachine.OpenSubKey(@"System\CurrentControlSet\Services\" + service, true))
+                {
+                    if (k == null) return;
+                    k.SetValue("DisplayName", displayName, RegistryValueKind.String);
+                    k.SetValue("Description", description, RegistryValueKind.String);
+                }
+            }
+            catch { }
+        }
+
         public string InstallService(StrategyDef strategy, out bool ok)
         {
             ok = false;
             if (!Native.IsAdmin()) return "Установка службы требует прав администратора.";
             if (!File.Exists(Install.WinwsExe)) return "Файл bin\\winws.exe не найден.";
-
             GameFilterState gf = GameFilterState.Load(Install.Root);
             string err;
             string[] argv = BatParser.GetArgv(Install, strategy, gf, out err);
@@ -1913,7 +1945,7 @@ namespace ZapretManager
             Thread.Sleep(300);
 
             string binPath = "\"" + Install.WinwsExe + "\" " + args + " ";
-            string scArgs = "create zapret binPath= \"" + binPath.Replace("\"", "\\\"") + "\" DisplayName= \"zapret\" start= auto";
+            string scArgs = "create zapret binPath= \"" + binPath.Replace("\"", "\\\"") + "\" DisplayName= \"Zapret — обход DPI (Zapret Manager)\" start= auto";
             ProcResult cr = null;
             for (int attempt = 0; attempt < 3; attempt++)
             {
@@ -1932,8 +1964,9 @@ namespace ZapretManager
             {
                 return "sc create завершился с кодом " + (cr == null ? -1 : cr.ExitCode) + ": " + (cr == null ? "" : cr.All);
             }
-            Proc.Run("sc.exe", "description zapret \"Zapret DPI bypass software\"", 10000);
+            Proc.Run("sc.exe", "description zapret \"Обход DPI для Discord и YouTube. Запускает winws.exe; управляется Zapret Manager.\"", 10000);
             ProcResult sr = Proc.Run("sc.exe", "start zapret", 25000);
+            LabelServices();
 
             try
             {

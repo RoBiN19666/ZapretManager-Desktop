@@ -344,6 +344,7 @@ namespace ZapretManager
             BuildTray();
             StartActivationWatcher();
             StartSiteGuard();
+            try { _shell.Ops.LabelServices(); } catch { }
 
             // реальный DPI берём у окна: приложение могло открыться на мониторе с другим масштабом
             float windowDpi = 96f;
