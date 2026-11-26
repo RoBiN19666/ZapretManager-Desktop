@@ -30,7 +30,7 @@ namespace ZapretManager
             _listCard = NewCard("Доступные стратегии", 504);
             _listDesc = L("", Theme.Small, Theme.TextMuted, 22, 40);
             _listDesc.AutoSize = false;
-            _listDesc.AutoEllipsis = true;
+            _listDesc.AutoEllipsis = false;
             _listDesc.Size = new Size(DesignWidth - 44, Theme.Px(22));
             _listDesc.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             _listCard.Controls.Add(_listDesc);
@@ -142,12 +142,18 @@ namespace ZapretManager
             UpdateListDescription();
         }
 
+        private bool _descBusy;
+
         private void UpdateListDescription()
         {
-            if (_listDesc == null || _list == null) return;
+            if (_listDesc == null || _list == null || _descBusy) return;
             int i = _list.HoverIndex;
             if (i < 0) i = _list.SelectedIndex;
-            _listDesc.Text = (i >= 0 && i < _list.Items2.Count) ? _list.Items2[i].Description : "";
+            string text = (i >= 0 && i < _list.Items2.Count) ? _list.Items2[i].Description : "";
+            if (_listDesc.Text == text) return;
+            _descBusy = true;
+            try { _listDesc.Text = text; }
+            finally { _descBusy = false; }
         }
 
         private void UpdatePreview()
