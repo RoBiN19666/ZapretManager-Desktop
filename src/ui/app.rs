@@ -593,6 +593,8 @@ pub struct App {
     pub log_seq: u64,
     pub update_state: Option<UpdateCheckResult>,
     pub self_update: Option<SelfUpdateInfo>,
+    update_notice_open: bool,
+    update_notice_shown: bool,
     pub pages: Pages,
     tray: Option<TrayHandle>,
     tray_rx: Option<Receiver<TrayEvent>>,
@@ -673,6 +675,8 @@ impl App {
             log_seq: 0,
             update_state: None,
             self_update: None,
+            update_notice_open: false,
+            update_notice_shown: false,
             pages: Pages::new(),
             tray: None,
             tray_rx: None,
@@ -880,6 +884,7 @@ impl App {
         danger: bool,
         action: impl FnOnce(&mut App) + 'static,
     ) {
+        self.update_notice_open = false;
         self.confirm = Some(Confirm {
             title: title.to_string(),
             body: body.to_string(),
@@ -987,11 +992,15 @@ impl App {
         let ini = self.ini.clone();
         let _ = ini.save();
         let local = self.install.version.clone();
+        let tg_installed = tgproxy::get_state(&ini).installed;
         self.spawn_bg(move |tx| {
             let _ = tx.send(Msg::SelfCheck(Box::new(crate::engine::update::self_check(true))));
             let _ = tx.send(Msg::Compare(Box::new(
                 crate::engine::update::check_update(&local, true),
             )));
+            if tg_installed {
+                let _ = tx.send(Msg::TgLatest(tgproxy::check_latest()));
+            }
         });
     }
 
@@ -1479,6 +1488,159 @@ impl App {
             self.refresh_state(false);
             self.update_status_hint();
         }
+        self.poll_update_notice();
+    }
+
+    fn update_items(&self) -> Vec<(String, String, String)> {
+        let mut items = Vec::new();
+        if let Some(info) = &self.self_update {
+            if info.ok && info.available {
+                items.push((
+                    "Zapret Manager".to_string(),
+                    info.local.clone(),
+                    info.remote.clone(),
+                ));
+            }
+        }
+        if let Some(st) = &self.update_state {
+            if st.ok && st.update_available {
+                items.push((
+                    "zapret".to_string(),
+                    st.local_version.clone(),
+                    st.remote_version.clone(),
+                ));
+            }
+        }
+        if self.pages.tg.state.installed {
+            if let Some(latest) = &self.pages.tg.latest {
+                let current = &self.pages.tg.state.version;
+                if crate::util::version_cmp(latest, current) == std::cmp::Ordering::Greater {
+                    items.push((
+                        "TG WS Proxy".to_string(),
+                        current.clone(),
+                        latest.clone(),
+                    ));
+                }
+            }
+        }
+        items
+    }
+
+    fn update_notice_key(items: &[(String, String, String)]) -> String {
+        format!(
+            "{}|{}",
+            crate::APP_VERSION,
+            items
+                .iter()
+                .map(|(n, c, v)| format!("{}:{}>{}", n, c, v))
+                .collect::<Vec<_>>()
+                .join(";")
+        )
+    }
+
+    fn poll_update_notice(&mut self) {
+        if self.update_notice_shown || self.start_hidden || self.confirm.is_some() {
+            return;
+        }
+        if self.pages.wizard.is_some() {
+            return;
+        }
+        let items = self.update_items();
+        if items.is_empty() {
+            return;
+        }
+        let key = Self::update_notice_key(&items);
+        if self.ini.get("UpdateNoticeDismissed", "") == key {
+            self.update_notice_shown = true;
+            return;
+        }
+        self.update_notice_shown = true;
+        self.update_notice_open = true;
+    }
+
+    fn show_update_notice(&mut self, ctx: &egui::Context) {
+        if !self.update_notice_open {
+            return;
+        }
+        let p = self.p;
+        let items = self.update_items();
+        if items.is_empty() {
+            self.update_notice_open = false;
+            return;
+        }
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Middle,
+            egui::Id::new("update_notice_overlay"),
+        ));
+        painter.rect_filled(
+            ctx.screen_rect(),
+            Rounding::ZERO,
+            Color32::from_black_alpha(140),
+        );
+        let mut go_updates = false;
+        let mut close = false;
+        egui::Window::new("Доступны обновления")
+            .collapsible(false)
+            .resizable(false)
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .default_width(540.0)
+            .frame(
+                egui::Frame::window(&ctx.style())
+                    .fill(p.surface)
+                    .stroke(Stroke::new(1.0, p.border_strong)),
+            )
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new("Найдены новые версии:")
+                        .size(13.0)
+                        .color(p.text_dim),
+                );
+                ui.add_space(8.0);
+                for (name, current, new) in &items {
+                    egui::Frame::none()
+                        .fill(p.editor)
+                        .stroke(Stroke::new(1.0, p.border))
+                        .rounding(Rounding::same(8))
+                        .inner_margin(egui::Margin::symmetric(12, 9))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(name)
+                                        .size(13.5)
+                                        .strong()
+                                        .color(p.text),
+                                );
+                                ui.label(
+                                    RichText::new(format!("{}  →  {}", current, new))
+                                        .size(12.5)
+                                        .color(p.success),
+                                );
+                            });
+                        });
+                    ui.add_space(6.0);
+                }
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if w::primary(ui, &p, "Открыть обновления").clicked() {
+                        go_updates = true;
+                        close = true;
+                    }
+                    if w::secondary(ui, &p, "Позже").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        if go_updates {
+            self.page = Page::Update;
+            self.on_navigate(Page::Update);
+        }
+        if close {
+            let key = Self::update_notice_key(&items);
+            self.ini.set("UpdateNoticeDismissed", &key);
+            let _ = self.ini.save();
+            self.update_notice_open = false;
+        }
     }
 
     fn update_status_hint(&mut self) {
@@ -1646,6 +1808,7 @@ impl App {
         egui::Window::new(&confirm.title)
             .collapsible(false)
             .resizable(false)
+            .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .default_width(520.0)
             .frame(
@@ -2151,6 +2314,7 @@ impl eframe::App for App {
 
         self.handle_confirm(ctx);
         self.show_confirm_overlay(ctx);
+        self.show_update_notice(ctx);
         self.show_toast(ctx);
         if let Some(text) = self.clipboard.take() {
             ctx.copy_text(text);
