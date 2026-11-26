@@ -26,6 +26,12 @@ namespace ZapretManager
         private ToggleSwitch _tgGuardAuto;
         private Label _guardStatus;
         private Label _guardInfo;
+        private DarkSelect _procSelect;
+        private Label _procStatus;
+        private RoundButton _btnAppWatch;
+        private RoundButton _btnAppRefresh;
+        private bool _appBusy;
+        private List<AppEntry> _apps = new List<AppEntry>();
         private bool _working;
         /// <summary>Готовность проверки для служебных снимков экрана.</summary>
         public static bool Ready = true;
@@ -40,6 +46,7 @@ namespace ZapretManager
         public override void Build()
         {
             BuildCheckCard();
+            BuildAppCard();
             BuildHostsCard();
             BuildHelpCard();
             BuildGuardCard();
@@ -94,6 +101,124 @@ namespace ZapretManager
             View.Stack.Add(card);
         }
 
+        private void BuildAppCard()
+        {
+            Card card = NewCard("Проверка приложения", 206);
+            card.Controls.Add(WrapLabel("Игра или программа не запускается? Выберите её в списке и нажмите «Наблюдать»: менеджер соберёт домены, к которым она обращается (журнал DNS), проверит их и добавит заблокированные в ваши списки.",
+                Theme.Small, Theme.TextDim, 22, 40, DesignWidth - 60));
+
+            _procSelect = new DarkSelect();
+            _procSelect.Location = new Point(22, 92);
+            _procSelect.Width = 420;
+            card.Controls.Add(_procSelect);
+
+            _btnAppRefresh = Btn("Обновить список", ButtonKind.Secondary, 170);
+            _btnAppRefresh.Location = new Point(500, 90);
+            _btnAppRefresh.Click += delegate { LoadApps(); };
+            card.Controls.Add(_btnAppRefresh);
+
+            _btnAppWatch = Btn("Наблюдать 60 с", ButtonKind.Primary, 180);
+            _btnAppWatch.Location = new Point(22, 132);
+            _btnAppWatch.Click += delegate { WatchApp(); };
+            card.Controls.Add(_btnAppWatch);
+
+            _procStatus = L("Список приложений загружается…", Theme.Small, Theme.TextMuted, 22, 170);
+            card.Controls.Add(_procStatus);
+
+            View.Stack.Add(card);
+        }
+
+        private void LoadApps()
+        {
+            _btnAppRefresh.Enabled = false;
+            _procStatus.Text = "Собираем список приложений…";
+            Shell.RunBackground(delegate()
+            {
+                List<AppEntry> apps = AppProbe.List();
+                Log.Info("Проверка приложения: процессов с окнами — " + apps.Count);
+                Shell.Ui(delegate()
+                {
+                    _btnAppRefresh.Enabled = true;
+                    _apps = apps;
+                    List<string> names = new List<string>();
+                    foreach (AppEntry e in apps) names.Add(e.ToString());
+                    if (names.Count == 0)
+                    {
+                        _procStatus.Text = "Не нашли приложений с окнами — запустите игру и нажмите «Обновить список».";
+                        return;
+                    }
+                    _procSelect.SetItems(names, names[0]);
+                    _procStatus.Text = "Приложений в списке: " + names.Count + ". Запустите игру (можно прямо сейчас) и нажмите «Наблюдать 60 с».";
+                });
+            }, null);
+        }
+
+        private void WatchApp()
+        {
+            if (_appBusy) return;
+            int index = _procSelect.SelectedIndex;
+            if (index < 0 || index >= _apps.Count) { Shell.Notify("Сначала выберите приложение.", LogLevel.Warn); return; }
+            if (Shell.Install == null || !Shell.Install.IsValid) { Shell.Notify("Папка zapret не найдена.", LogLevel.Error); return; }
+
+            AppEntry app = _apps[index];
+            _appBusy = true;
+            _btnAppWatch.Enabled = false;
+            _btnAppRefresh.Enabled = false;
+            _procStatus.Text = "Наблюдаем за " + app.Name + "…";
+            SetButtons(false);
+
+            Shell.RunBackground(delegate()
+            {
+                try
+                {
+                    List<string> ips;
+                    List<string> hosts = AppProbe.Watch(app.Pid, 60, delegate(int percent, string stage)
+                    {
+                        Shell.Ui(delegate() { _procStatus.Text = stage; });
+                    }, out ips);
+
+                    List<string> okHosts;
+                    List<string> blocked = AppProbe.BlockedHosts(hosts, delegate(int percent, string stage)
+                    {
+                        Shell.Ui(delegate() { _procStatus.Text = stage; });
+                    }, out okHosts);
+
+                    Shell.Ui(delegate()
+                    {
+                        List<string> lines = new List<string>();
+                        lines.AddRange(blocked);
+                        lines.AddRange(okHosts);
+                        _hostsEditor.Text = string.Join("\r\n", lines.ToArray());
+                        if (blocked.Count > 0)
+                        {
+                            _procStatus.Text = string.Format("{0}: доменов {1}, похоже на блокировку {2}. Нажмите «В мой список».", app.Name, hosts.Count, blocked.Count);
+                            _procStatus.ForeColor = Theme.Warn;
+                        }
+                        else
+                        {
+                            _procStatus.Text = string.Format("{0}: доменов {1}, заблокированных не нашли. Адреса добавлены в список ниже для ручной проверки.", app.Name, hosts.Count);
+                            _procStatus.ForeColor = Theme.TextMuted;
+                        }
+                        if (ips.Count > 0) _status.Text = "IP-адресов в соединениях: " + ips.Count + " (если домены не помогли — посмотрите «Проверить адреса»).";
+                        SetButtons(lines.Count > 0);
+                        Shell.Notify(blocked.Count > 0 ? "Найдены заблокированные домены: " + blocked.Count : "Заблокированных доменов не найдено.", blocked.Count > 0 ? LogLevel.Warn : LogLevel.Ok);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Shell.Ui(delegate()
+                    {
+                        _procStatus.Text = "Ошибка наблюдения: " + ex.Message;
+                        _procStatus.ForeColor = Theme.Danger;
+                    });
+                }
+                finally
+                {
+                    _appBusy = false;
+                    Shell.Ui(delegate() { _btnAppWatch.Enabled = true; _btnAppRefresh.Enabled = true; });
+                }
+            }, null);
+        }
         private void BuildHostsCard()
         {
             Card card = NewCard("Адреса для обхода", 372);
@@ -459,10 +584,11 @@ namespace ZapretManager
             _status.Text = message + (backup.Length > 0 ? "  Резервная копия: " + backup : "");
             _status.ForeColor = added > 0 ? Theme.Success : Theme.TextMuted;
         }
-
         public override void RefreshState()
         {
             RefreshGuard();
+            if (!_appBusy && _apps.Count == 0 && _procStatus != null) LoadApps();
+
             if (_working) return;
             if (Shell.Install == null || !Shell.Install.IsValid)
             {

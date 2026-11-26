@@ -36,6 +36,7 @@ namespace ZapretManager
             bool guardOnce = HasFlag(args, "--guard-once");
             bool tgStartMode = HasFlag(args, "--tg-start");
             bool tgStopMode = HasFlag(args, "--tg-stop");
+            string appWatch = FindArgValue(args, "--app-watch");
             AppInfo.TrayMode = HasFlag(args, "--tray");
             AppInfo.AutostartMode = HasFlag(args, "--autostart");
             if (AppInfo.AutostartMode) AppInfo.TrayMode = true;
@@ -110,6 +111,32 @@ namespace ZapretManager
                 System.Collections.Generic.List<string> guardAdded = SiteGuard.Process(guardInstall, guardConfig, guardHosts, true,
                     delegate(string message) { Log.Warn("Сторож: " + message); });
                 Log.Info("Сторож: добавлено доменов — " + guardAdded.Count + ".");
+                return;
+            }
+            if (!string.IsNullOrEmpty(appWatch))
+            {
+                int watchPid;
+                if (!int.TryParse(appWatch, out watchPid))
+                {
+                    Log.Error("--app-watch: нужен PID процесса.");
+                    return;
+                }
+                AppConfig watchConfig = AppConfig.Load(AppConfig.DefaultPath());
+                ZapretInstall watchInstall = ZapretInstall.Detect(string.IsNullOrEmpty(rootArg) ? watchConfig.Get("Root", "") : rootArg);
+                Log.Info("Проверка приложения: наблюдаем за PID " + watchPid + " 20 с.");
+                System.Collections.Generic.List<string> watchIps;
+                System.Collections.Generic.List<string> watchHosts = AppProbe.Watch(watchPid, 20, null, out watchIps);
+                Log.Info("Проверка приложения: доменов " + watchHosts.Count + ", адресов " + watchIps.Count + " — " + string.Join(", ", watchHosts.ToArray()));
+                System.Collections.Generic.List<string> okHosts;
+                System.Collections.Generic.List<string> watchBlocked = AppProbe.BlockedHosts(watchHosts, null, out okHosts);
+                Log.Info("Проверка приложения: заблокировано " + watchBlocked.Count + " — " + string.Join(", ", watchBlocked.ToArray()));
+                if (watchBlocked.Count > 0)
+                {
+                    int watchAdded;
+                    string watchPath;
+                    string watchMessage = SiteDoctor.AddToUserList(watchInstall, watchBlocked, out watchAdded, out watchPath);
+                    Log.Info("Проверка приложения: " + watchMessage);
+                }
                 return;
             }
             if (tgPrepareMode)

@@ -162,6 +162,31 @@ namespace ZapretManager
             }
         }
 
+        /// <summary>Публичная обёртка: похоже ли, что домен блокируют (reset/таймаут на TCP/TLS).</summary>
+        public static bool LooksBlockedPublic(string host, out string reason)
+        {
+            reason = "";
+            int ms;
+            string err;
+            if (!TcpConnect(host, 443, 2500, out ms, out err))
+            {
+                reason = "TCP: " + err;
+                return err.IndexOf("таймаут", StringComparison.OrdinalIgnoreCase) >= 0
+                    || err.IndexOf("reset", StringComparison.OrdinalIgnoreCase) >= 0
+                    || err.IndexOf("сброс", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+            int tlsMs;
+            string tlsError;
+            if (!TlsHandshake(host, 4000, out tlsMs, out tlsError))
+            {
+                reason = "TLS: " + tlsError;
+                string e = (tlsError ?? "").ToLowerInvariant();
+                return e.Contains("reset") || e.Contains("сброс") || e.Contains("таймаут")
+                    || e.Contains("eof") || e.Contains("forcibly") || e.Contains("закрыт");
+            }
+            return false;
+        }
+
         public static bool TcpConnect(string host, int port, int timeoutMs, out int ms, out string error)
         {
             ms = 0;
