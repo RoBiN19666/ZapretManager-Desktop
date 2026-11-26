@@ -63,7 +63,9 @@ namespace ZapretManager
             if (!force && Last != null && (DateTime.Now - Last.CheckedAt).TotalMinutes < 5) return Last;
             SelfUpdateInfo info = new SelfUpdateInfo();
             info.Local = AppInfo.Version;
+            // опрашиваем все зеркала и берём максимальную версию: часть CDN отдаёт кэш
             string lastError = "";
+            string best = "";
             foreach (string mirror in VersionMirrors)
             {
                 try
@@ -71,20 +73,22 @@ namespace ZapretManager
                     string url = mirror + (mirror.IndexOf('?') >= 0 ? "&" : "?") + "t=" + DateTime.Now.Ticks;
                     string text = Web.GetString(url, 15000).Trim();
                     Match m = Regex.Match(text, "[0-9]+(\\.[0-9]+)*");
-                    if (!m.Success) throw new ApplicationException("в файле версии нет номера");
-                    info.Remote = m.Value;
-                    info.Available = Versions.Compare(info.Remote, info.Local) > 0;
-                    info.ExeUrl = ExeUrl;
-                    info.Ok = true;
-                    lastError = "";
-                    break;
+                    if (!m.Success) continue;
+                    if (best.Length == 0 || Versions.Compare(m.Value, best) > 0) best = m.Value;
                 }
                 catch (Exception ex)
                 {
                     lastError = ex.Message;
                 }
             }
-            if (!info.Ok)
+            if (best.Length > 0)
+            {
+                info.Remote = best;
+                info.Available = Versions.Compare(info.Remote, info.Local) > 0;
+                info.ExeUrl = ExeUrl;
+                info.Ok = true;
+            }
+            else
             {
                 info.Error = lastError.Length > 0 ? lastError : "не удалось получить файл версии";
             }
@@ -122,6 +126,23 @@ namespace ZapretManager
                         {
                             if (progress != null) progress(percent < 0 ? 20 : 3 + (int)(percent * 0.8), "Скачивание: " + (percent < 0 ? 0 : percent) + "%");
                         }, 240000);
+
+                        FileInfo fi = new FileInfo(newExe);
+                        if (!fi.Exists || fi.Length < 200 * 1024)
+                        {
+                            downloadError = "файл слишком мал (" + (fi.Exists ? fi.Length : 0) + " байт)";
+                            continue;
+                        }
+                        using (FileStream fs = File.OpenRead(newExe))
+                        {
+                            if (fs.ReadByte() != 'M' || fs.ReadByte() != 'Z') { downloadError = "файл не является программой"; continue; }
+                        }
+                        string got = FileVersionInfo.GetVersionInfo(newExe).FileVersion;
+                        if (!string.IsNullOrEmpty(got) && Versions.Compare(got, info.Remote) < 0)
+                        {
+                            downloadError = "зеркало отдало старую версию " + got;
+                            continue;
+                        }
                         downloaded = true;
                         break;
                     }
@@ -131,18 +152,6 @@ namespace ZapretManager
                     }
                 }
                 if (!downloaded) return "Не удалось скачать обновление: " + downloadError;
-
-                FileInfo fi = new FileInfo(newExe);
-                if (!fi.Exists || fi.Length < 200 * 1024)
-                    return "Скачанный файл слишком мал (" + (fi.Exists ? fi.Length : 0) + " байт) — вероятно, ошибка загрузки.";
-                using (FileStream fs = File.OpenRead(newExe))
-                {
-                    if (fs.ReadByte() != 'M' || fs.ReadByte() != 'Z') return "Скачанный файл не является программой (MZ).";
-                }
-                FileVersionInfo vi = FileVersionInfo.GetVersionInfo(newExe);
-                string got = vi.FileVersion;
-                if (!string.IsNullOrEmpty(got) && Versions.Compare(got, info.Remote) < 0)
-                    return "Версия скачанного файла (" + got + ") меньше ожидаемой " + info.Remote + ".";
 
                 if (progress != null) progress(90, "Подготовка замены файла…");
                 string script = Path.Combine(dir, "apply-update.cmd");
