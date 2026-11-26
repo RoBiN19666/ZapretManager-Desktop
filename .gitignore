@@ -23,3 +23,6 @@ desktop.ini
 # Сборка и дистрибутив: exe живёт в GitHub Releases, а не в гите
 /ZapretManager.exe
 dist/
+
+# Сборка: сгенерированный файл версии
+build/

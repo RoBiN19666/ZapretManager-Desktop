@@ -57,6 +57,30 @@ foreach ($res in @("app-icon.png", "logo-wide.png", "lock.png")) {
 foreach ($r in $refs) { $cscArgs += "/r:`"$(Join-Path $fw $r)`"" }
 foreach ($s in $sources) { $cscArgs += "`"$s`"" }
 
+# --- Версия файла: берём из AppInfo.Version, иначе самообновление видит старую метку ---
+$corePath = Join-Path $src "Core.cs"
+$coreText = Get-Content $corePath -Raw
+$mv = [regex]::Match($coreText, 'Version\s*=\s*"([^"]+)"')
+if ($mv.Success) {
+    $full = $mv.Groups[1].Value
+    $numeric = [regex]::Match($full, '^\d+(\.\d+){0,3}')
+    $parts = @($numeric.Value.Split('.') | ForEach-Object { [int]$_ })
+    while ($parts.Count -lt 4) { $parts += 0 }
+    $fileVersion = ($parts -join '.')
+    $genDir = Join-Path $root "build"
+    if (-not (Test-Path $genDir)) { New-Item -ItemType Directory -Path $genDir | Out-Null }
+    $genFile = Join-Path $genDir "VersionInfo.cs"
+    $genLines = @(
+        'using System.Reflection;',
+        ('[assembly: AssemblyVersion("' + $fileVersion + '")]'),
+        ('[assembly: AssemblyFileVersion("' + $fileVersion + '")]'),
+        ('[assembly: AssemblyInformationalVersion("' + $full + '")]')
+    )
+    Set-Content -Path $genFile -Value $genLines -Encoding UTF8
+    $cscArgs += ('"' + $genFile + '"')
+    if (-not $Quiet) { Write-Host ("file version: " + $fileVersion + " (" + $full + ")") -ForegroundColor DarkGray }
+}
+
 if (-not $Quiet) { Write-Host "Compiling $($sources.Count) files -> $out" }
 
 $tmp = [System.IO.Path]::GetTempFileName()
