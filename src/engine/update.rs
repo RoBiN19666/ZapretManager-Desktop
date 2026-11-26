@@ -23,7 +23,17 @@ pub const VERSION_URL: &str =
 pub struct Asset {
     pub name: String,
     pub url: String,
+    /// API-адрес ассета: нужен для скачивания из приватного репозитория.
+    pub api_url: String,
     pub size: u64,
+}
+
+/// Токен GitHub из окружения — позволяет работать с приватным репозиторием.
+pub fn github_token() -> Option<String> {
+    std::env::var("ZAPRET_GITHUB_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
 }
 
 #[derive(Debug, Clone, Default)]
@@ -116,6 +126,11 @@ fn parse_release(value: &serde_json::Value) -> Option<Release> {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string(),
+                api_url: asset
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
                 size: asset.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
             });
         }
@@ -124,16 +139,15 @@ fn parse_release(value: &serde_json::Value) -> Option<Release> {
 }
 
 fn api_get(url: &str, timeout_ms: u32) -> Result<serde_json::Value, String> {
-    let resp = http::request(
-        url,
-        "GET",
-        &[
-            ("Accept", "application/vnd.github+json"),
-            ("X-GitHub-Api-Version", "2022-11-28"),
-        ],
-        None,
-        timeout_ms,
-    )?;
+    let auth = github_token().map(|t| format!("Bearer {}", t));
+    let mut headers: Vec<(&str, &str)> = vec![
+        ("Accept", "application/vnd.github+json"),
+        ("X-GitHub-Api-Version", "2022-11-28"),
+    ];
+    if let Some(auth) = &auth {
+        headers.push(("Authorization", auth));
+    }
+    let resp = http::request(url, "GET", &headers, None, timeout_ms)?;
     if resp.status == 403 || resp.status == 429 {
         return Err("GitHub ограничил частоту запросов (лимит 60 в час на IP)".to_string());
     }
@@ -201,6 +215,7 @@ pub fn release_by_tag(repo: &str, tag: &str) -> Result<Release, String> {
                         "https://github.com/{}/releases/download/{}/zapret-discord-youtube-{}.zip",
                         repo, tag, tag
                     ),
+                    api_url: String::new(),
                     size: 0,
                 }],
                 ..Default::default()
@@ -739,27 +754,37 @@ pub fn self_check(force: bool) -> SelfUpdateInfo {
         Ok(release) => {
             info.remote = release.tag.clone();
             info.available = version_cmp(&release.tag, crate::APP_VERSION).is_gt();
-            info.asset_url = release
-                .download_url_for("ZapretManager.exe")
-                .unwrap_or_else(|| {
-                    format!(
-                        "https://github.com/{}/releases/download/{}/ZapretManager.exe",
-                        SELF_REPO, release.tag
-                    )
-                });
-            info.checksums_url = release
-                .download_url_for("checksums.txt")
-                .unwrap_or_else(|| {
-                    format!(
-                        "https://github.com/{}/releases/download/{}/checksums.txt",
-                        SELF_REPO, release.tag
-                    )
-                });
+            let token = github_token();
+            let pick = |name: &str| -> String {
+                let asset = release.assets.iter().find(|a| a.name.eq_ignore_ascii_case(name));
+                if token.is_some() {
+                    if let Some(asset) = asset {
+                        if !asset.api_url.is_empty() {
+                            return asset.api_url.clone();
+                        }
+                    }
+                }
+                asset
+                    .map(|a| a.url.clone())
+                    .filter(|u| !u.is_empty())
+                    .unwrap_or_else(|| {
+                        format!(
+                            "https://github.com/{}/releases/download/{}/{}",
+                            SELF_REPO, release.tag, name
+                        )
+                    })
+            };
+            info.asset_url = pick("ZapretManager.exe");
+            info.checksums_url = pick("checksums.txt");
             info.ok = true;
         }
         Err(e) => {
             info.ok = false;
-            info.error = e;
+            info.error = if e.contains("404") {
+                "репозиторий релизов недоступен: нет доступа или ещё нет ни одного релиза (для приватного репозитория задайте ZAPRET_GITHUB_TOKEN)".to_string()
+            } else {
+                e
+            };
         }
     }
     if let Ok(mut cache) = SELF_CACHE.lock() {
@@ -824,7 +849,14 @@ pub fn self_apply(info: &SelfUpdateInfo) -> Result<String, String> {
 }
 
 fn download_verify(url: &str, target: &Path, checksums_url: &str) -> Result<(), String> {
-    http::download(url, target, 240_000, |_, _| {})?;
+    let token = github_token();
+    let auth = token.as_ref().map(|t| format!("Bearer {}", t));
+    let mut headers: Vec<(&str, &str)> = Vec::new();
+    if let Some(auth) = &auth {
+        headers.push(("Authorization", auth));
+        headers.push(("Accept", "application/octet-stream"));
+    }
+    http::download_with_headers(url, target, 240_000, &headers, |_, _| {})?;
     let size = std::fs::metadata(target).map(|m| m.len()).unwrap_or(0);
     if size < 200 * 1024 {
         return Err(format!("файл слишком мал ({} байт)", size));
@@ -836,7 +868,16 @@ fn download_verify(url: &str, target: &Path, checksums_url: &str) -> Result<(), 
     if head != Some(true) {
         return Err("файл не является программой".to_string());
     }
-    if let Ok(text) = http::get_string(checksums_url, 20000) {
+    let checksums = {
+        let mut h: Vec<(&str, &str)> = vec![("Accept", "application/octet-stream")];
+        if let Some(auth) = &auth {
+            h.push(("Authorization", auth));
+        }
+        http::request(checksums_url, "GET", &h, None, 20000)
+            .ok()
+            .map(|r| r.text())
+    };
+    if let Some(text) = checksums {
         if let Some(expected) = parse_checksum(&text) {
             let actual = sha256_file(target);
             if !actual.eq_ignore_ascii_case(&expected) {

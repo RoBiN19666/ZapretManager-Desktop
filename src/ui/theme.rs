@@ -1,5 +1,7 @@
 //! Оформление: палитра, шрифты, стили egui.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, TextStyle};
 
 #[derive(Debug, Clone, Copy)]
@@ -66,6 +68,13 @@ pub const LIGHT: Palette = Palette {
     danger: Color32::from_rgb(199, 49, 38),
 };
 
+static ICONS_LOADED: AtomicBool = AtomicBool::new(false);
+
+/// Доступен ли шрифт Segoe MDL2 Assets для иконок.
+pub fn has_icon_font() -> bool {
+    ICONS_LOADED.load(Ordering::Relaxed)
+}
+
 pub fn palette(dark: bool) -> Palette {
     if dark {
         DARK
@@ -82,6 +91,7 @@ pub fn install_fonts(ctx: &egui::Context) {
         ("ui", "segoeui.ttf"),
         ("ui_bold", "segoeuib.ttf"),
         ("mono", "consola.ttf"),
+        ("icons", "segmdl2.ttf"),
     ] {
         let path = std::path::Path::new("C:\\Windows\\Fonts").join(file);
         if let Ok(bytes) = std::fs::read(&path) {
@@ -102,6 +112,13 @@ pub fn install_fonts(ctx: &egui::Context) {
         fonts
             .families
             .insert(bold.clone(), vec!["ui_bold".to_owned(), "ui".to_owned()]);
+        if fonts.font_data.contains_key("icons") {
+            let icons: FontFamily = FontFamily::Name("icons".into());
+            fonts
+                .families
+                .insert(icons, vec!["icons".to_owned(), "ui".to_owned()]);
+            ICONS_LOADED.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         ctx.set_fonts(fonts);
         let mut style = (*ctx.style()).clone();
         style.text_styles.insert(

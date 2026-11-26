@@ -1,6 +1,6 @@
 //! Страница «Инструменты».
 
-use eframe::egui::{self, RichText, Ui};
+use eframe::egui::{RichText, Ui};
 
 use crate::engine::log::LogLevel;
 use crate::engine::ops::ZapretOps;

@@ -94,4 +94,26 @@ impl Ini {
             self.set(key, value);
         }
     }
+
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ini_roundtrip() {
+        let path = std::env::temp_dir().join(format!("zapret-ini-test-{}.ini", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut ini = Ini::load(&path);
+        ini.set("Root", r"C:\zapret");
+        ini.set_bool("CloseToTray", false);
+        ini.set_int("UiScale", 90);
+        ini.save().unwrap();
+        let loaded = Ini::load(&path);
+        assert_eq!(loaded.get("root", ""), r"C:\zapret");
+        assert!(!loaded.get_bool("CloseToTray", true));
+        assert_eq!(loaded.get_int("UiScale", 100), 90);
+        let _ = std::fs::remove_file(&path);
+    }
 }

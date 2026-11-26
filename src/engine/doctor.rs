@@ -249,22 +249,43 @@ pub fn discover(probe: &mut SiteProbe, mut progress: impl FnMut(&str)) {
     }
 
     progress("Проверяем связанные адреса…");
+    // Проверяем параллельно: последовательно 40 адресов занимали минуты.
+    let checked: Vec<(String, bool)> = {
+        let index = std::sync::atomic::AtomicUsize::new(0);
+        let results = std::sync::Mutex::new(Vec::new());
+        std::thread::scope(|scope| {
+            for _ in 0..6.min(candidates.len().max(1)) {
+                let index = &index;
+                let candidates = &candidates;
+                let results = &results;
+                scope.spawn(move || loop {
+                    let i = index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if i >= candidates.len() {
+                        break;
+                    }
+                    let cand = &candidates[i];
+                    if netcheck::resolve(cand, 2000).is_err() {
+                        continue;
+                    }
+                    let tcp = netcheck::tcp_connect(cand, 443, 1500);
+                    let live = tcp.ok && netcheck::tls_handshake(cand, 443, 2500).ok;
+                    if let Ok(mut list) = results.lock() {
+                        list.push((cand.clone(), live));
+                    }
+                });
+            }
+        });
+        results.into_inner().unwrap_or_default()
+    };
     let mut broken = Vec::new();
     let mut live = Vec::new();
-    for cand in candidates {
-        if netcheck::resolve(&cand, 2000).is_err() {
-            continue;
-        }
-        let tcp = netcheck::tcp_connect(&cand, 443, 1500);
-        if !tcp.ok {
-            broken.push(cand);
-            continue;
-        }
-        let tls = netcheck::tls_handshake(&cand, 443, 2500);
-        if tls.ok {
-            live.push(cand);
-        } else {
-            broken.push(cand);
+    for cand in &candidates {
+        if let Some((_, is_live)) = checked.iter().find(|(c, _)| c == cand) {
+            if *is_live {
+                live.push(cand.clone());
+            } else {
+                broken.push(cand.clone());
+            }
         }
     }
     broken.extend(live);

@@ -561,7 +561,7 @@ impl ListChanges {
             }
         }
         let text = compose_text(&body, &final_added);
-        if let Err(e) = textfile::write_text(&self.file_path, &text) {
+        if let Err(e) = textfile::write_text_atomic(&self.file_path, &text) {
             self.last_error = e.to_string();
             return None;
         }
@@ -607,7 +607,7 @@ impl ListChanges {
         added.retain(|e| !contains(&self.baseline, e));
         let text = compose_text(&body, &added);
         self.added = added.clone();
-        let _ = textfile::write_text(&self.file_path, &text);
+        let _ = textfile::write_text_atomic(&self.file_path, &text);
         let _ = self.save_changes_file();
         text
     }
@@ -636,7 +636,7 @@ impl ListChanges {
         let _ = self.save_baseline();
         let _ = self.save_changes_file();
         let text = compose_text(&body, &[]);
-        if let Err(e) = textfile::write_text(&self.file_path, &text) {
+        if let Err(e) = textfile::write_text_atomic(&self.file_path, &text) {
             self.last_error = e.to_string();
         }
     }
@@ -795,5 +795,30 @@ mod tests {
         assert!(off.iter().any(|l| l == "a.com"));
         assert!(!off.iter().any(|l| l == "b.com"));
         assert_eq!(block, vec!["b.com"]);
+    }
+
+    #[test]
+    fn save_from_editor_keeps_user_block() {
+        let dir = std::env::temp_dir().join(format!("zapret-lists-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let data = dir.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        let file = dir.join("list-general.txt");
+        std::fs::write(&file, "# header\na.com\nb.com\n").unwrap();
+        let mut lc = ListChanges::load(&file, &data);
+        assert_eq!(lc.baseline, vec!["a.com", "b.com"]);
+        let text = lc
+            .save_from_editor("# header\na.com\nb.com\nmy.example\n")
+            .expect("saved");
+        assert!(text.contains(BLOCK_START));
+        let reloaded = ListChanges::load(&file, &data);
+        assert!(reloaded.added.iter().any(|e| e == "my.example"));
+        assert_eq!(reloaded.baseline, vec!["a.com", "b.com"]);
+        // удаление официальной строки сохраняется в .changes
+        let mut lc = reloaded;
+        lc.save_from_editor("# header\na.com\nmy.example\n").unwrap();
+        let again = ListChanges::load(&file, &data);
+        assert!(again.removed.iter().any(|e| e == "b.com"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

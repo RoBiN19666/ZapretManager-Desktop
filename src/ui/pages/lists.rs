@@ -2,9 +2,9 @@
 
 use eframe::egui::{self, RichText, Ui};
 
-use crate::engine::lists::{self, ListChanges, NoteKind};
+use crate::engine::lists::{self, NoteKind};
 use crate::engine::log::LogLevel;
-use crate::engine::{paths, sys, textfile};
+use crate::engine::textfile;
 
 use crate::ui::app::App;
 use crate::ui::widgets as w;

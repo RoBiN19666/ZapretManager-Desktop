@@ -85,9 +85,23 @@ fn cursor_set(value: i64) {
 }
 
 /// Включён ли журнал DNS-клиента.
+static LOG_CACHE: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+
+/// Включён ли журнал DNS (результат кэшируется на 5 секунд: UI спрашивает часто).
 pub fn log_enabled() -> bool {
+    if let Ok(cache) = LOG_CACHE.lock() {
+        if let Some((at, value)) = *cache {
+            if at.elapsed() < Duration::from_secs(5) {
+                return value;
+            }
+        }
+    }
     let r = process::run("wevtutil.exe", &["gl", CHANNEL], Duration::from_secs(10));
-    r.all().to_lowercase().contains("enabled: true")
+    let value = r.all().to_lowercase().contains("enabled: true");
+    if let Ok(mut cache) = LOG_CACHE.lock() {
+        *cache = Some((Instant::now(), value));
+    }
+    value
 }
 
 /// Включить журнал DNS-клиента (нужны права администратора).

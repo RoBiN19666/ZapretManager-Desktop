@@ -11,11 +11,12 @@ use crate::ui::widgets as w;
 impl App {
     pub(crate) fn refresh_tg_state(&mut self) {
         self.pages.tg.state = tgproxy::get_state(&self.ini);
+        self.last_tg_refresh = std::time::Instant::now();
     }
 
     pub(crate) fn page_tgproxy(&mut self, ui: &mut Ui) {
         let p = self.p;
-        let st: TgState = tgproxy::get_state(&self.ini);
+        let st: TgState = self.pages.tg.state.clone();
         let link = st.link();
 
         w::card(ui, &p, "Состояние", |ui| {

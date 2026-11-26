@@ -193,32 +193,53 @@ pub fn create(name: &str, display: &str, bin_path: &str, description: &str) -> R
             ControlService(old.0, SERVICE_CONTROL_STOP, &mut status);
             DeleteService(old.0);
         }
+        // Windows помечает удалённую службу на удаление: ждём, пока освободится имя.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+        while exists(name) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
     }
     let name_w = wide(name);
     let display_w = wide(display);
     let bin_w = wide(bin_path);
-    let svc = unsafe {
-        CreateServiceW(
-            scm.0,
-            name_w.as_ptr(),
-            display_w.as_ptr(),
-            SERVICE_ALL_ACCESS,
-            SERVICE_WIN32_OWN_PROCESS,
-            SERVICE_AUTO_START,
-            SERVICE_ERROR_NORMAL,
-            bin_w.as_ptr(),
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            std::ptr::null(),
-            std::ptr::null(),
-            std::ptr::null(),
-        )
-    };
-    if svc.is_null() {
-        let err = unsafe { GetLastError() };
-        return Err(format!("sc create завершился с кодом {}: {}", err, error_text(err)));
+    let mut created: SC_HANDLE = std::ptr::null_mut();
+    let mut last_err = 0u32;
+    for _ in 0..4 {
+        created = unsafe {
+            CreateServiceW(
+                scm.0,
+                name_w.as_ptr(),
+                display_w.as_ptr(),
+                SERVICE_ALL_ACCESS,
+                SERVICE_WIN32_OWN_PROCESS,
+                SERVICE_AUTO_START,
+                SERVICE_ERROR_NORMAL,
+                bin_w.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+            )
+        };
+        if !created.is_null() {
+            break;
+        }
+        last_err = unsafe { GetLastError() };
+        // 1072 — служба помечена на удаление, 1073 — уже существует и запускается
+        if last_err != 1072 && last_err != 1073 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1000));
     }
-    let svc = ScHandle(svc);
+    if created.is_null() {
+        return Err(format!(
+            "Не удалось создать службу (код {}): {}",
+            last_err,
+            error_text(last_err)
+        ));
+    }
+    let svc = ScHandle(created);
     let desc_w = wide(description);
     let desc = SERVICE_DESCRIPTIONW {
         lpDescription: desc_w.as_ptr() as *mut u16,

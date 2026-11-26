@@ -21,12 +21,17 @@ pub fn run(
     limited: bool,
 ) -> eframe::Result<()> {
     let icon = assets::window_icon();
+    let window_w = (ini.get_int("WindowW", 1280).clamp(800, 3840)) as f32;
+    let window_h = (ini.get_int("WindowH", 880).clamp(600, 2160)) as f32;
+    let maximized = ini.get_bool("Maximized", true);
     let mut viewport = eframe::egui::ViewportBuilder::default()
-        .with_inner_size([1280.0, 880.0])
-        .with_maximized(true)
+        .with_inner_size([window_w, window_h])
         .with_min_inner_size([1000.0, 700.0])
         .with_title("Zapret Manager")
         .with_app_id("ZapretManager");
+    if maximized {
+        viewport = viewport.with_maximized(true);
+    }
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }

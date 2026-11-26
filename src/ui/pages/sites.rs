@@ -112,7 +112,7 @@ impl App {
                             .color(p.text_dim),
                     );
                 }
-                if names.is_empty() {
+                if names.is_empty() && self.pages.sites.apps_loaded {
                     w::muted(ui, &p, "Не нашли приложений с окнами — запустите игру и нажмите «Обновить список».");
                 }
             });

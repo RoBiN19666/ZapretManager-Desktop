@@ -279,7 +279,7 @@ impl App {
 
         // TG-прокси
         let p2 = p;
-        let tg = tgproxy::get_state(&self.ini);
+        let tg = self.pages.tg.state.clone();
         w::card(ui, &p2, "Telegram-прокси (TG WS Proxy)", |ui| {
             let (title, line, button) = if !tg.installed {
                 (

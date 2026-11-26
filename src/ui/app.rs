@@ -19,9 +19,9 @@ use crate::engine::log::{self, LogLevel, LogLine};
 use crate::engine::ops::{FakeFile, HostsStatus, RuntimeState, StartResult, ZapretOps};
 use crate::engine::paths;
 use crate::engine::tgproxy::{self, TgState};
-use crate::engine::tester::{LoadedReport, OfficialReport, StrategyTestRow, TargetGroup, TesterOptions};
+use crate::engine::tester::{LoadedReport, OfficialReport, StrategyTestRow, TargetGroup};
 use crate::engine::update::{Release, SelfUpdateInfo, UpdateCheckResult, UpdateOptions};
-use crate::engine::{autostart, sys};
+use crate::engine::sys;
 
 use super::theme::{self, Palette};
 use super::tray::{TrayEvent, TrayHandle, TrayState};
@@ -108,7 +108,24 @@ impl Page {
         }
     }
 
+    /// Иконка из Segoe MDL2 Assets (Windows 10/11).
     pub fn glyph(&self) -> &'static str {
+        match self {
+            Page::Overview => "\u{E80F}",
+            Page::Strategies => "\u{E945}",
+            Page::Test => "\u{E768}",
+            Page::Sites => "\u{E774}",
+            Page::TgProxy => "\u{E8BD}",
+            Page::Settings => "\u{E713}",
+            Page::Lists => "\u{E8FD}",
+            Page::Update => "\u{E896}",
+            Page::Diagnostics => "\u{E9D2}",
+            Page::Tools => "\u{E90F}",
+        }
+    }
+
+    /// Запасные символы, если Segoe MDL2 Assets недоступен.
+    pub fn glyph_fallback(&self) -> &'static str {
         match self {
             Page::Overview => "◉",
             Page::Strategies => "⚡",
@@ -230,6 +247,7 @@ pub struct SitesState {
     pub status: String,
     pub apps: Vec<AppEntry>,
     pub app_index: usize,
+    pub apps_loaded: bool,
     pub watching: bool,
     pub guard_enabled: bool,
     pub guard_auto: bool,
@@ -249,6 +267,7 @@ impl Default for SitesState {
             status: String::new(),
             apps: Vec::new(),
             app_index: 0,
+            apps_loaded: false,
             watching: false,
             guard_enabled: false,
             guard_auto: false,
@@ -536,6 +555,11 @@ pub struct App {
     pub exit_requested: bool,
     last_refresh: Instant,
     last_guard: Instant,
+    pub(crate) last_tg_refresh: Instant,
+    last_normal_size: (f32, f32),
+    last_maximized: bool,
+    window_hwnd: Option<isize>,
+    titlebar_dark: Option<bool>,
     pub shot: Option<String>,
     shot_frames: u32,
     pub progress: HashMap<&'static str, (u32, String)>,
@@ -604,6 +628,11 @@ impl App {
             exit_requested: false,
             last_refresh: Instant::now(),
             last_guard: Instant::now(),
+            last_tg_refresh: Instant::now(),
+            last_normal_size: (1280.0, 880.0),
+            last_maximized: true,
+            window_hwnd: None,
+            titlebar_dark: None,
             shot,
             shot_frames: 0,
             progress: HashMap::new(),
@@ -636,6 +665,7 @@ impl App {
         app.load_test_groups();
         app.refresh_state(false);
         app.sync_settings();
+        app.refresh_tg_state();
         app.start_update_check();
         app
     }
@@ -991,6 +1021,7 @@ impl App {
                 Msg::Apps(apps) => {
                     self.pages.sites.apps = apps;
                     self.pages.sites.app_index = 0;
+                    self.pages.sites.apps_loaded = true;
                 }
                 Msg::WatchDone(hosts, ips) => {
                     self.pages.sites.watching = false;
@@ -1438,11 +1469,16 @@ impl App {
                     } else if resp.hovered() {
                         ui.painter().rect_filled(rect, Rounding::same(8), p.hover);
                     }
+                    let (glyph, family) = if crate::ui::theme::has_icon_font() {
+                        (page.glyph(), egui::FontFamily::Name("icons".into()))
+                    } else {
+                        (page.glyph_fallback(), egui::FontFamily::Proportional)
+                    };
                     ui.painter().text(
-                        egui::pos2(rect.left() + 20.0, rect.center().y),
+                        egui::pos2(rect.left() + 21.0, rect.center().y),
                         egui::Align2::CENTER_CENTER,
-                        page.glyph(),
-                        FontId::new(14.0, egui::FontFamily::Proportional),
+                        glyph,
+                        FontId::new(17.0, family),
                         if selected { p.accent } else { p.text_muted },
                     );
                     ui.painter().text(
@@ -1585,6 +1621,17 @@ impl App {
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             ui.add_space(4.0);
+            let (glyph, family) = if theme::has_icon_font() {
+                (self.page.glyph(), egui::FontFamily::Name("icons".into()))
+            } else {
+                (self.page.glyph_fallback(), egui::FontFamily::Proportional)
+            };
+            ui.label(
+                RichText::new(glyph)
+                    .font(FontId::new(22.0, family))
+                    .color(p.accent),
+            );
+            ui.add_space(2.0);
             ui.vertical(|ui| {
                 ui.label(
                     RichText::new(self.page.title())
@@ -1670,6 +1717,25 @@ impl eframe::App for App {
             self.update_tray_state();
         }
         self.poll_guard();
+        // Состояние TG-прокси обновляем не чаще раза в 2 секунды: get_state перебирает процессы.
+        if self.last_tg_refresh.elapsed() > Duration::from_secs(2) {
+            self.pages.tg.state = tgproxy::get_state(&self.ini);
+            self.last_tg_refresh = Instant::now();
+        }
+        let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+        self.last_maximized = maximized;
+        if !maximized {
+            self.last_normal_size = (ctx.screen_rect().width(), ctx.screen_rect().height());
+        }
+        if self.window_hwnd.is_none() {
+            self.window_hwnd = sys::window_for_current_process("Zapret Manager");
+        }
+        if let Some(hwnd) = self.window_hwnd {
+            if self.titlebar_dark != Some(self.dark) {
+                sys::set_titlebar_theme_isize(hwnd, self.dark);
+                self.titlebar_dark = Some(self.dark);
+            }
+        }
 
         if !self.bootstrap_done && self.autostart_mode {
             self.bootstrap_done = true;
@@ -1751,15 +1817,11 @@ impl eframe::App for App {
         if let Some(tray) = self.tray.take() {
             tray.close();
         }
-        if let Some((w, h)) = self
-            .ini
-            .get("WindowW", "")
-            .parse::<f32>()
-            .ok()
-            .zip(self.ini.get("WindowH", "").parse::<f32>().ok())
-        {
-            let _ = (w, h);
-        }
+        self.ini
+            .set_int("WindowW", self.last_normal_size.0.round().max(800.0) as i64);
+        self.ini
+            .set_int("WindowH", self.last_normal_size.1.round().max(600.0) as i64);
+        self.ini.set_bool("Maximized", self.last_maximized);
         self.ini.set_int("UiScale", self.pages.settings.scale as i64);
         let _ = self.ini.save();
         log::info("=== Завершение работы ===");

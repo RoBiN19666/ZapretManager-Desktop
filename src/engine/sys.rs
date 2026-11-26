@@ -162,7 +162,17 @@ pub fn open_url(url: &str) {
 /// Перезапустить текущий exe с правами администратора.
 pub fn elevate_self(args: &[String]) -> bool {
     let exe = std::env::current_exe().unwrap_or_default();
-    let params = args.join(" ");
+    let params = args
+        .iter()
+        .map(|a| {
+            if a.contains(' ') && !a.starts_with('"') {
+                format!("\"{}\"", a)
+            } else {
+                a.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
     let verb = wide("runas");
     let file = wide(&exe.to_string_lossy());
     let params_w = wide(&params);
@@ -709,6 +719,54 @@ pub fn enum_subkeys(machine: bool, path: &str) -> Vec<String> {
         RegCloseKey(key);
     }
     out
+}
+
+/// Окно текущего процесса по части заголовка (для тёмного заголовка окна).
+pub fn window_for_current_process(title_contains: &str) -> Option<isize> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowThreadProcessId,
+    };
+    static FOUND: Mutex<Option<isize>> = Mutex::new(None);
+    std::thread_local! {
+        static TITLE: std::cell::RefCell<String> = std::cell::RefCell::new(String::new());
+    }
+    TITLE.with(|t| *t.borrow_mut() = title_contains.to_string());
+    let pid = std::process::id();
+    unsafe extern "system" fn callback(hwnd: HWND, lparam: LPARAM) -> i32 {
+        let pid = lparam as u32;
+        let mut window_pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut window_pid);
+        if window_pid != pid {
+            return 1;
+        }
+        let title = window_title(hwnd);
+        let wanted = TITLE.with(|t| t.borrow().clone());
+        if !title.is_empty() && (wanted.is_empty() || title.contains(&wanted)) {
+            if let Ok(mut found) = FOUND.lock() {
+                if found.is_none() {
+                    *found = Some(hwnd as isize);
+                }
+            }
+            return 0;
+        }
+        1
+    }
+    if let Ok(mut found) = FOUND.lock() {
+        *found = None;
+    }
+    unsafe {
+        EnumWindows(Some(callback), pid as LPARAM);
+    }
+    let result = FOUND.lock().ok().and_then(|f| *f);
+    TITLE.with(|t| t.borrow_mut().clear());
+    result
+}
+
+/// Покрасить заголовок окна (isize-вариант для UI-слоя).
+pub fn set_titlebar_theme_isize(hwnd: isize, dark: bool) {
+    if hwnd != 0 {
+        set_titlebar_theme(hwnd as HWND, dark);
+    }
 }
 
 /// Константа HWND для передачи в UI-слой.

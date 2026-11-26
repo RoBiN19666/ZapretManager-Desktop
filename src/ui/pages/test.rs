@@ -384,10 +384,13 @@ impl App {
         let idx = self.pages.test.selected?;
         let row = self.pages.test.rows.get(idx)?;
         let install = &self.install;
-        row.strategy_name
-            .trim_end_matches(".bat")
-            .split_whitespace()
-            .next()
+        // Имя стратегии может содержать пробелы («general (ALT10)»), поэтому сначала
+        // пробуем файл из строки отчёта, и только потом — полное имя.
+        let by_file = std::path::Path::new(&row.strategy_file)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string());
+        by_file
+            .as_deref()
             .and_then(|name| install.find_strategy(name))
             .or_else(|| install.find_strategy(row.strategy_name.trim_end_matches(".bat")))
             .cloned()

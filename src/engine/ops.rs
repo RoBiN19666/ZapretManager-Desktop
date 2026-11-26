@@ -287,7 +287,11 @@ impl ZapretOps {
             }
         };
         let cmd = bat::build_command_line(&argv);
-        let tcp_was_off = self.enable_tcp_timestamps() == Some(false);
+        // Сначала фиксируем исходное состояние, потом включаем (как в C#-версии).
+        let tcp_was_off = self.tcp_timestamps_enabled() == Some(false);
+        if tcp_was_off {
+            self.enable_tcp_timestamps();
+        }
 
         clear_output();
         let mut child = match spawn_winws(&self.install.winws_exe(), &cmd, &self.install.bin_dir()) {

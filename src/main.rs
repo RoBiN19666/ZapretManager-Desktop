@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use zapret_manager::engine::config::Ini;
 use zapret_manager::engine::install::ZapretInstall;
-use zapret_manager::engine::{diagnostics, doctor, guard, log, paths, sys, tgproxy, update};
+use zapret_manager::engine::{diagnostics, doctor, guard, log, paths, sys, update};
 use zapret_manager::engine::appprobe;
 use zapret_manager::engine::ops::ZapretOps;
 
@@ -17,6 +17,9 @@ fn main() {
     }
 
     log::set_file(paths::log_path());
+    std::panic::set_hook(Box::new(|info| {
+        log::error(format!("Необработанная ошибка: {}", info));
+    }));
     log::info(format!(
         "=== Zapret Manager {} (Rust) запуск ===",
         zapret_manager::APP_VERSION
@@ -52,6 +55,7 @@ fn main() {
         || has_flag(&args, "--app-watch")
         || has_flag(&args, "--guard-once")
         || has_flag(&args, "--tg-prepare")
+        || has_flag(&args, "--selftest")
         || arg_value(&args, "--check-site").is_some();
     if shot.is_none() && !headless && !sys::acquire_single_instance("ZapretManagerRust_SingleInstance") {
         for _ in 0..6 {
@@ -183,6 +187,36 @@ fn main() {
         }
         return;
     }
+    if has_flag(&args, "--selftest") {
+        use zapret_manager::engine::LogLevel;
+        let checks = zapret_manager::engine::selftest::run(&install);
+        let mut failed = 0usize;
+        for check in &checks {
+            let level = if check.ok { LogLevel::Ok } else { LogLevel::Error };
+            log::write(
+                level,
+                &format!(
+                    "{}: {} — {}",
+                    if check.ok { "PASS" } else { "FAIL" },
+                    check.name,
+                    check.detail
+                ),
+            );
+            if !check.ok {
+                failed += 1;
+            }
+        }
+        log::info(format!(
+            "Самопроверка: успешно {} из {}.",
+            checks.len().saturating_sub(failed),
+            checks.len()
+        ));
+        if failed > 0 {
+            std::process::exit(1);
+        }
+        return;
+    }
+
     if has_flag(&args, "--diag") {
         let ops = ZapretOps::new(install.clone());
         let results = diagnostics::run(&install, &ops, |step| log::info(step));

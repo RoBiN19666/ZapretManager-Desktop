@@ -270,10 +270,10 @@ impl ZapretInstall {
     }
 
     fn read_version(&self) -> String {
-        if let Ok(text) = std::fs::read_to_string(self.service_bat()) {
-            if let Some(v) = extract_local_version(&text) {
-                return v;
-            }
+        // service.bat может быть в CP1251 — читаем через автоопределение кодировки.
+        let text = super::textfile::read(&self.service_bat());
+        if let Some(v) = extract_local_version(&text) {
+            return v;
         }
         for file in [
             Path::new(&self.root).join("version.txt"),

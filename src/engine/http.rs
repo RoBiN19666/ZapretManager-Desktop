@@ -286,6 +286,17 @@ pub fn download(
     url: &str,
     target: &Path,
     timeout_ms: u32,
+    progress: impl FnMut(u64, u64),
+) -> Result<u64, String> {
+    download_with_headers(url, target, timeout_ms, &[], progress)
+}
+
+/// Скачивание с дополнительными заголовками (нужно для приватных релизов GitHub).
+pub fn download_with_headers(
+    url: &str,
+    target: &Path,
+    timeout_ms: u32,
+    headers: &[(&str, &str)],
     mut progress: impl FnMut(u64, u64),
 ) -> Result<u64, String> {
     let (host, path, port, _, secure) = split_url(url).ok_or_else(|| format!("Некорректный адрес: {}", url))?;
@@ -344,8 +355,15 @@ pub fn download(
             &protocols as *const u32 as *const core::ffi::c_void,
             4,
         );
-        let headers = wide("Accept-Encoding: identity\r\n");
-        if WinHttpSendRequest(request, headers.as_ptr(), u32::MAX, std::ptr::null(), 0, 0, 0) == 0 {
+        let mut header_text = String::from("Accept-Encoding: identity\r\n");
+        for (k, v) in headers {
+            header_text.push_str(k);
+            header_text.push_str(": ");
+            header_text.push_str(v);
+            header_text.push_str("\r\n");
+        }
+        let headers_w = wide(&header_text);
+        if WinHttpSendRequest(request, headers_w.as_ptr(), u32::MAX, std::ptr::null(), 0, 0, 0) == 0 {
             return Err(format!("WinHTTP: запрос не отправлен ({})", error_text(GetLastError())));
         }
         if WinHttpReceiveResponse(request, std::ptr::null_mut()) == 0 {

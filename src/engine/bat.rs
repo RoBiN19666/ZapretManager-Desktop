@@ -258,4 +258,44 @@ mod tests {
         );
         assert_eq!(expand_percent_vars("100%%", &vars), "100%%");
     }
+
+    #[test]
+    fn parses_real_bat_shape() {
+        use super::super::install::{StrategyDef, ZapretInstall};
+        let dir = std::env::temp_dir().join(format!("zapret-bat-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("general.bat");
+        std::fs::write(
+            &file,
+            "@echo off\r\
+set \"BIN=%~dp0bin\\\"\r\
+set \"LISTS=%~dp0lists\\\"\r\
+\"%BIN%winws.exe\" --wf-tcp=%GameFilterTCP% ^\r\
+ --hostlist=\"%LISTS%list-general.txt\" ^\r\
+ --wf-udp=%GameFilterUDP%\r\
+",
+        )
+        .unwrap();
+        let inst = ZapretInstall {
+            root: dir.to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        let strategy = StrategyDef {
+            file: file.clone(),
+            name: "general".to_string(),
+            ..Default::default()
+        };
+        let gf = crate::engine::gamefilter::GameFilterState {
+            mode: crate::engine::gamefilter::GameFilterMode::All,
+            tcp_range: "80,443".to_string(),
+            udp_range: "50000-50100".to_string(),
+        };
+        let argv = get_argv(&inst, &strategy, &gf).expect("argv");
+        assert!(argv.iter().any(|a| a.contains("--wf-tcp=80,443")));
+        assert!(argv.iter().any(|a| a.contains("list-general.txt")));
+        assert!(argv.iter().any(|a| a.contains("--wf-tcp=80,443")));
+        assert!(argv.iter().any(|a| a.contains("--wf-udp=50000-50100")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
