@@ -31,6 +31,9 @@ namespace ZapretManager
             if (int.TryParse(FindArgValue(args, "--shot-scroll"), out shotScroll)) AppInfo.ShotScroll = shotScroll;
             bool shotMode = !string.IsNullOrEmpty(AppInfo.ShotPath);
             bool selfUpdateMode = HasFlag(args, "--self-update");
+            bool tgPrepareMode = HasFlag(args, "--tg-prepare");
+            bool tgStartMode = HasFlag(args, "--tg-start");
+            bool tgStopMode = HasFlag(args, "--tg-stop");
             AppInfo.TrayMode = HasFlag(args, "--tray");
             AppInfo.AutostartMode = HasFlag(args, "--autostart");
             if (AppInfo.AutostartMode) AppInfo.TrayMode = true;
@@ -73,6 +76,30 @@ namespace ZapretManager
             if (selfUpdateMode)
             {
                 RunSelfUpdateMode();
+                return;
+            }
+            if (tgStartMode || tgStopMode)
+            {
+                AppConfig tgConfig = AppConfig.Load(AppConfig.DefaultPath());
+                string tgResult;
+                if (tgStopMode)
+                {
+                    tgResult = TgProxy.Stop();
+                }
+                else
+                {
+                    bool tgOk;
+                    tgResult = TgProxy.Start(tgConfig, out tgOk);
+                }
+                Log.Info("Команда TG WS Proxy: " + tgResult);
+                return;
+            }
+            if (tgPrepareMode)
+            {
+                Log.Info("Режим подготовки тихого TG WS Proxy.");
+                bool prepared;
+                string message = TgSource.Prepare(TgSource.LatestRef(), null, out prepared);
+                Log.Write(prepared ? LogLevel.Ok : LogLevel.Error, "Тихий режим TG WS Proxy: " + message);
                 return;
             }
             Log.Info("Аргументы: [" + string.Join("] [", args) + "]");

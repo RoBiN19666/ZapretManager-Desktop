@@ -28,6 +28,8 @@ namespace ZapretManager
         public string Secret = "";
         public string ConfigPath = "";
         public string ConfigError = "";
+        public bool QuietMode;
+        public bool QuietPrepared;
         public string AppDataDir
         {
             get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TgWsProxy"); }
@@ -233,7 +235,29 @@ namespace ZapretManager
                 st.Pid = primary.Pid;
                 st.Started = primary.Started;
             }
-            st.PortListening = IsPortListening(st.Port);
+st.PortListening = IsPortListening(st.Port);
+
+            // Тихий режим: работаем из исходников, без иконки в трее
+            if (RunMode(config) == "quiet")
+            {
+                st.QuietMode = true;
+                st.QuietPrepared = TgSource.IsPrepared;
+                List<Proc.ProcInfo> quietProcs = TgSource.Find();
+                if (quietProcs.Count > 0)
+                {
+                    st.Running = true;
+                    st.InstanceCount = quietProcs.Count;
+                    st.Pid = quietProcs[0].Pid;
+                    st.Started = quietProcs[0].Started;
+                }
+                if (st.QuietPrepared)
+                {
+                    st.Installed = true;
+                    st.Dir = TgSource.RootDir;
+                    st.ExePath = TgSource.ScriptPath;
+                    st.Version = TgSource.PreparedVersion();
+                }
+            }
             return st;
         }
 
@@ -315,9 +339,46 @@ namespace ZapretManager
 
         // ---------- запуск / остановка ----------
 
+        /// <summary>Режим запуска: exe (официальный файл) или quiet (исходники без трея).</summary>
+        public static string RunMode(AppConfig config)
+        {
+            return string.Equals(config.Get("TgRunMode", "exe"), "quiet", StringComparison.OrdinalIgnoreCase) ? "quiet" : "exe";
+        }
+
+        public static void SetRunMode(AppConfig config, string mode)
+        {
+            config.Set("TgRunMode", string.Equals(mode, "quiet", StringComparison.OrdinalIgnoreCase) ? "quiet" : "exe");
+            config.Save();
+        }
+
         public static string Start(AppConfig config, out bool ok)
         {
             ok = false;
+            bool quiet = RunMode(config) == "quiet";
+            if (quiet)
+            {
+                TgProxyState quietState = GetState(config);
+                string quietError;
+                int quietPid;
+                if (!TgSource.Start(quietState, out quietPid, out quietError))
+                {
+                    Log.Warn("Тихий режим TG WS Proxy: " + quietError);
+                    return quietError;
+                }
+                for (int i = 0; i < 20; i++)
+                {
+                    Thread.Sleep(300);
+                    TgProxyState check = GetState(config);
+                    if (check.PortListening) { ok = true; break; }
+                }
+                TgProxyState after = GetState(config);
+                ok = after.Running;
+                if (ok)
+                    return string.Format("TG WS Proxy запущен без трея: {0}:{1} (PID {2}). Подключение — кнопкой «Открыть в Telegram».",
+                        after.Host, after.Port, after.Pid);
+                return "Процесс запущен, но порт " + after.Port + " ещё не слушается. Проверьте журнал " + TgSource.LogPath;
+            }
+
             TgProxyState st = GetState(config);
             if (!st.Installed) return "TG WS Proxy не установлен. Установите его на странице «TG-прокси».";
             if (st.Running)
@@ -356,6 +417,8 @@ namespace ZapretManager
 
         public static string Stop()
         {
+            int quietStopped = TgSource.Stop();
+            if (quietStopped > 0) return "TG WS Proxy (тихий режим) остановлен.";
             List<Proc.ProcInfo> procs = FindProcesses();
             if (procs.Count == 0) return "TG WS Proxy уже остановлен.";
             int closed = 0;

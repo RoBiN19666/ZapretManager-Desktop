@@ -32,6 +32,11 @@ namespace ZapretManager
         private Label _stage;
 
         private ToggleSwitch _tgAutostart;
+        private ToggleSwitch _tgQuiet;
+        private Label _quietStatus;
+        private RoundButton _btnPrepare;
+        private LineProgress _quietProgress;
+        private bool _quietBusy;
         private Label _autoInfo;
         private bool _suppress;
         private bool _working;
@@ -50,6 +55,7 @@ namespace ZapretManager
             BuildLinkCard();
             BuildUpdateCard();
             BuildAutoCard();
+            BuildModeCard();
         }
 
         private void BuildStateCard()
@@ -157,6 +163,127 @@ namespace ZapretManager
             _stage = L("", Theme.Small, Theme.TextMuted, 22, 164);
             _updateCard.Controls.Add(_stage);
             View.Stack.Add(_updateCard);
+        }
+
+        private void BuildModeCard()
+        {
+            Card card = NewCard("Режим запуска", 236);
+            card.Controls.Add(L("Без иконки в трее (из исходников)", Theme.Base, Theme.Text, 22, 44));
+
+            _quietStatus = L("", Theme.Small, Theme.TextMuted, 22, 88);
+            card.Controls.Add(_quietStatus);
+
+            card.Controls.Add(WrapLabel("Тихий режим запускает официальные исходники Flowseal напрямую: окна нет, значка в трее нет, процесс один. Нужен установленный Python 3.9+ и разовая подготовка (исходники и ~30 МБ зависимостей).",
+                Theme.Small, Theme.TextDim, 22, 112, DesignWidth - 120));
+
+            _tgQuiet = new ToggleSwitch();
+            _tgQuiet.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            _tgQuiet.Location = new Point(DesignWidth - 22 - 46, 42);
+            _tgQuiet.CheckedChanged += delegate
+            {
+                if (_suppress) return;
+                if (_tgQuiet.Checked && !TgSource.IsPrepared)
+                {
+                    if (Dlg.Confirm(this.View.FindForm(), "Подготовить тихий режим?",
+                        "Для запуска без трея нужны Python 3.9+ и разовая установка зависимостей (около 30 МБ, 1-2 минуты).\n\nПродолжить?", "Подготовить"))
+                    {
+                        PrepareQuiet();
+                    }
+                    else
+                    {
+                        _suppress = true;
+                        _tgQuiet.Checked = false;
+                        _suppress = false;
+                    }
+                    return;
+                }
+                TgProxy.SetRunMode(Shell.Config, _tgQuiet.Checked ? "quiet" : "exe");
+                ApplyModeSwitch();
+            };
+            card.Controls.Add(_tgQuiet);
+
+            _btnPrepare = Btn("Подготовить", ButtonKind.Secondary, 170);
+            _btnPrepare.Location = new Point(22, 168);
+            _btnPrepare.Click += delegate { PrepareQuiet(); };
+            card.Controls.Add(_btnPrepare);
+
+            _quietProgress = new LineProgress();
+            _quietProgress.Location = new Point(22, 210);
+            _quietProgress.Width = DesignWidth - 44;
+            _quietProgress.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            _quietProgress.Visible = false;
+            card.Controls.Add(_quietProgress);
+
+            View.Stack.Add(card);
+        }
+
+        private void ApplyModeSwitch()
+        {
+            TgProxyState st = TgProxy.GetState(Shell.Config);
+            if (!st.Running) return;
+            Shell.RunBackground(delegate()
+            {
+                TgProxy.Stop();
+                System.Threading.Thread.Sleep(1200);
+                bool ok;
+                string message = TgProxy.Start(Shell.Config, out ok);
+                Shell.Ui(delegate()
+                {
+                    Shell.Notify(message, ok ? LogLevel.Ok : LogLevel.Error);
+                    RefreshState();
+                });
+            }, null);
+        }
+
+        private void PrepareQuiet()
+        {
+            if (_quietBusy) return;
+            string python = TgSource.FindPython();
+            if (python == null)
+            {
+                Shell.Notify("Python 3 не найден. Установите Python с python.org (галочка «Add python.exe to PATH»), затем повторите.", LogLevel.Error);
+                Dlg.Info(this.View.FindForm(), "Нужен Python",
+                    "Для тихого режима нужен Python 3.9 или новее.\n\nСкачайте установщик с python.org, при установке включите «Add python.exe to PATH», после этого нажмите «Подготовить» ещё раз.");
+                return;
+            }
+
+            _quietBusy = true;
+            _btnPrepare.Enabled = false;
+            _quietProgress.Visible = true;
+            _quietProgress.Value = 2;
+            _quietStatus.Text = "Подготовка: " + python;
+            Shell.RunBackground(delegate()
+            {
+                bool ok;
+                string message = TgSource.Prepare(TgSource.LatestRef(), delegate(int percent, string stage)
+                {
+                    Shell.Ui(delegate()
+                    {
+                        _quietProgress.Value = percent;
+                        _quietStatus.Text = stage;
+                    });
+                }, out ok);
+
+                Shell.Ui(delegate()
+                {
+                    _quietBusy = false;
+                    _btnPrepare.Enabled = true;
+                    _quietProgress.Visible = false;
+                    _quietProgress.Value = 0;
+                    _quietStatus.Text = message;
+                    _quietStatus.ForeColor = ok ? Theme.Success : Theme.Warn;
+                    Shell.Notify(ok ? "Тихий режим готов." : message, ok ? LogLevel.Ok : LogLevel.Error);
+                    if (ok)
+                    {
+                        _suppress = true;
+                        _tgQuiet.Checked = true;
+                        _suppress = false;
+                        TgProxy.SetRunMode(Shell.Config, "quiet");
+                        ApplyModeSwitch();
+                    }
+                    RefreshState();
+                });
+            }, null);
         }
 
         private void BuildAutoCard()
@@ -393,6 +520,26 @@ namespace ZapretManager
                 }
 
                 _tgAutostart.Checked = Shell.Config.GetBool("AutostartTgProxy", true);
+
+                _suppress = true;
+                _tgQuiet.Checked = TgProxy.RunMode(Shell.Config) == "quiet";
+                _suppress = false;
+                if (_quietBusy) { }
+                else if (TgSource.IsPrepared)
+                {
+                    _quietStatus.Text = "Подготовлено: " + TgSource.PreparedVersion() + (st.QuietMode && st.Running ? "  •  работает без трея (PID " + st.Pid + ")" : "  •  можно включить");
+                    _quietStatus.ForeColor = Theme.TextMuted;
+                    _btnPrepare.Text = "Обновить исходники";
+                    _btnPrepare.Fit(10);
+                }
+                else
+                {
+                    string python = TgSource.FindPython();
+                    _quietStatus.Text = python != null
+                        ? "Python найден: " + python + " — нажмите «Подготовить»."
+                        : "Python 3 не найден: для тихого режима нужно установить Python с python.org.";
+                    _quietStatus.ForeColor = python != null ? Theme.TextMuted : Theme.Warn;
+                }
                 _autoInfo.Text = Shell.Config.GetBool("AutostartZapret", true)
                     ? "Менеджер при автозапуске поднимает и zapret, и TG WS Proxy."
                     : "Менеджер при автозапуске поднимает только TG WS Proxy (zapret отключён в «Настройки»).";

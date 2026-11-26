@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -289,6 +289,23 @@ namespace ZapretManager
                     else
                         Add(list, "Прокси Telegram", CheckSeverity.Ok, "Остановлен.", "", "", "", "Telegram");
 
+if (tg.QuietMode)
+                    {
+                        if (!tg.QuietPrepared)
+                            Add(list, "Режим без трея", CheckSeverity.Warn,
+                                "Включён тихий режим (из исходников), но он не подготовлен.",
+                                "Откройте «TG-прокси» → «Режим запуска» и нажмите «Подготовить» (нужен Python 3.9+).", "", "", "Telegram");
+                        else
+                            Add(list, "Режим без трея", CheckSeverity.Ok,
+                                "Тихий режим подготовлен: " + TgSource.PreparedVersion() + ", Python " + (TgSource.BasePython().Length > 0 ? "найден" : "не найден"),
+                                "", "", "", "Telegram");
+                    }
+                    else if (TgSource.IsPrepared)
+                    {
+                        Add(list, "Режим без трея", CheckSeverity.Ok,
+                            "Тихий режим подготовлен, но выключен (сейчас работает обычный exe с иконкой в трее).",
+                            "", "", "", "Telegram");
+                    }
                     if (tg.InstanceCount > 2)
                         Add(list, "Экземпляры прокси", CheckSeverity.Warn,
                             string.Format("Запущено несколько копий TG WS Proxy: {0}.", tg.InstanceCount),
