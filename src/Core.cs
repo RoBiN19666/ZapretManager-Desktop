@@ -706,6 +706,48 @@ namespace ZapretManager
         }
     }
 
+    /// <summary>Работа с системными настройками UAC: только восстановление стандартных значений.</summary>
+    public static class UacTools
+    {
+        private const string KeyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System";
+
+        public static bool RestoreDefaults()
+        {
+            try
+            {
+                int admin = 5;
+                int desktop = 1;
+                string backup = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                    "ZapretManager", "uac-backup.json");
+                if (File.Exists(backup))
+                {
+                    try
+                    {
+                        string text = File.ReadAllText(backup);
+                        Match m1 = Regex.Match(text, "\"ConsentPromptBehaviorAdmin\"\\s*:\\s*(\\d+)");
+                        Match m2 = Regex.Match(text, "\"PromptOnSecureDesktop\"\\s*:\\s*(\\d+)");
+                        if (m1.Success) admin = int.Parse(m1.Groups[1].Value);
+                        if (m2.Success) desktop = int.Parse(m2.Groups[1].Value);
+                    }
+                    catch { }
+                }
+                using (Microsoft.Win32.RegistryKey key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(KeyPath, true))
+                {
+                    if (key == null) return false;
+                    key.SetValue("ConsentPromptBehaviorAdmin", admin, Microsoft.Win32.RegistryValueKind.DWord);
+                    key.SetValue("PromptOnSecureDesktop", desktop, Microsoft.Win32.RegistryValueKind.DWord);
+                }
+                Log.Info("UAC: ConsentPromptBehaviorAdmin=" + admin + ", PromptOnSecureDesktop=" + desktop);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("UAC: " + ex.Message);
+                return false;
+            }
+        }
+    }
+
     public static class AppInfo
     {
         public const string Version = "1.3.0";
