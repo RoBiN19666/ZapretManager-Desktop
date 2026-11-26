@@ -258,16 +258,13 @@ impl App {
         let best_score = rows
             .iter()
             .filter(|r| r.error.is_empty() && r.total() > 0)
-            .map(|r| r.passed())
-            .max()
-            .unwrap_or(0);
-        let best_index = if best_score == 0 {
-            None
-        } else {
+            .map(|r| r.score())
+            .max();
+        let best_index = best_score.and_then(|score| {
             rows.iter().position(|r| {
-                r.error.is_empty() && r.total() > 0 && r.passed() == best_score
+                r.error.is_empty() && r.total() > 0 && r.score() == score
             })
-        };
+        });
         let mut apply_selected = false;
         w::card(ui, &p, "Результаты", |ui| {
             ui.label(
@@ -496,6 +493,7 @@ impl App {
         if !self.require_admin("Автоподбор стратегии") {
             return;
         }
+        self.auto_heal_armed = false;
         if self.pages.test.enabled.is_empty() {
             self.notify("Выберите хотя бы одну группу целей.", LogLevel::Warn);
             return;
@@ -557,6 +555,7 @@ impl App {
         if !self.require_admin("Применение auto-стратегии") {
             return;
         }
+        self.auto_heal_armed = false;
         if self.pages.test.enabled.is_empty() {
             self.notify("Выберите хотя бы одну группу целей.", LogLevel::Warn);
             return;
@@ -627,6 +626,7 @@ impl App {
         if !self.require_admin("Тест стратегий") {
             return;
         }
+        self.auto_heal_armed = false;
         if self.pages.test.enabled.is_empty() {
             self.notify("Выберите хотя бы одну группу целей.", LogLevel::Warn);
             return;

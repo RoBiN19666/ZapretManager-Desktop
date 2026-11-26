@@ -19,6 +19,7 @@ use crate::engine::lists::{ListChanges, ListNote};
 use crate::engine::log::{self, LogLevel, LogLine};
 use crate::engine::ops::{FakeFile, HostsStatus, RuntimeState, StartResult, ZapretOps};
 use crate::engine::paths;
+use crate::engine::service;
 use crate::engine::tgproxy::{self, TgState};
 use crate::engine::tester::{LoadedReport, OfficialReport, StrategyTestRow, TargetGroup};
 use crate::engine::update::{Release, SelfUpdateInfo, UpdateCheckResult, UpdateOptions};
@@ -207,6 +208,8 @@ pub struct StrategiesState {
     pub preview: String,
     pub caption: String,
     pub warning: String,
+    pub search: String,
+    pub only_favorites: bool,
 }
 
 pub struct TestState {
@@ -603,7 +606,13 @@ pub struct App {
     window_hwnd: Option<isize>,
     titlebar_dark: Option<bool>,
     icon_set: bool,
-    pub(crate) about_logo: Option<egui::TextureHandle>,    pub shot: Option<String>,
+    pub(crate) auto_heal_armed: bool,
+    auto_heal_attempts: u32,
+    auto_heal_last: Instant,
+    pub(crate) about_logo: Option<egui::TextureHandle>,
+    pub(crate) winws_mem: Option<u64>,
+    pub(crate) tg_mem: Option<u64>,
+    pub(crate) resource_checked: Instant,    pub shot: Option<String>,
     shot_frames: u32,
     pub progress: HashMap<&'static str, (u32, String)>,
     pub start_hidden: bool,
@@ -677,7 +686,13 @@ impl App {
             window_hwnd: None,
             titlebar_dark: None,
             icon_set: false,
+            auto_heal_armed: false,
+            auto_heal_attempts: 0,
+            auto_heal_last: Instant::now(),
             about_logo: None,
+            winws_mem: None,
+            tg_mem: None,
+            resource_checked: Instant::now(),
             shot,
             shot_frames: 0,
             progress: HashMap::new(),
@@ -880,6 +895,7 @@ impl App {
         }
         self.ini.set("LastStrategy", &strategy.name);
         let _ = self.ini.save();
+        self.auto_heal_armed = true;
         let ops = ZapretOps::new(self.install.clone());
         let name = strategy.name.clone();
         self.spawn_bg(move |tx| {
@@ -898,6 +914,8 @@ impl App {
         if !self.require_admin("Остановка") {
             return;
         }
+        self.auto_heal_armed = false;
+        self.auto_heal_attempts = 0;
         let ops = ZapretOps::new(self.install.clone());
         self.spawn_bg(move |tx| {
             let message = ops.stop();
@@ -912,6 +930,7 @@ impl App {
         }
         self.ini.set("LastStrategy", &strategy.name);
         let _ = self.ini.save();
+        self.auto_heal_armed = true;
         let ops = ZapretOps::new(self.install.clone());
         self.spawn_bg(move |tx| {
             let message = ops.restart(&strategy);
@@ -926,6 +945,7 @@ impl App {
         }
         self.ini.set("LastStrategy", &strategy.name);
         let _ = self.ini.save();
+        self.auto_heal_armed = true;
         let ops = ZapretOps::new(self.install.clone());
         self.spawn_bg(move |tx| {
             match ops.install_service(&strategy) {
@@ -1182,7 +1202,7 @@ impl App {
                                 .rows
                                 .iter()
                                 .filter(|r| r.error.is_empty() && r.total() > 0)
-                                .max_by_key(|r| r.passed())
+                                .max_by_key(|r| r.score())
                                 .cloned();
                             self.pages.test.selected = best.as_ref().and_then(|b| {
                                 self.pages
@@ -1464,6 +1484,57 @@ impl App {
     fn update_status_hint(&mut self) {
         if self.busy > 0 {
             self.status_hint = "Выполняется операция…".to_string();
+        }
+    }
+
+    fn auto_heal_tick(&mut self) {
+        if !self.ini.get_bool("AutoHeal", false) {
+            self.auto_heal_armed = self.state.winws_running;
+            return;
+        }
+        if self.state.winws_running {
+            self.auto_heal_armed = true;
+            self.auto_heal_attempts = 0;
+            return;
+        }
+        if !self.auto_heal_armed || !self.install.is_valid() {
+            return;
+        }
+        if self.auto_heal_last.elapsed() < Duration::from_secs(15) {
+            return;
+        }
+        if self.auto_heal_attempts >= 3 {
+            self.auto_heal_armed = false;
+            self.notify(
+                "Автолечение: три попытки поднять bypass не удались. Проверьте журнал и драйвер WinDivert.",
+                LogLevel::Warn,
+            );
+            return;
+        }
+        self.auto_heal_last = Instant::now();
+        self.auto_heal_attempts += 1;
+        if self.state.service_installed {
+            self.notify("Автолечение: поднимаю службу zapret…", LogLevel::Warn);
+            let tx = self.tx.clone();
+            std::thread::spawn(move || {
+                let message = match service::start("zapret") {
+                    Ok(()) => "Автолечение: служба zapret снова запущена.".to_string(),
+                    Err(e) => format!("Автолечение: не удалось запустить службу: {}", e),
+                };
+                let _ = tx.send(Msg::Notify(message, LogLevel::Warn));
+            });
+        } else if let Some(strategy) = self.pick_strategy() {
+            self.notify(
+                format!("Автолечение: перезапускаю «{}»…", strategy.name),
+                LogLevel::Warn,
+            );
+            self.start_strategy(strategy);
+        } else {
+            self.auto_heal_armed = false;
+            self.notify(
+                "Автолечение: нет сохранённой стратегии для перезапуска.",
+                LogLevel::Warn,
+            );
         }
     }
 
@@ -1922,6 +1993,7 @@ impl eframe::App for App {
             self.exit_requested = true;
         }
         self.poll_tray();
+        self.auto_heal_tick();
 
         // Пользовательский масштаб интерфейса (90/100/110 %).
         if (ctx.zoom_factor() - self.scale).abs() > 0.01 {
@@ -2190,7 +2262,7 @@ pub fn test_summary(state: &TestState) -> String {
         return "Ни одна стратегия не запустилась — проверьте права администратора и драйвер WinDivert."
             .to_string();
     }
-    let best = launched.iter().max_by_key(|r| r.passed()).unwrap();
+    let best = launched.iter().max_by_key(|r| r.score()).unwrap();
     if best.passed() == 0 {
         return format!(
             "Проверено {} стратегий, ни одна не дала доступа к целям (0 из {}). Возможно, проблема на стороне сети.",
@@ -2199,10 +2271,12 @@ pub fn test_summary(state: &TestState) -> String {
         );
     }
     format!(
-        "Лучшая: {} — {} из {}. Проверено стратегий: {}.",
+        "Лучшая: {} — {} из {} (сервисов: {} из {}). Проверено стратегий: {}.",
         best.strategy_name,
         best.passed(),
         best.total(),
+        best.healthy_groups(),
+        best.groups.len(),
         state.rows.len()
     )
 }

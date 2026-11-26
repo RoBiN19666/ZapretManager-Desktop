@@ -9,6 +9,33 @@ use crate::ui::app::App;
 use crate::ui::widgets as w;
 
 impl App {
+    fn favorite_strategies(&self) -> std::collections::HashSet<String> {
+        self.ini
+            .get("Favorites", "")
+            .split(',')
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    fn toggle_favorite(&mut self, name: &str) {
+        let mut names: Vec<String> = self
+            .ini
+            .get("Favorites", "")
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if let Some(pos) = names.iter().position(|n| n.eq_ignore_ascii_case(name)) {
+            names.remove(pos);
+        } else {
+            names.push(name.to_string());
+            names.sort_by_key(|n| n.to_lowercase());
+        }
+        self.ini.set("Favorites", &names.join(","));
+        let _ = self.ini.save();
+    }
+
     pub(crate) fn page_strategies(&mut self, ui: &mut Ui) {
         let p = self.p;
         if !self.install.is_valid() {
@@ -22,7 +49,32 @@ impl App {
             return;
         }
         let strategies = self.install.strategies.clone();
-        let selected = self.pages.strategies.selected.min(strategies.len().saturating_sub(1));
+        let favorites = self.favorite_strategies();
+        let query = self.pages.strategies.search.trim().to_lowercase();
+        let visible: Vec<usize> = strategies
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                if self.pages.strategies.only_favorites
+                    && !favorites.contains(&s.name.to_lowercase())
+                {
+                    return false;
+                }
+                query.is_empty()
+                    || s.name.to_lowercase().contains(&query)
+                    || s.description.to_lowercase().contains(&query)
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+        let mut selected = self
+            .pages
+            .strategies
+            .selected
+            .min(strategies.len().saturating_sub(1));
+        if !visible.is_empty() && !visible.contains(&selected) {
+            selected = visible[0];
+            self.pages.strategies.selected = selected;
+        }
         let strategy = strategies.get(selected).cloned();
         let preview = strategy
             .as_ref()
@@ -40,6 +92,24 @@ impl App {
 
         w::card(ui, &p, "Доступные стратегии", |ui| {
             let active = self.state.matched_strategy.clone();
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.pages.strategies.search)
+                        .hint_text("Поиск по названию или описанию…")
+                        .desired_width(280.0),
+                );
+                let mut only = self.pages.strategies.only_favorites;
+                if ui.checkbox(&mut only, "Только избранные").changed() {
+                    self.pages.strategies.only_favorites = only;
+                }
+                ui.label(
+                    RichText::new(format!("{} из {}", visible.len(), strategies.len()))
+                        .size(11.5)
+                        .color(p.text_muted),
+                );
+            });
+            ui.add_space(6.0);
+            let mut toggle_fav: Option<String> = None;
             egui::Frame::none()
                 .fill(p.editor)
                 .stroke(egui::Stroke::new(1.0, p.border))
@@ -51,10 +121,24 @@ impl App {
                         .max_height(330.0)
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            for (idx, s) in strategies.iter().enumerate() {
+                            if visible.is_empty() {
+                                w::muted(ui, &p, "Ничего не найдено.");
+                                return;
+                            }
+                            for idx in visible.iter().copied() {
+                                let s = &strategies[idx];
                                 let is_selected = idx == selected;
                                 let (rect, resp) = ui.allocate_exact_size(
                                     egui::vec2(ui.available_width(), 38.0),
+                                    egui::Sense::click(),
+                                );
+                                let star_rect = egui::Rect::from_center_size(
+                                    egui::pos2(rect.right() - 13.0, rect.center().y),
+                                    egui::vec2(22.0, 22.0),
+                                );
+                                let star_resp = ui.interact(
+                                    star_rect,
+                                    ui.id().with(("favorite", idx)),
                                     egui::Sense::click(),
                                 );
                                 if is_selected {
@@ -77,6 +161,14 @@ impl App {
                                     egui::FontId::new(10.5, egui::FontFamily::Proportional),
                                     p.text_muted,
                                 );
+                                let is_fav = favorites.contains(&s.name.to_lowercase());
+                                ui.painter().text(
+                                    star_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    if is_fav { "★" } else { "☆" },
+                                    egui::FontId::new(16.0, egui::FontFamily::Proportional),
+                                    if is_fav { p.accent } else { p.text_muted },
+                                );
                                 let badge_color = match s.kind {
                                     crate::engine::install::StrategyKind::Base => p.accent,
                                     crate::engine::install::StrategyKind::Alt => p.text_dim,
@@ -93,7 +185,7 @@ impl App {
                                 );
                                 let bw = galley.rect.width() + 12.0;
                                 let brect = egui::Rect::from_min_size(
-                                    egui::pos2(rect.right() - bw - 10.0, rect.center().y - 9.0),
+                                    egui::pos2(rect.right() - bw - 36.0, rect.center().y - 9.0),
                                     egui::vec2(bw, 18.0),
                                 );
                                 ui.painter().rect_filled(brect, egui::Rounding::same(9), p.surface_alt);
@@ -105,12 +197,17 @@ impl App {
                                         p.success,
                                     );
                                 }
-                                if resp.clicked() {
+                                if star_resp.clicked() {
+                                    toggle_fav = Some(s.name.clone());
+                                } else if resp.clicked() {
                                     self.pages.strategies.selected = idx;
                                 }
                             }
                         });
                 });
+            if let Some(name) = toggle_fav {
+                self.toggle_favorite(&name);
+            }
             ui.add_space(8.0);
             if !warning.is_empty() {
                 ui.label(RichText::new(&warning).size(12.0).color(p.warn));

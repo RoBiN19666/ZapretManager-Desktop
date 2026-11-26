@@ -415,6 +415,49 @@ impl App {
             }
         });
 
+        w::card(ui, &p, "Ресурсы", |ui| {
+            if self.resource_checked.elapsed() > std::time::Duration::from_secs(5) {
+                self.winws_mem = if self.state.winws_running {
+                    sys::process_memory(self.state.winws_pid)
+                } else {
+                    None
+                };
+                self.tg_mem = if self.pages.tg.state.running {
+                    sys::process_memory(self.pages.tg.state.pid)
+                } else {
+                    None
+                };
+                self.resource_checked = std::time::Instant::now();
+            }
+            ui.horizontal_wrapped(|ui| {
+                let winws = if self.state.winws_running {
+                    format!(
+                        "winws.exe  PID {}  •  {}  •  до {}",
+                        self.state.winws_pid,
+                        fmt_mem(self.winws_mem),
+                        self.state
+                            .winws_started_unix
+                            .map(|t| uptime_text(crate::util::unix_now().saturating_sub(t)))
+                            .unwrap_or_else(|| "—".to_string())
+                    )
+                } else {
+                    "winws.exe: не запущен".to_string()
+                };
+                ui.label(RichText::new(winws).size(12.0).color(p.text_dim));
+                ui.label(RichText::new("•").size(12.0).color(p.text_muted));
+                let tg = if self.pages.tg.state.running {
+                    format!(
+                        "TG WS Proxy  PID {}  •  {}",
+                        self.pages.tg.state.pid,
+                        fmt_mem(self.tg_mem)
+                    )
+                } else {
+                    "TG WS Proxy: не запущен".to_string()
+                };
+                ui.label(RichText::new(tg).size(12.0).color(p.text_dim));
+            });
+        });
+
         // журнал
         let p2 = p;
         w::card(ui, &p2, "Журнал", |ui| {
@@ -471,6 +514,15 @@ impl App {
         });
 
         let _ = ops::ipset_mode_text("loaded");
+    }
+}
+
+fn fmt_mem(bytes: Option<u64>) -> String {
+    match bytes {
+        Some(b) if b >= 1024 * 1024 => format!("{:.1} МБ", b as f64 / (1024.0 * 1024.0)),
+        Some(b) if b >= 1024 => format!("{:.0} КБ", b as f64 / 1024.0),
+        Some(b) => format!("{} Б", b),
+        None => "память н/д".to_string(),
     }
 }
 

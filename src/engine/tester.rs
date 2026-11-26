@@ -148,6 +148,10 @@ impl GroupResult {
     pub fn partial(&self) -> bool {
         self.passed > 0 && self.passed < self.total
     }
+    /// Сервис считается рабочим, если прошло не меньше 60% его целей.
+    pub fn healthy(&self) -> bool {
+        self.total > 0 && self.passed * 100 >= self.total * 60
+    }
     pub fn cell_text(&self) -> String {
         if self.total == 0 {
             return "—".to_string();
@@ -184,6 +188,12 @@ impl StrategyTestRow {
     }
     pub fn all_ok(&self) -> bool {
         self.total() > 0 && self.passed() == self.total()
+    }
+    pub fn healthy_groups(&self) -> usize {
+        self.groups.iter().filter(|g| g.healthy()).count()
+    }
+    pub fn score(&self) -> (usize, usize) {
+        (self.healthy_groups(), self.passed())
     }
     pub fn best_candidate(&self) -> bool {
         self.error.is_empty() && self.total() > 0
@@ -856,3 +866,27 @@ pub fn strategy_command(install: &ZapretInstall, strategy: &StrategyDef) -> Stri
 
 #[allow(dead_code)]
 fn unused(_: &ZapretOps, _: &process::ProcResult) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_health_threshold_is_sixty_percent() {
+        let group = |passed, total| GroupResult {
+            group: "x".to_string(),
+            passed,
+            total,
+            ms: 0,
+        };
+        assert!(group(3, 5).healthy());
+        assert!(group(2, 5).healthy() == false);
+        assert!(group(0, 0).healthy() == false);
+        let row = StrategyTestRow {
+            groups: vec![group(3, 5), group(3, 4), group(0, 1)],
+            ..Default::default()
+        };
+        assert_eq!(row.healthy_groups(), 2);
+        assert_eq!(row.score(), (2, 6));
+    }
+}

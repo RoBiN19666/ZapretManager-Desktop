@@ -601,7 +601,7 @@ pub fn run_search(
     let best = rows
         .iter()
         .filter(|r| r.error.is_empty() && r.total() > 0)
-        .max_by_key(|r| r.passed())
+        .max_by_key(|r| r.score())
         .cloned()
         .filter(|r| r.passed() > 0);
     let best_file = best.as_ref().and_then(|best| {

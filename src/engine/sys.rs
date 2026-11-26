@@ -15,10 +15,11 @@ use windows_sys::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD, REG_SZ,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 use windows_sys::Win32::System::Threading::{
     GetExitCodeProcess, OpenProcess, QueryFullProcessImageNameW, TerminateProcess,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
 };
 use windows_sys::Win32::UI::Shell::{ShellExecuteExW, ShellExecuteW, SHELLEXECUTEINFOW};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -812,6 +813,32 @@ pub fn set_window_icon(hwnd: isize) -> bool {
 pub fn set_titlebar_theme_isize(hwnd: isize, dark: bool) {
     if hwnd != 0 {
         set_titlebar_theme(hwnd as HWND, dark);
+    }
+}
+
+/// Рабочий набор процесса в байтах (для карточки «Ресурсы»).
+pub fn process_memory(pid: u32) -> Option<u64> {
+    if pid == 0 {
+        return None;
+    }
+    unsafe {
+        let handle = OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ,
+            0,
+            pid,
+        );
+        if handle.is_null() {
+            return None;
+        }
+        let mut counters: PROCESS_MEMORY_COUNTERS = std::mem::zeroed();
+        counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+        let ok = GetProcessMemoryInfo(handle, &mut counters, counters.cb);
+        CloseHandle(handle);
+        if ok != 0 {
+            Some(counters.WorkingSetSize as u64)
+        } else {
+            None
+        }
     }
 }
 

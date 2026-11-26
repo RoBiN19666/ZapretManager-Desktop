@@ -476,6 +476,22 @@ impl App {
                 self.ini.set_bool("AutostartZapret", auto_zapret);
                 let _ = self.ini.save();
             }
+            let mut auto_heal = self.ini.get_bool("AutoHeal", false);
+            if w::toggle_row(
+                ui,
+                &p2,
+                "Автолечение bypass",
+                "Если winws.exe неожиданно завершился, перезапустить службу или последнюю стратегию (до 3 попыток). Не трогает bypass, если вы остановили его вручную.",
+                &mut auto_heal,
+            ) {
+                self.ini.set_bool("AutoHeal", auto_heal);
+                let _ = self.ini.save();
+                if auto_heal && self.state.winws_running {
+                    self.auto_heal_armed = true;
+                } else if !auto_heal {
+                    self.auto_heal_armed = false;
+                }
+            }
             let mut auto_tg = self.ini.get_bool("AutostartTgProxy", true);
             if w::toggle_row(
                 ui,
