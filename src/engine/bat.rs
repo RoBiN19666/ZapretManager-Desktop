@@ -94,7 +94,7 @@ pub fn get_argv(
         }
     }
 
-    let argv: Vec<String> = tokenize(&cmd)
+    let argv: Vec<String> = tokenize(&unescape_caret(&cmd))
         .into_iter()
         .filter(|arg| keep_argument(inst, arg))
         .collect();
@@ -202,6 +202,28 @@ fn expand_percent_vars(cmd: &str, vars: &[(String, String)]) -> String {
     out
 }
 
+/// Снять batch-экранирование `^`.
+///
+/// В стратегиях встречается `--dpi-desync-fake-tls=^!`: `^!` — это способ
+/// передать `!` (встроенный fake TLS) через cmd.exe с delayed expansion.
+/// Напрямую winws.exe получает аргумент без `^`.
+fn unescape_caret(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '^' {
+            if let Some(&next) = chars.peek() {
+                if next != '\r' && next != '\n' {
+                    out.push(chars.next().unwrap_or(next));
+                    continue;
+                }
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Токенизация с сохранением кавычек в токенах (как в C#-версии).
 fn tokenize(cmd: &str) -> Vec<String> {
     let mut list = Vec::new();
@@ -282,6 +304,40 @@ mod tests {
         assert_eq!(tokens.len(), 3);
         assert_eq!(tokens[1], "\"C:\\Program Files\\x.txt\"");
         assert_eq!(build_command_line(&tokens), "--wf-tcp=80,443 \"C:\\Program Files\\x.txt\" --flag");
+    }
+
+    #[test]
+    fn caret_escapes_are_removed() {
+        assert_eq!(
+            unescape_caret("--dpi-desync-fake-tls=^! --x=^^ --y=^&"),
+            "--dpi-desync-fake-tls=! --x=^ --y=&"
+        );
+    }
+
+    #[test]
+    fn fake_tls_bang_survives_strategy_parsing() {
+        use super::super::install::{StrategyDef, ZapretInstall};
+        let dir = std::env::temp_dir().join(format!("zapret-bat-bang-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("general.bat");
+        std::fs::write(
+            &file,
+            "@echo off\r\nset \"BIN=%~dp0bin\\\\\"\r\n\"%BIN%winws.exe\" --filter-tcp=443 --dpi-desync=fake --dpi-desync-fake-tls=^!\r\n",
+        )
+        .unwrap();
+        let inst = ZapretInstall {
+            root: dir.to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        let strategy = StrategyDef {
+            file: file.clone(),
+            name: "general".to_string(),
+            ..Default::default()
+        };
+        let argv = get_argv(&inst, &strategy, &GameFilterState::default()).unwrap();
+        assert!(argv.iter().any(|a| a == "--dpi-desync-fake-tls=!"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
