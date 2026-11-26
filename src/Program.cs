@@ -38,7 +38,7 @@ namespace ZapretManager
             AppInfo.ShotSite = FindArgValue(args, "--shot-site");
             int shotScroll;
             if (int.TryParse(FindArgValue(args, "--shot-scroll"), out shotScroll)) AppInfo.ShotScroll = shotScroll;
-            bool shotMode = !string.IsNullOrEmpty(AppInfo.ShotPath);
+            bool shotMode = !string.IsNullOrEmpty(AppInfo.ShotPath) || !string.IsNullOrEmpty(FindArgValue(args, "--menu-shot"));
             bool selfUpdateMode = HasFlag(args, "--self-update");
             bool tgPrepareMode = HasFlag(args, "--tg-prepare");
             bool guardOnce = HasFlag(args, "--guard-once");

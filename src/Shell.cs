@@ -286,8 +286,24 @@ namespace ZapretManager
         private Label _lblIpSet;
         private Panel _logoBox;
         private Label _navGroup1;
+        private Form _menuOwner;
 
         public const int SidebarWidth = 236;
+
+        /// <summary>Невидимый владелец меню трея: не активирует главное окно и не показывает его в панели задач.</summary>
+        private sealed class TrayMenuOwner : Form
+        {
+            protected override bool ShowWithoutActivation { get { return true; } }
+            protected override CreateParams CreateParams
+            {
+                get
+                {
+                    CreateParams cp = base.CreateParams;
+                    cp.ExStyle |= 0x00000080 | 0x08000000;   // WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+                    return cp;
+                }
+            }
+        }
 
         public MainForm(Shell shell)
         {
@@ -402,6 +418,14 @@ namespace ZapretManager
             _tray.Visible = true;
             _tray.DoubleClick += delegate { ShowFromTray(); };
 
+            _menuOwner = new TrayMenuOwner();
+            _menuOwner.StartPosition = FormStartPosition.Manual;
+            _menuOwner.FormBorderStyle = FormBorderStyle.None;
+            _menuOwner.ShowInTaskbar = false;
+            _menuOwner.Size = new Size(1, 1);
+            _menuOwner.Opacity = 0;
+            _menuOwner.Show();
+
             DarkMenu menu = new DarkMenu();
             menu.BackColor = Theme.Surface;
             menu.ForeColor = Theme.Text;
@@ -442,6 +466,7 @@ namespace ZapretManager
                 try { tgOn = TgProxy.GetState(_shell.Config).Running; } catch { }
                 tgItem.Text = tgOn ? "Остановить TG WS Proxy" : "Запустить TG WS Proxy";
             };
+            menu.Closed += delegate { if (_menuOwner != null) _menuOwner.Hide(); };
             // позиционируем сами, но координатами WinForms: они уже пересчитаны
             // в систему координат процесса, в отличие от «сырого» GetCursorPos
             _tray.MouseUp += delegate(object s, MouseEventArgs e)
@@ -454,7 +479,16 @@ namespace ZapretManager
                 bool wasMinimized = WindowState == FormWindowState.Minimized;
 
                 System.Drawing.Point at = Native.CursorPosition();
-                menu.Show(at);
+                if (_menuOwner != null)
+                {
+                    _menuOwner.Location = at;
+                    if (!_menuOwner.Visible) _menuOwner.Show();
+                    menu.Show(_menuOwner, new Point(0, 0));
+                }
+                else
+                {
+                    menu.Show(at);
+                }
                 // фокус меню обязателен: без него оно не закрывается по клику вне его
                 Native.SetForegroundWindow(menu.Handle);
 
@@ -794,6 +828,11 @@ namespace ZapretManager
                 _tray.Visible = false;
                 _tray.Dispose();
                 _tray = null;
+            }
+            if (_menuOwner != null)
+            {
+                _menuOwner.Dispose();
+                _menuOwner = null;
             }
             try
             {

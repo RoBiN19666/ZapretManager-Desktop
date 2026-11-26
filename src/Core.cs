@@ -152,7 +152,7 @@ namespace ZapretManager
         }
 
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
-        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+        public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
         /// <summary>Перерисовка RichTextBox без мерцания (WM_SETREDRAW).</summary>
         public static void SetRedraw(IntPtr hwnd, bool enabled)

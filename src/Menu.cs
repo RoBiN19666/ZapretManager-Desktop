@@ -96,7 +96,11 @@ namespace ZapretManager
         public static void StyleItem(ToolStripItem item, string kind)
         {
             item.Font = Theme.Base;
-            item.Padding = new Padding(Theme.Px(2), Theme.Px(7), Theme.Px(18), Theme.Px(7));
+            item.AutoSize = true;
+            item.TextAlign = ContentAlignment.MiddleLeft;
+            item.ImageAlign = ContentAlignment.MiddleLeft;
+            item.Padding = new Padding(Theme.Px(2), 0, Theme.Px(18), 0);
+            item.Margin = Padding.Empty;
             item.ImageScaling = ToolStripItemImageScaling.None;
             if (!string.IsNullOrEmpty(kind)) item.Image = MenuIcons.Get(kind);
         }

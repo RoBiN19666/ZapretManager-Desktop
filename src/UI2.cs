@@ -481,7 +481,8 @@ namespace ZapretManager
             SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
             DoubleBuffered = true;
             DrawMode = DrawMode.OwnerDrawFixed;
-            ItemHeight = 36;
+            // Высота строки должна вмещать две строки текста при 125–150 % DPI.
+            ItemHeight = Math.Max(Theme.Px(36), Theme.Bold.Height + Theme.Small.Height + Theme.Px(10));
             BorderStyle = BorderStyle.None;
             BackColor = Theme.Surface;
             ForeColor = Theme.Text;
@@ -508,9 +509,11 @@ namespace ZapretManager
             if (selected) Draw.FillRound(g, r, 7, Theme.Selection);
             else if (e.Index == _hot) Draw.FillRound(g, r, 7, Theme.Hover);
             string sub = e.Index < Subtitles.Length ? Subtitles[e.Index] : "";
-            TextRenderer.DrawText(g, Convert.ToString(Items[e.Index]), Theme.Bold, new Rectangle(r.X + 10, r.Y + 5, r.Width - 20, 16),
+            int pad = Theme.Px(5);
+            int nameH = Theme.Bold.Height + 2;
+            TextRenderer.DrawText(g, Convert.ToString(Items[e.Index]), Theme.Bold, new Rectangle(r.X + 10, r.Y + pad, r.Width - 20, nameH),
                 selected ? Theme.Text : Theme.Text, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
-            TextRenderer.DrawText(g, sub, Theme.Small, new Rectangle(r.X + 10, r.Y + 20, r.Width - 20, 14),
+            TextRenderer.DrawText(g, sub, Theme.Small, new Rectangle(r.X + 10, r.Y + pad + nameH + 1, r.Width - 20, Theme.Small.Height + 2),
                 Theme.TextMuted, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
         }
 

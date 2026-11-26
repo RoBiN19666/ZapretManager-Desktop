@@ -1070,8 +1070,39 @@ namespace ZapretManager
 
         protected override void OnMouseWheel(MouseEventArgs e)
         {
+            Control deep = DeepChildAt(PointToClient(Cursor.Position));
+            if (deep != null && deep != this && IsScrollable(deep))
+            {
+                int x = Cursor.Position.X;
+                int y = Cursor.Position.Y;
+                IntPtr wparam = (IntPtr)((e.Delta << 16) & unchecked((int)0xFFFF0000));
+                IntPtr lparam = (IntPtr)((y << 16) | (x & 0xFFFF));
+                Native.SendMessage(deep.Handle, 0x020A, wparam, lparam);   // WM_MOUSEWHEEL
+                return;
+            }
             Wheel(e.Delta);
             base.OnMouseWheel(e);
+        }
+
+        private Control DeepChildAt(Point client)
+        {
+            Control c = GetChildAtPoint(client);
+            while (c != null)
+            {
+                Point p = c.PointToClient(PointToScreen(client));
+                Control next = c.GetChildAtPoint(p);
+                if (next == null) break;
+                c = next;
+            }
+            return c;
+        }
+
+        private static bool IsScrollable(Control c)
+        {
+            if (c == null || !c.Visible || !c.Enabled) return false;
+            if (c is ListBox || c is TextBoxBase) return true;
+            ScrollableControl sc = c as ScrollableControl;
+            return sc != null && sc.VerticalScroll.Visible;
         }
 
         protected override void OnMouseDown(MouseEventArgs e)
