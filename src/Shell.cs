@@ -414,7 +414,7 @@ namespace ZapretManager
         {
             if (_tray != null) return;
             _tray = new NotifyIcon();
-            try { _tray.Icon = Icon; } catch { _tray.Icon = SystemIcons.Application; }
+            try { _tray.Icon = Brand.Tray ?? Icon; } catch { _tray.Icon = SystemIcons.Application; }
             _tray.Text = "Zapret Manager";
             _tray.Visible = true;
             _tray.DoubleClick += delegate { ShowFromTray(); };

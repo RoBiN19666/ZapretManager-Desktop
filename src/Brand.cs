@@ -16,6 +16,7 @@ namespace ZapretManager
         private static Bitmap _lock;
         private static Bitmap _boosty;
         private static Bitmap _donationAlerts;
+        private static Icon _tray;
 
         public static Bitmap Icon
         {
@@ -43,6 +44,11 @@ namespace ZapretManager
             get { EnsureLoaded(); return _donationAlerts; }
         }
 
+        public static Icon Tray
+        {
+            get { EnsureLoaded(); return _tray; }
+        }
+
         private static void EnsureLoaded()
         {
             if (_loaded) return;
@@ -52,6 +58,7 @@ namespace ZapretManager
             _lock = Load("lock.png");
             _boosty = Load("boosty.png");
             _donationAlerts = Load("donationalerts.png");
+            _tray = LoadIcon("tray.ico");
         }
 
         private static Bitmap Load(string name)
@@ -70,6 +77,23 @@ namespace ZapretManager
             catch (Exception ex)
             {
                 Log.Warn("Не удалось загрузить изображение " + name + ": " + ex.Message);
+                return null;
+            }
+        }
+
+        private static Icon LoadIcon(string name)
+        {
+            try
+            {
+                using (Stream s = Assembly.GetExecutingAssembly().GetManifestResourceStream(name))
+                {
+                    if (s == null) return null;
+                    return new Icon(s);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Не удалось загрузить иконку " + name + ": " + ex.Message);
                 return null;
             }
         }
