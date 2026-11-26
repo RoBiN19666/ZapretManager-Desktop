@@ -698,6 +698,7 @@ namespace ZapretManager
             _content.BackColor = Theme.Bg;
             Controls.Add(_content);
 
+            // На маленьком размере лучше читается иконка в рамке (замок без рамки используем крупно)
             _logoBox = new Panel();
             _logoBox.Size = new Size(38, 38);
             _logoBox.Location = new Point(18, 20);
@@ -705,14 +706,12 @@ namespace ZapretManager
             _logoBox.Paint += delegate(object s, PaintEventArgs e)
             {
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-                Draw.FillRound(e.Graphics, new Rectangle(0, 0, 37, 37), 11, Color.FromArgb(46, 255, 138, 30));
-                Draw.DrawRound(e.Graphics, new Rectangle(0, 0, 37, 37), 11, Color.FromArgb(90, 255, 170, 80), 1f);
-                Brand.DrawIcon(e.Graphics, new Rectangle(2, 2, 34, 34));
+                Brand.DrawIcon(e.Graphics, new Rectangle(0, 0, 37, 37));
             };
             _sidebar.Controls.Add(_logoBox);
 
-            _sidebar.Controls.Add(L("Zapret Manager", Theme.Bold, Theme.Text, 60, 24));
-            _sidebar.Controls.Add(L("v" + AppInfo.Version, Theme.Small, Theme.TextMuted, 60, 42));
+            _sidebar.Controls.Add(L("Zapret Manager", Theme.Bold, Theme.Text, 64, 24));
+            _sidebar.Controls.Add(L("v" + AppInfo.Version, Theme.Small, Theme.TextMuted, 64, 42));
         }
 
         /// <summary>Ручная раскладка: сайдбар слева, контент справа, строка состояния снизу.</summary>

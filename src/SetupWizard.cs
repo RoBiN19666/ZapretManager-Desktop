@@ -42,30 +42,30 @@ namespace ZapretManager
             ForeColor = Theme.Text;
             Font = Theme.Base;
             AutoScaleMode = AutoScaleMode.None;
-            ClientSize = new Size(760, 560);
+            ClientSize = new Size(760, 576);
 
             Controls.Add(L("Первая настройка", Theme.Title, Theme.Text, 28, 22));
             Controls.Add(WrapLabel("Отметьте, что нужно установить. Обе программы официальные и скачиваются с GitHub Flowseal. Позже это можно повторить из «Инструменты» → «Мастер установки».",
-                Theme.Small, Theme.TextDim, 28, 56, 704));
+                Theme.Small, Theme.TextDim, 28, 56, 590));
 
             BuildZapretCard();
             BuildTgCard();
 
             _progress = new LineProgress();
-            _progress.Location = new Point(28, 456);
+            _progress.Location = new Point(28, 470);
             _progress.Width = 704;
             Controls.Add(_progress);
 
-            _stage = L("", Theme.Small, Theme.TextMuted, 28, 470);
+            _stage = L("", Theme.Small, Theme.TextMuted, 28, 484);
             Controls.Add(_stage);
 
             _btnSkip = Btn("Пропустить", ButtonKind.Secondary, 130);
-            _btnSkip.Location = new Point(ClientSize.Width - 28 - 210 - 140, 508);
+            _btnSkip.Location = new Point(ClientSize.Width - 28 - 210 - 140, 522);
             _btnSkip.Click += delegate { DialogResult = DialogResult.Cancel; Close(); };
             Controls.Add(_btnSkip);
 
             _btnInstall = Btn("Установить и продолжить", ButtonKind.Primary, 210);
-            _btnInstall.Location = new Point(ClientSize.Width - 28 - 210, 508);
+            _btnInstall.Location = new Point(ClientSize.Width - 28 - 210, 522);
             _btnInstall.Click += delegate { StartInstall(); };
             Controls.Add(_btnInstall);
 
@@ -73,13 +73,13 @@ namespace ZapretManager
             CancelButton = _btnSkip;
 
             Panel logo = new Panel();
-            logo.Location = new Point(ClientSize.Width - 28 - 120, 8);
-            logo.Size = new Size(120, 60);
+            logo.Location = new Point(ClientSize.Width - 28 - 96, 2);
+            logo.Size = new Size(96, 96);
             logo.BackColor = Color.Transparent;
             logo.Paint += delegate(object s, PaintEventArgs e)
             {
                 e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                Brand.DrawIcon(e.Graphics, new Rectangle(0, 0, 56, 56));
+                Brand.DrawLock(e.Graphics, new Rectangle(0, 0, logo.Width, logo.Height), 255);
             };
             Controls.Add(logo);
 
@@ -132,7 +132,7 @@ namespace ZapretManager
         {
             _zapretCard = new Card("Запрет (обход DPI для Discord и YouTube)", 168);
             _zapretCard.Width = 704;
-            _zapretCard.Location = new Point(28, 96);
+            _zapretCard.Location = new Point(28, 112);
             Controls.Add(_zapretCard);
 
             _zapretStatus = L("", Theme.Small, Theme.TextDim, 22, 40);
@@ -170,7 +170,7 @@ namespace ZapretManager
         {
             _tgCard = new Card("TG WS Proxy (ускорение Telegram через WebSocket)", 168);
             _tgCard.Width = 704;
-            _tgCard.Location = new Point(28, 276);
+            _tgCard.Location = new Point(28, 292);
             Controls.Add(_tgCard);
 
             _tgStatus = L("", Theme.Small, Theme.TextDim, 22, 40);

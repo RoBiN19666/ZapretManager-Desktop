@@ -1,4 +1,4 @@
-"""Сборка ассетов приложения из исходных изображений логотипа.
+﻿"""Сборка ассетов приложения из исходных изображений логотипа.
 
 Использование:
     python tools/make_assets.py
@@ -63,6 +63,16 @@ def main():
     ico_path = os.path.join(OUT, "zapret-manager.ico")
     images[0].save(ico_path, format="ICO", sizes=[(s, s) for s in ICON_SIZES])
     print("icon:", os.path.getsize(ico_path), "bytes")
+
+    lock_src = os.path.join(SRC, "lock.png")
+    if os.path.exists(lock_src):
+        lock = Image.open(lock_src).convert("RGBA")
+        l = trim(lock)
+        w, h = l.size
+        scale = 256.0 / max(w, h)
+        l = l.resize((max(1, int(round(w * scale))), max(1, int(round(h * scale)))), Image.LANCZOS)
+        l.save(os.path.join(OUT, "lock.png"))
+        print("lock:", l.size, os.path.getsize(os.path.join(OUT, "lock.png")), "bytes")
 
     if os.path.exists(wide_src):
         wide = Image.open(wide_src).convert("RGBA")

@@ -105,7 +105,12 @@ namespace ZapretManager
             Card card = _installCard;
             card.AccentStripe = Theme.Warn;
             card.Controls.Add(WrapLabel("Поместите ZapretManager.exe в папку zapret (рядом с service.bat) или укажите папку вручную. Можно также скачать и установить свежую версию автоматически.",
-                Theme.Base, Theme.TextDim, 22, 44, DesignWidth - 60));
+                Theme.Base, Theme.TextDim, 22, 44, DesignWidth - 280));
+            card.Paint += delegate(object s, PaintEventArgs e)
+            {
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                Brand.DrawLock(e.Graphics, new Rectangle(card.ClientSize.Width - 232, 16, 200, 200), 235);
+            };
             RoundButton pick = Btn("Указать папку zapret…", ButtonKind.Secondary, 200);
             pick.Location = new Point(22, 118);
             pick.Click += delegate { PickFolder(); };
