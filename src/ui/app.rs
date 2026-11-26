@@ -21,6 +21,7 @@ use crate::engine::ops::{FakeFile, HostsStatus, RuntimeState, StartResult, Zapre
 use crate::engine::paths;
 use crate::engine::service;
 use crate::engine::tgproxy::{self, TgState};
+use crate::engine::tester;
 use crate::engine::tester::{LoadedReport, OfficialReport, StrategyTestRow, TargetGroup};
 use crate::engine::update::{Release, SelfUpdateInfo, UpdateCheckResult, UpdateOptions};
 use crate::engine::sys;
@@ -1271,29 +1272,27 @@ impl App {
                     self.pages.test.rows.push(*row);
                     self.pages.test.summary = test_summary(&self.pages.test);
                 }
-                Msg::TestDone(rows) => {
+                Msg::TestDone(mut rows) => {
+                    tester::sort_rows(&mut rows);
                     self.pages.test.rows = rows;
                     self.pages.test.running = false;
                     self.pages.test.status = "Готово.".to_string();
                     self.pages.test.summary = test_summary(&self.pages.test);
-                    // Сразу выделяем лучшую стратегию, чтобы кнопка
-                    // «Запустить выбранную» была понятной и доступной.
-                    let best = self
+                    // Выделяем первую стратегию с лучшим результатом; если их
+                    // несколько, все они отмечены в таблице.
+                    let best_score = self
                         .pages
                         .test
                         .rows
                         .iter()
-                        .filter(|r| r.error.is_empty() && r.total() > 0)
-                        .map(|r| r.passed())
-                        .max()
-                        .unwrap_or(0);
-                    self.pages.test.selected = if best == 0 {
-                        None
-                    } else {
+                        .filter(|r| r.best_candidate())
+                        .map(|r| r.score())
+                        .max();
+                    self.pages.test.selected = best_score.and_then(|score| {
                         self.pages.test.rows.iter().position(|r| {
-                            r.error.is_empty() && r.total() > 0 && r.passed() == best
+                            r.best_candidate() && r.score() == score
                         })
-                    };
+                    });
                 }
                 Msg::AutoProgress(done, total, name) => {
                     self.pages.test.auto_done = done;
@@ -1307,23 +1306,17 @@ impl App {
                             self.pages.test.auto_candidates = report.candidates;
                             self.pages.test.auto_best = report.best.clone();
                             self.pages.test.auto_best_file = report.best_file.clone();
-                            self.pages.test.rows = report.rows;
-                            self.pages.test.running = false;
-                            let best = self
-                                .pages
-                                .test
-                                .rows
+                            let mut rows = report.rows;
+                            tester::sort_rows(&mut rows);
+                            let best = rows
                                 .iter()
-                                .filter(|r| r.error.is_empty() && r.total() > 0)
-                                .max_by_key(|r| r.score())
+                                .find(|r| r.best_candidate())
                                 .cloned();
                             self.pages.test.selected = best.as_ref().and_then(|b| {
-                                self.pages
-                                    .test
-                                    .rows
-                                    .iter()
-                                    .position(|r| r.strategy_name == b.strategy_name)
+                                rows.iter().position(|r| r.strategy_name == b.strategy_name)
                             });
+                            self.pages.test.rows = rows;
+                            self.pages.test.running = false;
                             self.pages.test.summary = test_summary(&self.pages.test);
                             self.pages.test.status = "Автоподбор завершён.".to_string();
                             self.install.rescan();
@@ -2582,6 +2575,27 @@ pub fn test_summary(state: &TestState) -> String {
             "Проверено {} стратегий, ни одна не дала доступа к целям (0 из {}). Возможно, проблема на стороне сети.",
             state.rows.len(),
             total_targets
+        );
+    }
+    let best_score = best.score();
+    let tied: Vec<&StrategyTestRow> = launched
+        .iter()
+        .filter(|r| r.score() == best_score)
+        .copied()
+        .collect();
+    if tied.len() > 1 {
+        let names: Vec<&str> = tied.iter().take(5).map(|r| r.strategy_name.as_str()).collect();
+        let suffix = if tied.len() > names.len() { ", …" } else { "" };
+        return format!(
+            "Лучших несколько ({}): {}{} — {} из {} (сервисов: {} из {}). Проверено стратегий: {}.",
+            tied.len(),
+            names.join(", "),
+            suffix,
+            best.passed(),
+            best.total(),
+            best.healthy_groups(),
+            best.groups.len(),
+            state.rows.len()
         );
     }
     format!(

@@ -200,6 +200,21 @@ impl StrategyTestRow {
     }
 }
 
+/// Отсортировать результаты от лучшего к худшему.
+///
+/// Сначала идут стратегии с наибольшим числом рабочих групп, затем — с
+/// наибольшим числом прошедших целей. Не запустившиеся стратегии уходят вниз.
+pub fn sort_rows(rows: &mut [StrategyTestRow]) {
+    rows.sort_by(|a, b| {
+        let a_ok = a.best_candidate();
+        let b_ok = b.best_candidate();
+        b_ok.cmp(&a_ok)
+            .then_with(|| b.score().cmp(&a.score()))
+            .then_with(|| b.total().cmp(&a.total()))
+            .then_with(|| a.strategy_name.cmp(&b.strategy_name))
+    });
+}
+
 #[derive(Debug, Clone)]
 pub struct TesterOptions {
     pub timeout_ms: u32,
@@ -651,6 +666,7 @@ pub fn load_tsv(path: &Path) -> Option<LoadedReport> {
     if !in_rows {
         return None;
     }
+    sort_rows(&mut rows);
     Some(LoadedReport {
         groups,
         rows,
@@ -888,5 +904,32 @@ mod tests {
         };
         assert_eq!(row.healthy_groups(), 2);
         assert_eq!(row.score(), (2, 6));
+    }
+
+    #[test]
+    fn sort_rows_places_best_first_and_keeps_ties() {
+        let group = |passed: usize, total: usize| GroupResult {
+            group: "g".to_string(),
+            passed,
+            total,
+            ms: 0,
+        };
+        let make = |name: &str, groups: Vec<GroupResult>| StrategyTestRow {
+            strategy_name: name.to_string(),
+            groups,
+            ..Default::default()
+        };
+        let mut rows = vec![
+            make("bad", vec![group(0, 4)]),
+            make("good-b", vec![group(4, 4), group(3, 4)]),
+            make("good-a", vec![group(4, 4), group(3, 4)]),
+            make("middle", vec![group(2, 4)]),
+        ];
+        sort_rows(&mut rows);
+        assert_eq!(rows[0].strategy_name, "good-a");
+        assert_eq!(rows[1].strategy_name, "good-b");
+        assert_eq!(rows[2].strategy_name, "middle");
+        assert_eq!(rows[3].strategy_name, "bad");
+        assert_eq!(rows[0].score(), rows[1].score());
     }
 }

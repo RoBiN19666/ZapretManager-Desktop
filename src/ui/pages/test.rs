@@ -257,14 +257,16 @@ impl App {
             .collect();
         let best_score = rows
             .iter()
-            .filter(|r| r.error.is_empty() && r.total() > 0)
+            .filter(|r| r.best_candidate())
             .map(|r| r.score())
             .max();
-        let best_index = best_score.and_then(|score| {
-            rows.iter().position(|r| {
-                r.error.is_empty() && r.total() > 0 && r.score() == score
+        let best_count = best_score
+            .map(|score| {
+                rows.iter()
+                    .filter(|r| r.best_candidate() && r.score() == score)
+                    .count()
             })
-        });
+            .unwrap_or(0);
         let mut apply_selected = false;
         w::card(ui, &p, "Результаты", |ui| {
             ui.label(
@@ -281,6 +283,16 @@ impl App {
             if rows.is_empty() {
                 w::muted(ui, &p, "Результатов пока нет — запустите тест.");
                 return;
+            }
+            if best_count > 1 {
+                ui.label(
+                    RichText::new(format!(
+                        "Одинаковый лучший результат у {} стратегий — все отмечены ★",
+                        best_count
+                    ))
+                    .size(11.5)
+                    .color(p.accent),
+                );
             }
             // заголовок таблицы
             let widths = table_widths(ui.available_width(), group_names.len());
@@ -303,7 +315,9 @@ impl App {
                 } else if resp.hovered() {
                     ui.painter().rect_filled(rect, egui::Rounding::same(4), p.hover);
                 }
-                let is_best = best_index == Some(idx);
+                let is_best = best_score
+                    .map(|score| row.best_candidate() && row.score() == score)
+                    .unwrap_or(false);
                 let mut x = rect.left() + 8.0;
                 let name = if is_best {
                     format!("★ {}", row.strategy_name)
@@ -657,7 +671,7 @@ impl App {
             let progress_tx = tx.clone();
             let row_tx = tx.clone();
             let cancel_flag = cancel.clone();
-            let rows = tester::run(
+            let mut rows = tester::run(
                 &install,
                 &groups,
                 &options,
@@ -669,6 +683,7 @@ impl App {
                 },
                 &move || cancel_flag.load(Ordering::SeqCst),
             );
+            tester::sort_rows(&mut rows);
             let _ = tester::save_tsv(&rows, &groups_for_report, &options_for_report);
             let _ = tx.send(Msg::TestDone(rows));
         });

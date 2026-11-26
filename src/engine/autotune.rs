@@ -589,7 +589,7 @@ pub fn run_search(
             order: 0,
         })
         .collect();
-    let rows = tester::run_candidates(
+    let mut rows = tester::run_candidates(
         install,
         &strategies,
         selected_groups,
@@ -598,10 +598,10 @@ pub fn run_search(
         &mut row_done,
         cancelled,
     );
+    tester::sort_rows(&mut rows);
     let best = rows
         .iter()
-        .filter(|r| r.error.is_empty() && r.total() > 0)
-        .max_by_key(|r| r.score())
+        .find(|r| r.best_candidate())
         .cloned()
         .filter(|r| r.passed() > 0);
     let best_file = best.as_ref().and_then(|best| {
