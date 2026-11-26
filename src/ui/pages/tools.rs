@@ -223,14 +223,6 @@ impl App {
             }
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
-                if w::secondary(ui, &p, "Открыть папку zapret").clicked() {
-                    let path = std::path::Path::new(&root);
-                    if path.is_dir() {
-                        sys::open_folder(path);
-                    } else {
-                        self.notify("Папка zapret не найдена.", LogLevel::Warn);
-                    }
-                }
                 if w::secondary(ui, &p, "Удалить zapret").clicked() {
                     let keep = keep_lists;
                     let root = root.clone();
