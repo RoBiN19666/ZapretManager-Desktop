@@ -643,6 +643,18 @@ pub fn acquire_single_instance(name: &str) -> bool {
     }
 }
 
+/// Освободить именованный мьютекс перед запуском новой версии.
+pub fn release_single_instance() {
+    if let Ok(mut guard) = INSTANCE_MUTEX.lock() {
+        if let Some(SendHandle(handle)) = guard.take() {
+            unsafe {
+                let _ = windows_sys::Win32::System::Threading::ReleaseMutex(handle);
+                CloseHandle(handle);
+            }
+        }
+    }
+}
+
 /// Похоже ли, что окно свёрнуто.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn is_minimized(hwnd: HWND) -> bool {

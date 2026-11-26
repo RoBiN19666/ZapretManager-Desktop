@@ -825,27 +825,72 @@ pub fn self_apply(info: &SelfUpdateInfo) -> Result<String, String> {
     ] {
         match download_verify(&url, &target, &info.checksums_url) {
             Ok(()) => {
-                let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-                use std::os::windows::process::CommandExt;
-                let status = std::process::Command::new(&target)
-                    .arg("--apply-update")
-                    .env("ZAPRET_UPDATE_TARGET", &exe)
-                    .env("ZAPRET_UPDATE_PID", std::process::id().to_string())
-                    .current_dir(&dir)
-                    .creation_flags(process::CREATE_NO_WINDOW)
-                    .spawn();
-                return match status {
-                    Ok(_) => Ok(format!(
-                        "Обновление {} скачано из релиза. Приложение закроется и запустится заново уже новой версией.",
-                        info.remote
-                    )),
-                    Err(e) => Err(format!("Не удалось запустить замену файла: {}", e)),
-                };
+                return install_self_exe(&target, &info.remote);
             }
             Err(e) => last_error = e,
         }
     }
     Err(format!("Не удалось скачать обновление: {}", last_error))
+}
+
+/// Заменить текущий exe и запустить новую версию.
+///
+/// Windows разрешает переименовать работающий exe, поэтому не нужно ждать
+/// завершения старого процесса. Это надёжнее helper-режима `--apply-update`.
+fn install_self_exe(downloaded: &Path, version: &str) -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let backup = exe.with_file_name(format!(
+        "ZapretManager-{}.old.exe",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&backup);
+    match std::fs::rename(&exe, &backup) {
+        Ok(()) => {
+            if let Err(e) = std::fs::copy(downloaded, &exe) {
+                let _ = std::fs::rename(&backup, &exe);
+                return Err(format!("Не удалось заменить файл программы: {}", e));
+            }
+            super::sys::release_single_instance();
+            match std::process::Command::new(&exe).spawn() {
+                Ok(_) => Ok(format!(
+                    "Обновление {} установлено. Запускаю новую версию…",
+                    version
+                )),
+                Err(e) => {
+                    let _ = std::fs::remove_file(&exe);
+                    let _ = std::fs::rename(&backup, &exe);
+                    Err(format!("Не удалось запустить новую версию: {}", e))
+                }
+            }
+        }
+        Err(e) => {
+            log::warn(format!(
+                "Не удалось переименовать текущий exe ({}). Использую helper.",
+                e
+            ));
+            spawn_apply_helper(downloaded, version)
+        }
+    }
+}
+
+fn spawn_apply_helper(target: &Path, version: &str) -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let dir = target.parent().unwrap_or_else(|| Path::new("."));
+    use std::os::windows::process::CommandExt;
+    let status = std::process::Command::new(target)
+        .arg("--apply-update")
+        .env("ZAPRET_UPDATE_TARGET", &exe)
+        .env("ZAPRET_UPDATE_PID", std::process::id().to_string())
+        .current_dir(dir)
+        .creation_flags(process::CREATE_NO_WINDOW)
+        .spawn();
+    match status {
+        Ok(_) => Ok(format!(
+            "Обновление {} скачано. Приложение закроется и запустится заново.",
+            version
+        )),
+        Err(e) => Err(format!("Не удалось запустить замену файла: {}", e)),
+    }
 }
 
 fn download_verify(url: &str, target: &Path, checksums_url: &str) -> Result<(), String> {

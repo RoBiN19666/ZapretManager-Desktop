@@ -1535,6 +1535,7 @@ impl App {
                     }
                     Err(e) => {
                         self.pages.update.running = false;
+                        self.pages.update.hint = format!("Ошибка: {}", e);
                         self.notify(e, LogLevel::Error);
                     }
                 },
@@ -1738,10 +1739,27 @@ impl App {
                     ui.add_space(6.0);
                 }
                 ui.add_space(4.0);
+                if self.pages.update.running {
+                    ui.label(
+                        RichText::new("Скачивание и установка обновления…")
+                            .size(12.0)
+                            .color(p.accent),
+                    );
+                } else if self.pages.update.hint.contains("Ошибка")
+                    || self.pages.update.hint.contains("Не удалось")
+                {
+                    ui.label(
+                        RichText::new(&self.pages.update.hint)
+                            .size(11.5)
+                            .color(p.danger),
+                    );
+                }
                 ui.horizontal(|ui| {
-                    if manager_update && w::primary(ui, &p, "Обновить менеджер").clicked() {
+                    if manager_update
+                        && !self.pages.update.running
+                        && w::primary(ui, &p, "Обновить менеджер").clicked()
+                    {
                         go_self = true;
-                        close = true;
                     }
                     if w::secondary(ui, &p, "Позже").clicked() {
                         close = true;
