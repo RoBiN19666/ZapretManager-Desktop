@@ -4,7 +4,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows_sys::Win32::Graphics::Gdi::{
+    CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, FillRect, SelectObject, SetBkMode,
+    SetTextColor, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HFONT, TRANSPARENT,
+};
+use windows_sys::Win32::UI::Controls::{
+    DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_DISABLED, ODS_SELECTED, ODT_MENU,
+};
 use windows_sys::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
     NOTIFYICONDATAW,
@@ -13,8 +20,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
     DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, LoadIconW,
     PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow,
-    TrackPopupMenu, TranslateMessage, MSG, WNDCLASSW, WM_APP, WM_CLOSE, WM_LBUTTONDBLCLK,
-    WM_NULL, WM_RBUTTONUP,
+    SetMenuInfo, TrackPopupMenu, TranslateMessage, MENUINFO, MF_OWNERDRAW, MIM_BACKGROUND,
+    MIM_STYLE, MNS_NOCHECK, MSG, WNDCLASSW, WM_APP, WM_CLOSE, WM_DRAWITEM, WM_LBUTTONDBLCLK,
+    WM_MEASUREITEM, WM_NULL, WM_RBUTTONUP,
 };
 
 use crate::engine::config::Ini;
@@ -35,8 +43,6 @@ pub fn take_exit_request() -> bool {
 const TPM_RETURNCMD: u32 = 0x0100;
 const TPM_NONOTIFY: u32 = 0x0080;
 const TPM_RIGHTBUTTON: u32 = 0x0002;
-const MF_STRING: u32 = 0x0000;
-const MF_SEPARATOR: u32 = 0x0800;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayEvent {
@@ -101,6 +107,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
             0
         }
+        WM_MEASUREITEM => measure_menu_item(lparam),
+        WM_DRAWITEM => draw_menu_item(lparam),
         WM_CLOSE => {
             remove_icon(hwnd);
             DestroyWindow(hwnd);
@@ -108,6 +116,199 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
+}
+
+const MENU_BG_DARK: u32 = rgb(26, 22, 20);
+const MENU_ITEM_HEIGHT: u32 = 34;
+const MENU_WIDTH: u32 = 268;
+
+const fn rgb(r: u8, g: u8, b: u8) -> u32 {
+    r as u32 | ((g as u32) << 8) | ((b as u32) << 16)
+}
+
+#[derive(Clone, Copy)]
+struct MenuStyle {
+    bg: u32,
+    text: u32,
+    muted: u32,
+    hover: u32,
+    accent: u32,
+    border: u32,
+}
+
+static MENU_STYLE: Mutex<MenuStyle> = Mutex::new(MenuStyle {
+    bg: MENU_BG_DARK,
+    text: rgb(244, 238, 231),
+    muted: rgb(126, 116, 105),
+    hover: rgb(50, 43, 36),
+    accent: rgb(249, 146, 56),
+    border: rgb(52, 44, 37),
+});
+
+struct TrayMenuItem {
+    id: u32,
+    text: String,
+    icon: &'static str,
+    check: bool,
+    separator: bool,
+    enabled: bool,
+}
+
+fn set_menu_style(light: bool) {
+    let style = if light {
+        MenuStyle {
+            bg: rgb(255, 255, 255),
+            text: rgb(31, 27, 24),
+            muted: rgb(126, 116, 105),
+            hover: rgb(238, 235, 232),
+            accent: rgb(226, 116, 26),
+            border: rgb(220, 219, 216),
+        }
+    } else {
+        MenuStyle {
+            bg: MENU_BG_DARK,
+            text: rgb(244, 238, 231),
+            muted: rgb(126, 116, 105),
+            hover: rgb(50, 43, 36),
+            accent: rgb(249, 146, 56),
+            border: rgb(52, 44, 37),
+        }
+    };
+    if let Ok(mut slot) = MENU_STYLE.lock() {
+        *slot = style;
+    }
+}
+
+unsafe fn make_menu_font(face: &str, height: i32) -> HFONT {
+    let face = wide(face);
+    CreateFontW(
+        height,
+        0,
+        0,
+        0,
+        400,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        5,
+        0,
+        face.as_ptr(),
+    )
+}
+
+unsafe fn draw_menu_item(lparam: LPARAM) -> LRESULT {
+    let dis = &*(lparam as *const DRAWITEMSTRUCT);
+    if dis.CtlType != ODT_MENU || dis.itemData == 0 {
+        return 0;
+    }
+    let item = &*(dis.itemData as *const TrayMenuItem);
+    let style = MENU_STYLE
+        .lock()
+        .map(|s| *s)
+        .unwrap_or(MenuStyle {
+            bg: MENU_BG_DARK,
+            text: rgb(244, 238, 231),
+            muted: rgb(126, 116, 105),
+            hover: rgb(50, 43, 36),
+            accent: rgb(249, 146, 56),
+            border: rgb(52, 44, 37),
+        });
+    let selected = dis.itemState & ODS_SELECTED != 0;
+    let disabled = dis.itemState & ODS_DISABLED != 0 || !item.enabled;
+    let bg = if selected && !disabled {
+        style.hover
+    } else {
+        style.bg
+    };
+    let bg_brush = CreateSolidBrush(bg as COLORREF);
+    FillRect(dis.hDC, &dis.rcItem, bg_brush);
+    let _ = DeleteObject(bg_brush as _);
+
+    if item.separator {
+        let mut line = dis.rcItem;
+        line.left += 12;
+        line.right -= 12;
+        line.top = (line.top + line.bottom) / 2;
+        line.bottom = line.top + 1;
+        let brush = CreateSolidBrush(style.border as COLORREF);
+        FillRect(dis.hDC, &line, brush);
+        let _ = DeleteObject(brush as _);
+        return 1;
+    }
+
+    let text_color = if disabled {
+        style.muted
+    } else if item.check {
+        style.text
+    } else {
+        style.text
+    };
+    SetBkMode(dis.hDC, TRANSPARENT as i32);
+    let icon_font = make_menu_font("Segoe MDL2 Assets", 16);
+    let old = SelectObject(dis.hDC, icon_font as _);
+    SetTextColor(dis.hDC, if item.enabled { style.accent } else { style.muted } as COLORREF);
+    let mut icon_rect = dis.rcItem;
+    icon_rect.left += 14;
+    icon_rect.right = icon_rect.left + 22;
+    let icon = wide(item.icon);
+    DrawTextW(
+        dis.hDC,
+        icon.as_ptr(),
+        icon.len().saturating_sub(1) as i32,
+        &mut icon_rect,
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+    );
+    SelectObject(dis.hDC, old);
+    let _ = DeleteObject(icon_font as _);
+
+    let text_font = make_menu_font("Segoe UI", 14);
+    let old = SelectObject(dis.hDC, text_font as _);
+    SetTextColor(dis.hDC, text_color as COLORREF);
+    let mut text_rect = dis.rcItem;
+    text_rect.left += 42;
+    text_rect.right -= 32;
+    let text = wide(&item.text);
+    DrawTextW(
+        dis.hDC,
+        text.as_ptr(),
+        text.len().saturating_sub(1) as i32,
+        &mut text_rect,
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+    );
+    SelectObject(dis.hDC, old);
+    let _ = DeleteObject(text_font as _);
+
+    if item.check {
+        let check_font = make_menu_font("Segoe MDL2 Assets", 14);
+        let old = SelectObject(dis.hDC, check_font as _);
+        SetTextColor(dis.hDC, style.accent as COLORREF);
+        let mut check_rect = dis.rcItem;
+        check_rect.right -= 14;
+        check_rect.left = check_rect.right - 18;
+        let check = wide("\u{E73E}");
+        DrawTextW(
+            dis.hDC,
+            check.as_ptr(),
+            check.len().saturating_sub(1) as i32,
+            &mut check_rect,
+            DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+        );
+        SelectObject(dis.hDC, old);
+        let _ = DeleteObject(check_font as _);
+    }
+    1
+}
+
+unsafe fn measure_menu_item(lparam: LPARAM) -> LRESULT {
+    let mis = &mut *(lparam as *mut MEASUREITEMSTRUCT);
+    let separator = mis.itemData != 0
+        && (*(mis.itemData as *const TrayMenuItem)).separator;
+    mis.itemWidth = MENU_WIDTH;
+    mis.itemHeight = if separator { 9 } else { MENU_ITEM_HEIGHT };
+    1
 }
 
 fn show_menu(hwnd: HWND) {
@@ -121,39 +322,110 @@ fn show_menu(hwnd: HWND) {
     }) else {
         return;
     };
+    let light = Ini::load(&paths::config_path()).get("Theme", "auto") == "light";
+    set_menu_style(light);
     unsafe {
         let menu = CreatePopupMenu();
         if menu.is_null() {
             return;
         }
-        let mut add = |flags: u32, id: usize, text: &str| {
-            let w = wide(text);
-            AppendMenuW(menu, flags, id, w.as_ptr());
+        let mut items: Vec<Box<TrayMenuItem>> = vec![
+            Box::new(TrayMenuItem {
+                id: 1,
+                text: "Открыть Zapret Manager".to_string(),
+                icon: "\u{E8A7}",
+                check: false,
+                separator: false,
+                enabled: true,
+            }),
+            Box::new(TrayMenuItem {
+                id: 0,
+                text: String::new(),
+                icon: "",
+                check: false,
+                separator: true,
+                enabled: false,
+            }),
+            Box::new(TrayMenuItem {
+                id: 2,
+                text: if zapret_on {
+                    "Остановить ускорение".to_string()
+                } else {
+                    "Запустить ускорение".to_string()
+                },
+                icon: "\u{E7E8}",
+                check: zapret_on,
+                separator: false,
+                enabled: true,
+            }),
+            Box::new(TrayMenuItem {
+                id: 3,
+                text: if tg_on {
+                    "Остановить TG WS Proxy".to_string()
+                } else {
+                    "Запустить TG WS Proxy".to_string()
+                },
+                icon: "\u{E8BD}",
+                check: tg_on,
+                separator: false,
+                enabled: true,
+            }),
+            Box::new(TrayMenuItem {
+                id: 0,
+                text: String::new(),
+                icon: "",
+                check: false,
+                separator: true,
+                enabled: false,
+            }),
+            Box::new(TrayMenuItem {
+                id: 4,
+                text: "Проверить обновления".to_string(),
+                icon: "\u{E896}",
+                check: false,
+                separator: false,
+                enabled: true,
+            }),
+            Box::new(TrayMenuItem {
+                id: 0,
+                text: String::new(),
+                icon: "",
+                check: false,
+                separator: true,
+                enabled: false,
+            }),
+            Box::new(TrayMenuItem {
+                id: 5,
+                text: "Выход".to_string(),
+                icon: "\u{E8BB}",
+                check: false,
+                separator: false,
+                enabled: true,
+            }),
+        ];
+        for item in &mut items {
+            let ptr = (&mut **item) as *mut TrayMenuItem as *const u16;
+            AppendMenuW(menu, MF_OWNERDRAW, item.id as usize, ptr);
+        }
+        let style = MENU_STYLE.lock().map(|s| *s).unwrap_or(MenuStyle {
+            bg: MENU_BG_DARK,
+            text: rgb(244, 238, 231),
+            muted: rgb(126, 116, 105),
+            hover: rgb(50, 43, 36),
+            accent: rgb(249, 146, 56),
+            border: rgb(52, 44, 37),
+        });
+        let brush = CreateSolidBrush(style.bg as COLORREF);
+        let info = MENUINFO {
+            cbSize: std::mem::size_of::<MENUINFO>() as u32,
+            fMask: MIM_BACKGROUND | MIM_STYLE,
+            dwStyle: MNS_NOCHECK,
+            cyMax: 0,
+            hbrBack: brush,
+            dwContextHelpID: 0,
+            dwMenuData: 0,
         };
-        add(MF_STRING, 1, "Открыть Zapret Manager");
-        add(MF_SEPARATOR, 0, "");
-        add(
-            MF_STRING,
-            2,
-            if zapret_on {
-                "Остановить zapret"
-            } else {
-                "Запустить zapret"
-            },
-        );
-        add(
-            MF_STRING,
-            3,
-            if tg_on {
-                "Остановить TG WS Proxy"
-            } else {
-                "Запустить TG WS Proxy"
-            },
-        );
-        add(MF_SEPARATOR, 0, "");
-        add(MF_STRING, 4, "Проверить обновления");
-        add(MF_SEPARATOR, 0, "");
-        add(MF_STRING, 5, "Выход");
+        let _ = SetMenuInfo(menu, &info);
 
         let mut pt = POINT { x: 0, y: 0 };
         GetCursorPos(&mut pt);
@@ -169,6 +441,7 @@ fn show_menu(hwnd: HWND) {
         );
         PostMessageW(hwnd, WM_NULL, 0, 0);
         DestroyMenu(menu);
+        let _ = DeleteObject(brush as _);
         match cmd {
             1 => {
                 // Показываем окно напрямую: если оно скрыто в трей, цикл egui
@@ -189,6 +462,7 @@ fn show_menu(hwnd: HWND) {
             }
             _ => {}
         }
+        drop(items);
     }
 }
 

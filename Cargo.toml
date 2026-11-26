@@ -1,6 +1,6 @@
 ﻿[package]
 name = "zapret-manager"
-version = "2.6.0"
+version = "2.6.1"
 edition = "2021"
 rust-version = "1.80"
 description = "Zapret Manager — ускорение соединения для Discord и YouTube (Rust)"
@@ -37,6 +37,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Controls",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }

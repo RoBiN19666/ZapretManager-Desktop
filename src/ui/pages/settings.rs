@@ -5,7 +5,7 @@ use eframe::egui::{self, RichText, Ui};
 use crate::engine::gamefilter::{GameFilterMode, GameFilterState};
 use crate::engine::log::LogLevel;
 use crate::engine::ops::ZapretOps;
-use crate::engine::{autostart, sys};
+use crate::engine::{autostart, service, sys};
 use crate::util::is_port_range_valid;
 
 use crate::ui::app::{App, Page};
@@ -204,11 +204,38 @@ impl App {
                     let ops = ZapretOps::new(self.install.clone());
                     let mode = mode.to_string();
                     self.spawn_bg(move |tx| {
+                        let snap = service::query("zapret");
+                        let service_running = snap.installed && snap.status == "работает";
+                        let manual_running = ops.get_state().winws_running;
                         let mut message = ops.set_ipset_mode(&mode);
-                        if !message.starts_with("Ошибка") && !message.starts_with("Нет ") {
-                            message.push_str(" Перезапустите ускорение, чтобы применить.");
+                        let applied = !message.starts_with("Ошибка") && !message.starts_with("Нет ");
+                        if applied && (service_running || manual_running) {
+                            let restart = if service_running {
+                                let _ = service::stop("zapret");
+                                std::thread::sleep(std::time::Duration::from_millis(1200));
+                                match service::start("zapret") {
+                                    Ok(()) => "Служба перезапущена.".to_string(),
+                                    Err(e) => format!("Не удалось перезапустить службу: {}", e),
+                                }
+                            } else {
+                                let ini = crate::engine::config::Ini::load(
+                                    &crate::engine::paths::config_path(),
+                                );
+                                if let Some(strategy) =
+                                    ops.pick_strategy(&ini.get("LastStrategy", ""))
+                                {
+                                    ops.restart(strategy)
+                                } else {
+                                    "Стратегия для перезапуска не найдена.".to_string()
+                                }
+                            };
+                            message.push(' ');
+                            message.push_str(&restart);
                         }
-                        let level = if message.starts_with("Ошибка") || message.starts_with("Нет ") {
+                        let level = if message.starts_with("Ошибка")
+                            || message.starts_with("Нет ")
+                            || message.contains("Не удалось")
+                        {
                             LogLevel::Error
                         } else {
                             LogLevel::Ok
