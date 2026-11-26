@@ -1782,6 +1782,13 @@ impl App {
     }
 
     fn auto_heal_tick(&mut self) {
+        // Во время теста стратегий winws останавливается специально — это не сбой.
+        if self.pages.test.running
+            || self.pages.test.auto_running
+            || self.pages.test.auto_apply_running
+        {
+            return;
+        }
         if !self.ini.get_bool("AutoHeal", false) {
             self.auto_heal_armed = self.state.winws_running;
             return;
