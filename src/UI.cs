@@ -983,6 +983,8 @@ namespace ZapretManager
         public void ScrollTo(int offset)
         {
             _offset = Math.Max(0, Math.Min(MaxOffset, offset));
+            Log.Info(string.Format("Прокрутка: запрошено {0}, максимум {1}, content {2}, стек {3}, окно {4}",
+                offset, MaxOffset, Stack.ContentHeight, Stack.Height, ClientSize.Height));
             ApplyOffset();
             Invalidate();
         }

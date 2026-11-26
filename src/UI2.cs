@@ -469,6 +469,56 @@ namespace ZapretManager
         }
     }
 
+    /// <summary>Небольшой кликабельный значок-ссылка (Boosty, DonationAlerts).</summary>
+    public sealed class LinkBadge : Control
+    {
+        public string Url = "";
+        private Color _dot = Theme.Accent;
+        private bool _hover;
+        public EventHandler Clicked;
+
+        public LinkBadge(string text, string url, Color dot)
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor | ControlStyles.ResizeRedraw, true);
+            Text = text;
+            Url = url;
+            _dot = dot;
+            Font = Theme.Base;
+            Height = 28;
+            Width = TextRenderer.MeasureText(text, Font).Width + 46;
+            Cursor = Cursors.Hand;
+            BackColor = Color.Transparent;
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+
+        protected override void OnClick(EventArgs e)
+        {
+            base.OnClick(e);
+            try
+            {
+                if (!string.IsNullOrEmpty(Url)) Native.OpenUrl(Url);
+                if (Clicked != null) Clicked(this, EventArgs.Empty);
+            }
+            catch { }
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
+            Draw.FillRound(g, r, Height / 2, _hover ? Theme.Hover : Theme.SurfaceAlt);
+            Draw.DrawRound(g, r, Height / 2, _hover ? Theme.BorderStrong : Theme.Border, 1f);
+            using (SolidBrush b = new SolidBrush(_dot))
+            {
+                g.FillEllipse(b, 10, Height / 2 - 5, 10, 10);
+            }
+            TextRenderer.DrawText(g, Text, Font, new Rectangle(26, 0, Width - 34, Height), Theme.Text,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+        }
+    }
     /// <summary>Строка результата проверки.</summary>
     public class CheckRow : Panel
     {

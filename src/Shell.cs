@@ -518,7 +518,16 @@ namespace ZapretManager
                     return;
                 }
                 Navigate(AppInfo.ShotPage);
-                if (AppInfo.ShotScroll > 0 && _shell.Current != null) _shell.Current.View.ScrollTo(AppInfo.ShotScroll);
+                if (AppInfo.ShotScroll > 0 && _shell.Current != null)
+                {
+                    // даём странице разложиться: иначе максимум прокрутки ещё нулевой
+                    _shell.Current.View.Stack.PerformLayout();
+                    _shell.Current.View.PerformLayout();
+                    Application.DoEvents();
+                    _shell.Current.View.Stack.PerformLayout();
+                    _shell.Current.View.ScrollTo(AppInfo.ShotScroll);
+                    Application.DoEvents();
+                }
             }
             TopMost = true;
             StartPosition = FormStartPosition.Manual;

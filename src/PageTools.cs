@@ -212,11 +212,10 @@ namespace ZapretManager
             tgproxy.Location = new Point(22, y + 60);
             tgproxy.Click += delegate { Native.OpenUrl("https://github.com/Flowseal/tg-ws-proxy"); };
             _aboutCard.Controls.Add(tgproxy);
-
-            Label v = L("Настройки и журнал: " + AppPaths.DataDir, Theme.Small, Theme.TextMuted, 22, y + 92);
+            Label v = L("Настройки и журнал: " + AppPaths.DataDir, Theme.Small, Theme.TextMuted, 22, y + 96);
             _aboutCard.Controls.Add(v);
 
-            _aboutCard.Height = y + 92 + 16 + 14;
+            _aboutCard.Height = y + 96 + 16 + 14;
             View.Stack.Add(_aboutCard);
         }
         private void InstallService()
