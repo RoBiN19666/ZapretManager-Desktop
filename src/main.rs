@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use zapret_manager::engine::config::Ini;
 use zapret_manager::engine::install::ZapretInstall;
-use zapret_manager::engine::{diagnostics, doctor, guard, log, paths, sys, tgproxy, tgsource, update};
+use zapret_manager::engine::{blobs, diagnostics, doctor, guard, log, paths, sys, tgproxy, tgsource, update};
 use zapret_manager::engine::appprobe;
 use zapret_manager::engine::ops::ZapretOps;
 
@@ -49,6 +49,7 @@ fn main() {
     }
 
     let headless = has_flag(&args, "--diag")
+        || has_flag(&args, "--blobs-repair")
         || has_flag(&args, "--cleanup")
         || has_flag(&args, "--check-self")
         || has_flag(&args, "--self-update")
@@ -189,6 +190,10 @@ fn main() {
     if install.is_valid() && ini.get("Root", "") != install.root {
         ini.set("Root", &install.root);
         let _ = ini.save();
+    }
+    if has_flag(&args, "--blobs-repair") {
+        log::info(blobs::repair(&install));
+        return;
     }
     if let Some(host) = arg_value(&args, "--check-site") {
         let mut probe = doctor::check(&host, |step| log::info(step));

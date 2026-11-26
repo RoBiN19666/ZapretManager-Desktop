@@ -1,4 +1,4 @@
-//! Zapret Manager — обход DPI для Discord и YouTube.
+﻿//! Zapret Manager — обход DPI для Discord и YouTube.
 //!
 //! Полная переписка C# WinForms-приложения на Rust.
 
@@ -7,7 +7,7 @@ pub mod ui;
 pub mod util;
 
 /// Версия приложения (показывается в интерфейсе и в журнале).
-pub const APP_VERSION: &str = "2.1.0";
+pub const APP_VERSION: &str = "2.2.0";
 pub const APP_TITLE: &str = "Zapret Manager";
 
 /// Пути, которые нужны всем частям приложения.

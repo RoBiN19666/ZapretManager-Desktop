@@ -3,7 +3,9 @@
 pub mod appprobe;
 pub mod autostart;
 pub mod autotune;
+pub mod backup;
 pub mod bat;
+pub mod blobs;
 pub mod config;
 pub mod diagnostics;
 pub mod doctor;

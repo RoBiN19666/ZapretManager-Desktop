@@ -7,9 +7,13 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::bat;
+use super::config::Ini;
 use super::gamefilter::GameFilterState;
 use super::install::{StrategyDef, StrategyKind, ZapretInstall};
+use super::log;
+use super::ops::ZapretOps;
 use super::paths;
+use super::service;
 use super::tester::{self, StrategyTestRow, TesterOptions};
 use super::textfile;
 
@@ -19,20 +23,28 @@ pub struct Candidate {
     pub file: PathBuf,
 }
 
-const TUNABLE: [&str; 13] = [
+const TUNABLE: [&str; 21] = [
     "--dpi-desync",
     "--dpi-desync-repeats",
     "--dpi-desync-split-pos",
     "--dpi-desync-split-seqovl",
     "--dpi-desync-split-seqovl-pattern",
+    "--dpi-desync-fakedsplit-pattern",
     "--dpi-desync-fooling",
     "--dpi-desync-autottl",
     "--dpi-desync-ttl",
+    "--dpi-desync-cutoff",
+    "--dpi-desync-badseq-increment",
+    "--dpi-desync-hostfakesplit-mod",
+    "--dpi-desync-hostfakesplit-midhost",
+    "--dpi-desync-fake-tls-mod",
     "--dpi-desync-fake-tls",
     "--dpi-desync-fake-http",
     "--dpi-desync-fake-quic",
     "--dpi-desync-fake-unknown-udp",
     "--dpi-desync-fake-unknown",
+    "--dpi-desync-fake-discord",
+    "--dpi-desync-fake-stun",
 ];
 
 #[derive(Default)]
@@ -147,59 +159,120 @@ fn collect_pools(install: &ZapretInstall, gf: &GameFilterState) -> Pools {
 
     // Значения, которых может не быть в текущих .bat, но которые полезно
     // проверить в долгом автоподборе.
-    let extras: [(&str, &[&str]); 8] = [
-        ("--dpi-desync-repeats", &["2", "4", "6", "8", "12", "16"]),
+    let common: &[(&str, &[&str])] = &[
+        ("--dpi-desync-repeats", &["2", "4", "6", "8", "11", "12", "16"]),
         (
             "--dpi-desync-split-pos",
             &["1", "2", "3", "4", "5", "8", "10", "1,2", "2,3", "sni"],
         ),
         (
             "--dpi-desync-split-seqovl",
-            &["0", "1", "2", "568", "652", "1460"],
+            &["0", "1", "2", "568", "582", "652", "654", "681", "726", "1460"],
         ),
         (
             "--dpi-desync-fooling",
-            &["md5sig", "badseq", "md5sig,badseq", "hopbyhop"],
+            &[
+                "md5sig",
+                "badseq",
+                "badsum",
+                "ts",
+                "md5sig,badseq",
+                "badsum,badseq",
+                "badseq,badsum",
+                "ts,md5sig",
+                "hopbyhop",
+            ],
         ),
-        (
-            "--dpi-desync-autottl",
-            &["1", "2", "3", "4", "5", "8"],
-        ),
-        (
-            "--dpi-desync-ttl",
-            &["1", "2", "3", "4", "5", "8", "16", "32"],
-        ),
-        (
-            "--dpi-desync",
-            &["fake", "fake,split2", "split2", "multisplit", "fakedsplit"],
-        ),
-        ("--dpi-desync-fooling", &[""]),
+        ("--dpi-desync-autottl", &["1", "2", "3", "4", "5", "8"]),
+        ("--dpi-desync-ttl", &["1", "2", "3", "4", "5", "8", "16", "32"]),
+        ("--dpi-desync-cutoff", &["d2", "n2", "n5"]),
+        ("--dpi-desync-badseq-increment", &["0"]),
     ];
-    for (key, values) in extras {
-        for value in values {
+    for (key, values) in common {
+        for value in *values {
             for proto in ["tcp", "udp", "any"] {
                 pools.add(key, proto, value);
             }
         }
     }
-    // Для UDP не подмешиваем TCP-режимы вроде multisplit.
-    let tcp_desync = pools
-        .by_proto
-        .get(&("--dpi-desync".to_string(), "tcp".to_string()))
-        .cloned()
-        .unwrap_or_default();
-    for value in &tcp_desync {
-        if value.contains("split") {
-            add_unique(
-                pools
-                    .by_proto
-                    .entry(("--dpi-desync".to_string(), "udp".to_string()))
-                    .or_default(),
-                value,
-            );
+    let tcp_only: &[(&str, &[&str])] = &[
+        (
+            "--dpi-desync",
+            &[
+                "fake",
+                "fake,split2",
+                "fake,multisplit",
+                "fake,fakeddisorder",
+                "split2",
+                "multisplit",
+                "fakedsplit",
+                "hostfakesplit",
+            ],
+        ),
+        (
+            "--dpi-desync-hostfakesplit-mod",
+            &[
+                "host=google.com",
+                "host=ozon.ru",
+                "host=i2.photo.2gis.com",
+                "host=maxcdn.bootstrapcdn.com",
+            ],
+        ),
+        ("--dpi-desync-hostfakesplit-midhost", &["host-2"]),
+        (
+            "--dpi-desync-fake-tls-mod",
+            &[
+                "rnd,dupsid,sni=www.google.com",
+                "rnd,sni=maxcdn.bootstrapcdn.com",
+                "none",
+            ],
+        ),
+    ];
+    for (key, values) in tcp_only {
+        for value in *values {
+            for proto in ["tcp", "any"] {
+                pools.add(key, proto, value);
+            }
+        }
+    }
+    for value in ["fake", "fake,split2", "fake,multisplit"] {
+        for proto in ["udp", "any"] {
+            pools.add("--dpi-desync", proto, value);
+        }
+    }
+    // Файлы, которые уже лежат в bin и подходят для blob-аргументов.
+    let bin = install.bin_dir();
+    if let Some(path) = blob_if_exists(&bin, "stun.bin") {
+        for key in [
+            "--dpi-desync-fakedsplit-pattern",
+            "--dpi-desync-split-seqovl-pattern",
+            "--dpi-desync-fake-stun",
+        ] {
+            for proto in ["tcp", "udp", "any"] {
+                pools.add(key, proto, &path);
+            }
+        }
+    }
+    if let Some(path) = blob_if_exists(&bin, "ACTIVE_DISCORD_UDP.bin") {
+        for proto in ["udp", "any"] {
+            pools.add("--dpi-desync-fake-discord", proto, &path);
+        }
+    }
+    if let Some(path) = blob_if_exists(&bin, "ACTIVE_GAME_UDP.bin") {
+        for proto in ["udp", "any"] {
+            pools.add("--dpi-desync-fake-unknown-udp", proto, &path);
         }
     }
     pools
+}
+
+fn blob_if_exists(dir: &Path, name: &str) -> Option<String> {
+    let path = dir.join(name);
+    if path.is_file() {
+        Some(path.to_string_lossy().to_string())
+    } else {
+        None
+    }
 }
 
 fn short_key(key: &str) -> String {
@@ -274,6 +347,33 @@ fn section_candidates(section: &[String], pools: &Pools) -> Vec<(String, Vec<(St
         if !keys.iter().any(|(k, _)| k.eq_ignore_ascii_case(fake_key)) {
             keys.push((fake_key.to_string(), String::new()));
         }
+        for key in [
+            "--dpi-desync-cutoff",
+            "--dpi-desync-split-seqovl-pattern",
+        ] {
+            if !keys.iter().any(|(k, _)| k.eq_ignore_ascii_case(key)) {
+                keys.push((key.to_string(), String::new()));
+            }
+        }
+        if proto == "tcp" {
+            for key in [
+                "--dpi-desync-hostfakesplit-mod",
+                "--dpi-desync-hostfakesplit-midhost",
+                "--dpi-desync-fake-tls-mod",
+                "--dpi-desync-badseq-increment",
+                "--dpi-desync-fakedsplit-pattern",
+            ] {
+                if !keys.iter().any(|(k, _)| k.eq_ignore_ascii_case(key)) {
+                    keys.push((key.to_string(), String::new()));
+                }
+            }
+        } else {
+            for key in ["--dpi-desync-fake-discord", "--dpi-desync-fake-stun"] {
+                if !keys.iter().any(|(k, _)| k.eq_ignore_ascii_case(key)) {
+                    keys.push((key.to_string(), String::new()));
+                }
+            }
+        }
     }
     let mut out = Vec::new();
     for (key, _) in &keys {
@@ -292,6 +392,10 @@ fn section_candidates(section: &[String], pools: &Pools) -> Vec<(String, Vec<(St
         ("--dpi-desync", "--dpi-desync-fooling"),
         ("--dpi-desync-fake-tls", "--dpi-desync-repeats"),
         ("--dpi-desync-fake-quic", "--dpi-desync-repeats"),
+        ("--dpi-desync", "--dpi-desync-hostfakesplit-mod"),
+        ("--dpi-desync", "--dpi-desync-fake-tls-mod"),
+        ("--dpi-desync-hostfakesplit-mod", "--dpi-desync-fooling"),
+        ("--dpi-desync-badseq-increment", "--dpi-desync-fooling"),
     ];
     for (a, b) in pair_names {
         let Some((_, av)) = keys.iter().find(|(k, _)| k.eq_ignore_ascii_case(a)) else {
@@ -537,6 +641,128 @@ pub fn save_best(install: &ZapretInstall, file: &Path) -> Result<PathBuf, String
     Err("Не удалось подобрать имя для auto-стратегии.".to_string())
 }
 
+#[derive(Debug, Clone)]
+pub struct ApplyReport {
+    pub applied: bool,
+    pub message: String,
+    pub row: StrategyTestRow,
+    pub best_passed: usize,
+    pub best_total: usize,
+}
+
+fn restore_previous(
+    ops: &ZapretOps,
+    previous: Option<&StrategyDef>,
+    service_was_running: bool,
+    was_running: bool,
+) {
+    if !was_running {
+        ops.kill_winws();
+        return;
+    }
+    if service_was_running {
+        if let Err(e) = service::start("zapret") {
+            log::warn(format!("Не удалось вернуть службу zapret: {}", e));
+        }
+        return;
+    }
+    if let Some(prev) = previous {
+        let result = ops.start(prev);
+        if !result.ok {
+            log::warn(format!("Не удалось вернуть стратегию: {}", result.message));
+        }
+    }
+}
+
+/// Применить лучший auto-файл, проверить цели и откатиться при ухудшении.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_and_verify(
+    install: &ZapretInstall,
+    file: &Path,
+    best_passed: usize,
+    selected_groups: &[String],
+    options: &TesterOptions,
+    previous: Option<StrategyDef>,
+) -> Result<ApplyReport, String> {
+    if !file.is_file() {
+        return Err("Файл auto-стратегии не найден.".to_string());
+    }
+    let name = file
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "general (AUTO)".to_string());
+    let best = StrategyDef {
+        file: file.to_path_buf(),
+        name: name.clone(),
+        short_name: "AUTO".to_string(),
+        kind: StrategyKind::Other,
+        description: "Автоподбор".to_string(),
+        warning: false,
+        order: 0,
+    };
+    let ops = ZapretOps::new(install.clone());
+    let service_snap = service::query("zapret");
+    let service_was_running = service_snap.installed && service_snap.status == "работает";
+    let was_running = ops.get_state().winws_running || service_was_running;
+
+    if service_was_running {
+        let _ = service::stop("zapret");
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+    }
+    ops.kill_winws();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    let start = ops.start(&best);
+    if !start.ok {
+        restore_previous(&ops, previous.as_ref(), service_was_running, was_running);
+        return Err(format!("Не удалось запустить auto-стратегию: {}", start.message));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    let row = tester::verify_current(install, selected_groups, options);
+    let passed = row.passed();
+    let total = row.total();
+    let acceptable = total > 0 && passed > 0 && passed + 2 >= best_passed;
+    if acceptable {
+        let mut ini = Ini::load(&paths::config_path());
+        ini.set("LastStrategy", &name);
+        let _ = ini.save();
+        let message = format!(
+            "Стратегия «{}» применена и проверена: {}/{} целей.",
+            name, passed, total
+        );
+        log::ok(&message);
+        return Ok(ApplyReport {
+            applied: true,
+            message,
+            row,
+            best_passed,
+            best_total: total,
+        });
+    }
+
+    let mut msg = format!(
+        "Проверка после применения: {}/{} целей (в автоподборе было {}/{}). Откатываю.",
+        passed,
+        total,
+        best_passed,
+        row.total()
+    );
+    if !row.error.is_empty() {
+        msg.push_str(&format!(" Ошибка: {}", row.error));
+    }
+    log::warn(&msg);
+    let _ = ops.stop();
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    restore_previous(&ops, previous.as_ref(), service_was_running, was_running);
+    Ok(ApplyReport {
+        applied: false,
+        message: msg,
+        row,
+        best_passed,
+        best_total: total,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -569,8 +795,14 @@ mod tests {
             }],
             ..Default::default()
         };
-        let plan = build_plan(&inst, "general", 12).unwrap();
+        let plan = build_plan(&inst, "general", 120).unwrap();
         assert!(plan.len() > 1);
+        assert!(plan
+            .iter()
+            .any(|c| c.name.to_lowercase().contains("hostfakesplit")));
+        assert!(plan
+            .iter()
+            .any(|c| c.name.to_lowercase().contains("fake-tls-mod")));
         let gf = GameFilterState::load(&inst.root);
         for candidate in &plan {
             assert!(candidate.file.is_file());

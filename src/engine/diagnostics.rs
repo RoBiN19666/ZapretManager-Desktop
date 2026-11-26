@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use super::bat;
+use super::blobs;
 use super::gamefilter::GameFilterState;
 use super::install::ZapretInstall;
 use super::ops::ZapretOps;
@@ -698,6 +699,29 @@ pub fn run(
         }
     }
 
+    if valid {
+        step("Файлы обхода winws…");
+        let audit = blobs::audit(install);
+        if audit.is_ok() {
+            b.add(
+                "Обход",
+                "Файлы обхода (blobs)",
+                Severity::Ok,
+                blobs::summary(&audit),
+                "",
+            );
+        } else {
+            b.add(
+                "Обход",
+                "Файлы обхода (blobs)",
+                Severity::Error,
+                blobs::summary(&audit),
+                "Не хватает .bin-файлов, на которые ссылаются стратегии. Их можно докачать из официальных репозиториев.",
+            );
+            b.action("blobs", "Проверить и докачать");
+        }
+    }
+
     let discord = super::ops::discord_cache_dirs();
     if discord.is_empty() {
         b.add(
@@ -878,6 +902,7 @@ pub fn run_action(action_id: &str, ops: &ZapretOps) -> String {
         }
         "discord" => ops.clear_discord_cache(),
         "hosts" => ops.clear_hosts_block(),
+        "blobs" => blobs::repair(&ops.install),
         _ => "Действие не поддерживается.".to_string(),
     }
 }

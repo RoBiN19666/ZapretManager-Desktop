@@ -76,6 +76,7 @@ impl App {
                 if w::primary(ui, &p, label).clicked()
                     && !running
                     && !self.pages.test.auto_running
+                    && !self.pages.test.auto_apply_running
                 {
                     self.start_test();
                 }
@@ -186,10 +187,16 @@ impl App {
                     self.start_auto_search();
                 }
                 if let Some(file) = self.pages.test.auto_best_file.clone() {
-                    if w::secondary(ui, &p, "Запустить лучшую").clicked() {
+                    let busy = self.pages.test.auto_apply_running
+                        || self.pages.test.auto_running
+                        || self.pages.test.running;
+                    if !busy && w::primary(ui, &p, "Применить и проверить").clicked() {
+                        self.apply_auto_best(file.clone());
+                    }
+                    if !busy && w::secondary(ui, &p, "Запустить лучшую").clicked() {
                         self.run_auto_best(file.clone());
                     }
-                    if w::secondary(ui, &p, "Установить службой").clicked() {
+                    if !busy && w::secondary(ui, &p, "Установить службой").clicked() {
                         self.install_auto_best(file.clone());
                     }
                 }
@@ -208,6 +215,19 @@ impl App {
             if !self.pages.test.auto_stage.is_empty() {
                 ui.label(
                     RichText::new(&self.pages.test.auto_stage)
+                        .size(11.5)
+                        .color(p.text_muted),
+                );
+            }
+            if self.pages.test.auto_apply_running {
+                ui.label(
+                    RichText::new("Применяю лучшую стратегию и проверяю цели…")
+                        .size(11.5)
+                        .color(p.warn),
+                );
+            } else if !self.pages.test.auto_apply_stage.is_empty() {
+                ui.label(
+                    RichText::new(&self.pages.test.auto_apply_stage)
                         .size(11.5)
                         .color(p.text_muted),
                 );
@@ -470,6 +490,9 @@ impl App {
     }
 
     fn start_auto_search(&mut self) {
+        if self.pages.test.auto_apply_running {
+            return;
+        }
         if !self.require_admin("Автоподбор стратегии") {
             return;
         }
@@ -503,6 +526,7 @@ impl App {
         self.pages.test.auto_best = None;
         self.pages.test.auto_best_file = None;
         self.pages.test.auto_stage = "Генерация вариантов…".to_string();
+        self.pages.test.auto_apply_stage.clear();
         self.pages.test.auto_cancel =
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let cancel = self.pages.test.auto_cancel.clone();
@@ -526,6 +550,44 @@ impl App {
                 &cancelled,
             );
             let _ = tx.send(Msg::AutoDone(result));
+        });
+    }
+
+    fn apply_auto_best(&mut self, file: std::path::PathBuf) {
+        if !self.require_admin("Применение auto-стратегии") {
+            return;
+        }
+        if self.pages.test.enabled.is_empty() {
+            self.notify("Выберите хотя бы одну группу целей.", LogLevel::Warn);
+            return;
+        }
+        let groups: Vec<String> = self.pages.test.enabled.iter().cloned().collect();
+        let options = TesterOptions {
+            timeout_ms: self.pages.test.timeout_ms,
+            deep_check: self.pages.test.deep,
+            restore_after: true,
+        };
+        let install = self.install.clone();
+        let previous = self.pick_strategy();
+        let best_passed = self
+            .pages
+            .test
+            .auto_best
+            .as_ref()
+            .map(|r| r.passed())
+            .unwrap_or(0);
+        self.pages.test.auto_apply_running = true;
+        self.pages.test.auto_apply_stage.clear();
+        self.spawn_bg(move |tx| {
+            let result = autotune::apply_and_verify(
+                &install,
+                &file,
+                best_passed,
+                &groups,
+                &options,
+                previous,
+            );
+            let _ = tx.send(Msg::ApplyDone(result));
         });
     }
 

@@ -264,6 +264,46 @@ fn check_target(target: &TestTarget, timeout_ms: u32, deep: bool) -> (bool, u64,
     }
 }
 
+/// Проверить цели на уже запущенном bypass, без остановки и baseline.
+/// Нужно автоподбору после применения лучшей стратегии.
+pub fn verify_current(
+    install: &ZapretInstall,
+    selected_groups: &[String],
+    options: &TesterOptions,
+) -> StrategyTestRow {
+    let all_groups = load_targets(&install.utils_dir().join("targets.txt"));
+    let groups: Vec<TargetGroup> = all_groups
+        .into_iter()
+        .filter(|g| selected_groups.iter().any(|s| s.eq_ignore_ascii_case(&g.name)))
+        .collect();
+    let mut row = StrategyTestRow {
+        strategy_name: "Текущий bypass".to_string(),
+        ..Default::default()
+    };
+    if groups.is_empty() {
+        row.error = "Не выбраны цели для проверки.".to_string();
+        return row;
+    }
+    for group in &groups {
+        let mut passed = 0;
+        let mut ms = 0;
+        for target in &group.targets {
+            let (ok, elapsed, _) = check_target(target, options.timeout_ms, options.deep_check);
+            if ok {
+                passed += 1;
+            }
+            ms = ms.max(elapsed);
+        }
+        row.groups.push(GroupResult {
+            group: group.name.clone(),
+            passed,
+            total: group.targets.len(),
+            ms,
+        });
+    }
+    row
+}
+
 /// Запустить последовательный прогон стратегий.
 #[allow(clippy::too_many_arguments)]
 pub fn run(

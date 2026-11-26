@@ -4,7 +4,7 @@ use eframe::egui::{RichText, Ui};
 
 use crate::engine::log::LogLevel;
 use crate::engine::ops::ZapretOps;
-use crate::engine::{paths, sys, tester};
+use crate::engine::{backup, paths, sys, tester};
 
 use crate::ui::app::App;
 use crate::ui::widgets as w;
@@ -181,6 +181,83 @@ impl App {
                 }
                 if w::ghost(ui, &p, "Журнал менеджера").clicked() {
                     sys::select_in_explorer(&paths::log_path());
+                }
+            });
+        });
+        w::card(ui, &p, "Резервная копия", |ui| {
+            w::small(
+                ui,
+                &p,
+                "Сохраняет настройки менеджера, ваши списки, targets.txt и игровой фильтр в один файл .zmb. Перед восстановлением автоматически создаётся копия текущего состояния.",
+            );
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if w::primary(ui, &p, "Создать копию…").clicked() {
+                    let dir = paths::data_dir().join("backups");
+                    let _ = std::fs::create_dir_all(&dir);
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Сохранить резервную копию Zapret Manager")
+                        .set_directory(&dir)
+                        .set_file_name(backup::suggested_name())
+                        .add_filter("Zapret Manager backup", &["zmb"])
+                        .save_file()
+                    {
+                        let install = self.install.clone();
+                        self.spawn_bg(move |tx| {
+                            let result = backup::create(&install, &path)
+                                .map(|b| {
+                                    (
+                                        false,
+                                        format!(
+                                            "Резервная копия создана: {} ({} файлов).",
+                                            b.path.to_string_lossy(),
+                                            b.files
+                                        ),
+                                    )
+                                })
+                                .map_err(|e| e.to_string());
+                            let _ = tx.send(crate::ui::app::Msg::BackupDone(result));
+                        });
+                    }
+                }
+                if w::secondary(ui, &p, "Восстановить…").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Выберите резервную копию Zapret Manager")
+                        .set_directory(paths::data_dir().join("backups"))
+                        .add_filter("Zapret Manager backup", &["zmb"])
+                        .pick_file()
+                    {
+                        self.confirm(
+                            "Восстановить резервную копию?",
+                            "Текущие настройки менеджера, пользовательские списки, targets.txt и игровой фильтр будут заменены. Перед восстановлением создаётся автоматическая копия текущего состояния.",
+                            "Восстановить",
+                            true,
+                            move |app| {
+                                let install = app.install.clone();
+                                let path = path.clone();
+                                app.spawn_bg(move |tx| {
+                                    let result = backup::restore(&install, &path)
+                                        .map(|r| {
+                                            (
+                                                true,
+                                                format!(
+                                                    "Настройки восстановлены из {} ({} файлов).",
+                                                    path.to_string_lossy(),
+                                                    r.files
+                                                ),
+                                            )
+                                        })
+                                        .map_err(|e| e.to_string());
+                                    let _ = tx.send(crate::ui::app::Msg::BackupDone(result));
+                                });
+                            },
+                        );
+                    }
+                }
+                if w::ghost(ui, &p, "Открыть папку копий").clicked() {
+                    let dir = paths::data_dir().join("backups");
+                    let _ = std::fs::create_dir_all(&dir);
+                    sys::open_folder(&dir);
                 }
             });
         });

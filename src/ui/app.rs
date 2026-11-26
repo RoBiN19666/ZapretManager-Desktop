@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Color32, FontId, RichText, Rounding, Sense, Stroke, Vec2};
 
 use crate::engine::appprobe::AppEntry;
-use crate::engine::autotune::AutoReport;
+use crate::engine::autotune::{ApplyReport, AutoReport};
 use crate::engine::config::Ini;
 use crate::engine::diagnostics::CheckResult;
 use crate::engine::doctor::SiteProbe;
@@ -170,6 +170,7 @@ pub enum Msg {
     TestDone(Vec<StrategyTestRow>),
     AutoProgress(usize, usize, String),
     AutoDone(Result<AutoReport, String>),
+    ApplyDone(Result<ApplyReport, String>),
     DiagStep(String),
     DiagDone(Vec<CheckResult>),
     TgLatest(Result<(String, String), String>),
@@ -179,6 +180,7 @@ pub enum Msg {
     TgState(TgState),
     Progress(&'static str, u32, String),
     UpdateDone(Result<String, String>),
+    BackupDone(Result<(bool, String), String>),
     SelfApplyDone(Result<String, String>),
     Releases(Result<Vec<Release>, String>),
     Installed(Box<ZapretInstall>),
@@ -234,6 +236,8 @@ pub struct TestState {
     pub auto_cancel: Arc<AtomicBool>,
     pub auto_base: String,
     pub auto_limit: usize,
+    pub auto_apply_running: bool,
+    pub auto_apply_stage: String,
 }
 
 impl Default for TestState {
@@ -265,6 +269,8 @@ impl Default for TestState {
             auto_cancel: Arc::new(AtomicBool::new(false)),
             auto_base: String::new(),
             auto_limit: 120,
+            auto_apply_running: false,
+            auto_apply_stage: String::new(),
         }
     }
 }
@@ -1231,6 +1237,29 @@ impl App {
                         }
                     }
                 }
+                Msg::ApplyDone(result) => {
+                    self.pages.test.auto_apply_running = false;
+                    match result {
+                        Ok(report) => {
+                            self.pages.test.auto_apply_stage = report.message.clone();
+                            self.pages.test.auto_stage = report.message.clone();
+                            self.refresh_state(true);
+                            if report.applied {
+                                self.notify(report.message, LogLevel::Ok);
+                            } else {
+                                self.notify(report.message, LogLevel::Warn);
+                            }
+                        }
+                        Err(error) => {
+                            self.pages.test.auto_apply_stage =
+                                format!("Ошибка применения: {}", error);
+                            self.notify(
+                                format!("Применение auto-стратегии: {}", error),
+                                LogLevel::Error,
+                            );
+                        }
+                    }
+                }
                 Msg::DiagStep(step) => {
                     self.pages.diagnostics.step = step;
                 }
@@ -1357,6 +1386,21 @@ impl App {
                         }
                     }
                 }
+                Msg::BackupDone(result) => match result {
+                    Ok((restored, message)) => {
+                        self.notify(message, LogLevel::Ok);
+                        if restored {
+                            let root = self.install.root.clone();
+                            self.ini = Ini::load(&paths::config_path());
+                            self.ini.set("Root", &root);
+                            let _ = self.ini.save();
+                            self.install = ZapretInstall::new(&root);
+                            self.ops = ZapretOps::new(self.install.clone());
+                            self.refresh_state(true);
+                        }
+                    }
+                    Err(e) => self.notify(format!("Резервная копия: {}", e), LogLevel::Error),
+                },
                 Msg::SelfApplyDone(result) => match result {
                     Ok(message) => {
                         self.notify(message, LogLevel::Ok);
