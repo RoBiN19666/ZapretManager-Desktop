@@ -37,6 +37,8 @@ namespace ZapretManager
 
         private Card _warnCard;
         private Label _warnText;
+        private RoundButton _warnFix;
+        private RoundButton _warnOpen;
 
         public OverviewPage(Shell shell) : base(shell) { }
 
@@ -86,6 +88,19 @@ namespace ZapretManager
             };
             _warnCard.Controls.Add(open);
             _warnCard.Visible = false;
+        }
+
+        /// <summary>Раскладывает карточку предупреждения под фактическую высоту текста.</summary>
+        private void LayoutWarnCard()
+        {
+            if (_warnText == null) return;
+            _warnText.Width = DesignWidth - 60;
+            int height = TextRenderer.MeasureText(_warnText.Text, _warnText.Font, new Size(_warnText.Width, 4000), TextFormatFlags.WordBreak).Height + 4;
+            _warnText.Height = Math.Max(18, height);
+            int buttonsY = 40 + _warnText.Height + 10;
+            if (_warnFix != null) _warnFix.Location = new Point(22, buttonsY);
+            if (_warnOpen != null) _warnOpen.Location = new Point(324, buttonsY);
+            _warnCard.Height = buttonsY + 36 + 12;
         }
 
         private void ReinstallServiceHere()
