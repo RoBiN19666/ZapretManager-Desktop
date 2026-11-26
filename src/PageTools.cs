@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
@@ -182,7 +182,7 @@ namespace ZapretManager
 
         private void BuildAboutCard()
         {
-            _aboutCard = NewCard("О программе", 212);
+            _aboutCard = NewCard("О программе", 120);
 
             Panel logoBox = new Panel();
             logoBox.Location = new Point(DesignWidth - 356, 34);
@@ -196,25 +196,43 @@ namespace ZapretManager
             };
             _aboutCard.Controls.Add(logoBox);
 
-            _aboutCard.Controls.Add(WrapLabel(string.Format("Zapret Manager {0} — графическая оболочка для zapret-discord-youtube. Не является официальным приложением проекта Flowseal.\nОбход DPI работает через winws.exe и драйвер WinDivert, которые поставляются вместе с zapret.",
-                AppInfo.Version), Theme.Small, Theme.TextDim, 22, 42, DesignWidth - 400));
+            Label aboutText = WrapLabel(string.Format("Zapret Manager {0} — неофициальная графическая оболочка.\nОбход DPI — проект zapret (bol-van), сборка и стратегии — zapret-discord-youtube (Flowseal), прокси Telegram — TG WS Proxy (Flowseal). Сам обход выполняют winws.exe и драйвер WinDivert из состава zapret.",
+                AppInfo.Version), Theme.Small, Theme.TextDim, 22, 42, DesignWidth - 396);
+            _aboutCard.Controls.Add(aboutText);
 
-            Label v = L("Настройки и журнал: " + AppPaths.DataDir, Theme.Small, Theme.TextMuted, 22, 176);
-            _aboutCard.Controls.Add(v);
+            int y = aboutText.Bottom + 8;
 
-            RoundButton repo = Btn("Репозиторий менеджера", ButtonKind.Link, 224);
-            repo.Location = new Point(22, 142);
-            repo.Click += delegate { Native.OpenUrl("https://github.com/RoBiN19666/zapret-discord-youtube"); };
+            RoundButton repo = Btn("Репозиторий менеджера", ButtonKind.Link, 210);
+            repo.Location = new Point(22, y);
+            repo.Click += delegate { Native.OpenUrl("https://github.com/RoBiN19666/ZapretManager-Windows"); };
             _aboutCard.Controls.Add(repo);
 
-            RoundButton zapret = Btn("zapret-discord-youtube", ButtonKind.Link, 200);
-            zapret.Location = new Point(256, 142);
+            RoundButton zapret = Btn("zapret-discord-youtube", ButtonKind.Link, 210);
+            zapret.Location = new Point(240, y);
             zapret.Click += delegate { Native.OpenUrl("https://github.com/Flowseal/zapret-discord-youtube"); };
             _aboutCard.Controls.Add(zapret);
 
+            RoundButton bolvan = Btn("zapret-win-bundle (bol-van)", ButtonKind.Link, 230);
+            bolvan.Location = new Point(22, y + 30);
+            bolvan.Click += delegate { Native.OpenUrl("https://github.com/bol-van/zapret-win-bundle"); };
+            _aboutCard.Controls.Add(bolvan);
+
+            RoundButton core = Btn("исходный zapret", ButtonKind.Link, 150);
+            core.Location = new Point(262, y + 30);
+            core.Click += delegate { Native.OpenUrl("https://github.com/bol-van/zapret"); };
+            _aboutCard.Controls.Add(core);
+
+            RoundButton tgproxy = Btn("TG WS Proxy", ButtonKind.Link, 130);
+            tgproxy.Location = new Point(22, y + 60);
+            tgproxy.Click += delegate { Native.OpenUrl("https://github.com/Flowseal/tg-ws-proxy"); };
+            _aboutCard.Controls.Add(tgproxy);
+
+            Label v = L("Настройки и журнал: " + AppPaths.DataDir, Theme.Small, Theme.TextMuted, 22, y + 92);
+            _aboutCard.Controls.Add(v);
+
+            _aboutCard.Height = y + 92 + 16 + 14;
             View.Stack.Add(_aboutCard);
         }
-
         private void InstallService()
         {
             if (Shell.Install == null || !Shell.Install.IsValid) { Shell.Notify("Папка zapret не найдена.", LogLevel.Error); return; }

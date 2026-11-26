@@ -45,7 +45,7 @@ namespace ZapretManager
             ClientSize = new Size(760, 576);
 
             Controls.Add(L("Первая настройка", Theme.Title, Theme.Text, 28, 22));
-            Controls.Add(WrapLabel("Отметьте, что нужно установить. Обе программы официальные и скачиваются с GitHub Flowseal. Позже это можно повторить из «Инструменты» → «Мастер установки».",
+            Controls.Add(WrapLabel("Отметьте, что нужно установить. Скачиваются официальные сборки: zapret (bol-van) в варианте zapret-discord-youtube (Flowseal) и TG WS Proxy (Flowseal). Позже это можно повторить из «Инструменты» → «Мастер установки».",
                 Theme.Small, Theme.TextDim, 28, 56, 590));
 
             BuildZapretCard();

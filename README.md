@@ -1,8 +1,9 @@
-﻿# Zapret Manager
+# Zapret Manager
 
 Графическая оболочка (один `.exe`, без установки и зависимостей) для
 [zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube) —
-инструмента обхода DPI-блокировок Discord и YouTube.
+инструмента обхода DPI-блокировок Discord и YouTube, построенного на
+[zapret](https://github.com/bol-van/zapret) (автор — **bol-van**).
 
 Приложение не заменяет zapret: оно кладётся рядом с `service.bat`, находит установку,
 читает ваши `.bat`-стратегии и запускает `winws.exe` с теми же аргументами,
@@ -238,14 +239,33 @@ assets\         иконка, логотип и их исходники (source\
 ## Ограничения
 
 - Требуются права администратора: `winws.exe` работает через драйвер WinDivert.
-- Приложение не является официальным продуктом Flowseal; за обход DPI отвечает
-  сам zapret и выбранная стратегия.
+- Приложение не является официальным продуктом ни bol-van (автор zapret), ни Flowseal;
+  за обход DPI отвечает сам zapret и выбранная стратегия.
 - Автообновление работает только с официальным репозиторием Flowseal.
+
+## Благодарности
+
+Менеджер лишь управляет чужими программами — вся заслуга в обходе DPI и прокси принадлежит их авторам:
+
+- **zapret** — обход DPI как таковой (winws, стратегии, WinDivert): автор **bol-van**,
+  <https://github.com/bol-van/zapret> — исходный проект,
+  <https://github.com/bol-van/zapret-win-bundle> — Windows-сборка с бинарниками.
+- **zapret-discord-youtube** — готовая сборка, стратегии `general*.bat`, `service.bat`,
+  автообновление списков и `hosts`: **Flowseal**,
+  <https://github.com/Flowseal/zapret-discord-youtube>.
+- **TG WS Proxy** — локальный MTProto-прокси через WebSocket: **Flowseal**,
+  <https://github.com/Flowseal/tg-ws-proxy>.
+- **WinDivert** — перехват трафика в user-mode (поставляется в составе zapret).
+
+Zapret Manager — неофициальная графическая оболочка, не связанная с авторами этих проектов.
 
 ## Ссылки
 
-- Официальный проект: <https://github.com/Flowseal/zapret-discord-youtube>
-- Форк с исходниками менеджера: <https://github.com/RoBiN19666/zapret-discord-youtube>
+- Запрет (обход DPI), оригинальный проект: <https://github.com/bol-van/zapret>
+- Windows-сборка zapret от bol-van: <https://github.com/bol-van/zapret-win-bundle>
+- zapret-discord-youtube (сборка и стратегии): <https://github.com/Flowseal/zapret-discord-youtube>
+- TG WS Proxy: <https://github.com/Flowseal/tg-ws-proxy>
+- Репозиторий менеджера: <https://github.com/RoBiN19666/ZapretManager-Windows>
 
 ## Оформление
 
