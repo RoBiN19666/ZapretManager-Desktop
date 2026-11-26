@@ -658,6 +658,7 @@ namespace ZapretManager
                 return;
             }
             _tickTimer.Stop();
+            if (_guardTimer != null) _guardTimer.Stop();
             _toastTimer.Stop();
             if (_tray != null)
             {
@@ -1055,9 +1056,143 @@ namespace ZapretManager
             Log.Info("Оформление: " + Theme.Mode + " (" + (Theme.IsDark ? "тёмная" : "светлая") + ").");
         }
 
+        // ---------- автопроверка обновлений и фоновый сторож сайтов ----------
+
+        private System.Windows.Forms.Timer _autoCheckTimer;
+        private System.Windows.Forms.Timer _guardTimer;
+        private int _guardBusy;
+
+        private void StartAutoCheckTimer()
+        {
+            if (_autoCheckTimer != null) return;
+            _autoCheckTimer = new System.Windows.Forms.Timer();
+            _autoCheckTimer.Interval = 20 * 60 * 1000;
+            _autoCheckTimer.Tick += delegate { MaybeAutoCheck(); };
+            _autoCheckTimer.Start();
+        }
+
+        private int AutoCheckHours()
+        {
+            int hours;
+            if (!int.TryParse(_shell.Config.Get("AutoCheckHours", "6"), out hours)) hours = 6;
+            if (hours < 1) hours = 1;
+            return hours;
+        }
+
+        private void MaybeAutoCheck()
+        {
+            int hours = AutoCheckHours();
+            DateTime last;
+            if (DateTime.TryParse(_shell.Config.Get("LastAutoUpdateCheck", ""), out last)
+                && (DateTime.Now - last).TotalHours < hours) return;
+
+            _shell.Config.Set("LastAutoUpdateCheck", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            _shell.Config.Save();
+            Log.Info("Автопроверка обновлений (раз в " + hours + " ч).");
+
+            _shell.RunBackground(delegate()
+            {
+                SelfUpdateInfo self = SelfUpdate.Check(true);
+                _shell.Ui(delegate()
+                {
+                    if (self.Ok && self.Available)
+                    {
+                        ShowToast("Доступна версия Zapret Manager " + self.Remote, LogLevel.Warn);
+                        if (_tray != null)
+                        {
+                            try { _tray.ShowBalloonTip(5000, "Zapret Manager", "Доступна новая версия " + self.Remote + ".", ToolTipIcon.Info); } catch { }
+                        }
+                    }
+                });
+            }, null);
+
+            if (!_shell.Install.IsValid) return;
+            string local = _shell.LocalVersion;
+            _shell.RunBackground(delegate()
+            {
+                UpdateCheckResult res = UpdateChecker.Check(local, true);
+                _shell.Ui(delegate()
+                {
+                    _shell.UpdateState = res;
+                    _shell.RaiseUpdateStateChanged();
+                    if (res.Ok && res.UpdateAvailable)
+                    {
+                        ShowToast(string.Format("Доступно обновление zapret {0} → {1}", local, res.RemoteVersion), LogLevel.Warn);
+                        if (_tray != null)
+                        {
+                            try { _tray.ShowBalloonTip(5000, "zapret", "Доступна версия " + res.RemoteVersion + ".", ToolTipIcon.Info); } catch { }
+                        }
+                    }
+                });
+            }, null);
+        }
+
+        /// <summary>Фоновый сторож: читает журнал DNS и добавляет заблокированные домены в списки.</summary>
+        private void StartSiteGuard()
+        {
+            if (_shell.Config.GetBool("SiteGuard", false))
+            {
+                SiteGuard.EnableLog();
+                SiteGuard.ResetCursor();
+                Log.Info("Сторож сайтов включён: следим за запросами браузеров.");
+            }
+            if (_guardTimer != null) return;
+            _guardTimer = new System.Windows.Forms.Timer();
+            _guardTimer.Interval = 6000;
+            _guardTimer.Tick += delegate { PollSiteGuard(); };
+            _guardTimer.Start();
+        }
+
+        private void PollSiteGuard()
+        {
+            if (!_shell.Config.GetBool("SiteGuard", false)) return;
+            if (_shell.Busy || _shell.Install == null || !_shell.Install.IsValid) return;
+            if (System.Threading.Interlocked.CompareExchange(ref _guardBusy, 1, 0) != 0) return;
+
+            ZapretInstall install = _shell.Install;
+            bool autoAdd = _shell.Config.GetBool("SiteGuardAutoAdd", true);
+            _shell.RunBackground(delegate()
+            {
+                try
+                {
+                    string error;
+                    int scanned;
+                    System.Collections.Generic.List<string> hosts = SiteGuard.NewBrowserHosts(out error, out scanned);
+                    if (error.Length > 0 || hosts.Count == 0) return;
+                    System.Collections.Generic.List<string> added = SiteGuard.Process(install, _shell.Config, hosts, autoAdd, delegate(string message)
+                    {
+                        _shell.Ui(delegate()
+                        {
+                            ShowToast("Сторож сайтов: " + message, LogLevel.Warn);
+                            if (_tray != null)
+                            {
+                                try { _tray.ShowBalloonTip(5000, "Сторож сайтов", message, ToolTipIcon.Warning); } catch { }
+                            }
+                        });
+                    });
+                    if (added.Count > 0)
+                    {
+                        SiteGuard.Trim();
+                        _shell.Ui(delegate() { _shell.RefreshState(true); });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn("Сторож сайтов: " + ex.Message);
+                }
+                finally
+                {
+                    System.Threading.Interlocked.Exchange(ref _guardBusy, 0);
+                }
+            }, null);
+        }
+
         private void StartUpdateCheck()
         {
             if (!_shell.Config.GetBool("CheckUpdatesOnStartup", true)) return;
+            StartAutoCheckTimer();
+            _shell.Config.Set("LastAutoUpdateCheck", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            _shell.Config.Save();
 
             // обновление самого менеджера из репозитория
             _shell.RunBackground(delegate()

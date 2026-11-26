@@ -22,6 +22,10 @@ namespace ZapretManager
         private RoundButton _btnToHosts;
         private RoundButton _btnCopy;
         private SiteProbe _probe;
+        private ToggleSwitch _tgGuard;
+        private ToggleSwitch _tgGuardAuto;
+        private Label _guardStatus;
+        private Label _guardInfo;
         private bool _working;
         /// <summary>Готовность проверки для служебных снимков экрана.</summary>
         public static bool Ready = true;
@@ -38,6 +42,7 @@ namespace ZapretManager
             BuildCheckCard();
             BuildHostsCard();
             BuildHelpCard();
+            BuildGuardCard();
 
             if (!string.IsNullOrEmpty(AppInfo.ShotSite))
             {
@@ -141,6 +146,85 @@ namespace ZapretManager
             card.Controls.Add(WrapLabel("Подсказка: если сайт открывается, но контент не грузится (как у Instagram), добавьте в список его CDN-домены — их видно по кнопке «Проверить адреса».",
                 Theme.Small, Theme.TextMuted, 22, 300, DesignWidth - 60));
             View.Stack.Add(card);
+        }
+
+        private bool _suppressGuard;
+
+        private void BuildGuardCard()
+        {
+            Card card = NewCard("Фоновый сторож", 278);
+            card.Controls.Add(L("Следить за блокировками в фоне", Theme.Base, Theme.Text, 22, 44));
+            card.Controls.Add(WrapLabel("Пока менеджер работает, он читает журнал DNS Windows: когда браузер запрашивает домен, сторож быстро проверяет его и добавляет в списки те, что рвутся из-за ТСПУ.",
+                Theme.Small, Theme.TextDim, 22, 74, DesignWidth - 230));
+
+            _tgGuard = new ToggleSwitch();
+            _tgGuard.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            _tgGuard.Location = new Point(DesignWidth - 22 - 46, 42);
+            _tgGuard.CheckedChanged += delegate
+            {
+                if (_suppressGuard) return;
+                Shell.Config.SetBool("SiteGuard", _tgGuard.Checked);
+                Shell.Config.Save();
+                if (_tgGuard.Checked)
+                {
+                    string message = SiteGuard.EnableLog();
+                    SiteGuard.ResetCursor();
+                    Shell.Notify(message, LogLevel.Ok);
+                }
+                else
+                {
+                    Shell.Notify("Сторож выключен.", LogLevel.Ok);
+                }
+                RefreshGuard();
+            };
+            card.Controls.Add(_tgGuard);
+
+            _guardStatus = L("", Theme.Small, Theme.TextMuted, 22, 128);
+            card.Controls.Add(_guardStatus);
+
+            card.Controls.Add(L("Добавлять найденное автоматически", Theme.Small, Theme.TextDim, 22, 164));
+            _tgGuardAuto = new ToggleSwitch();
+            _tgGuardAuto.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            _tgGuardAuto.Location = new Point(DesignWidth - 22 - 46, 162);
+            _tgGuardAuto.CheckedChanged += delegate
+            {
+                if (_suppressGuard) return;
+                Shell.Config.SetBool("SiteGuardAutoAdd", _tgGuardAuto.Checked);
+                Shell.Config.Save();
+            };
+            card.Controls.Add(_tgGuardAuto);
+
+            RoundButton enable = Btn("Включить журнал DNS", ButtonKind.Secondary, 210);
+            enable.Location = new Point(22, 196);
+            enable.Click += delegate
+            {
+                string message = SiteGuard.EnableLog();
+                Shell.Notify(message, LogLevel.Ok);
+                RefreshGuard();
+            };
+            card.Controls.Add(enable);
+
+            card.Controls.Add(WrapLabel("Если в браузере включён DoH (DNS через HTTPS), запросы идут мимо Windows и сторож их не увидит — тогда проверяйте сайт вручную выше.",
+                Theme.Small, Theme.TextMuted, 22, 238, DesignWidth - 60));
+
+            View.Stack.Add(card);
+        }
+
+        private void RefreshGuard()
+        {
+            if (_tgGuard == null) return;
+            _suppressGuard = true;
+            try
+            {
+                _tgGuard.Checked = Shell.Config.GetBool("SiteGuard", false);
+                _tgGuardAuto.Checked = Shell.Config.GetBool("SiteGuardAutoAdd", true);
+                bool logOn = SiteGuard.LogEnabled();
+                if (!_tgGuard.Checked) _guardStatus.Text = "Сторож выключен.";
+                else if (!logOn) _guardStatus.Text = "Журнал DNS выключен — сторож не увидит запросы.";
+                else _guardStatus.Text = "Сторож работает: журнал DNS включён, запросы браузеров под наблюдением.";
+                _guardStatus.ForeColor = _tgGuard.Checked && !logOn ? Theme.Warn : Theme.TextMuted;
+            }
+            finally { _suppressGuard = false; }
         }
 
         private void BuildHelpCard()
@@ -378,6 +462,7 @@ namespace ZapretManager
 
         public override void RefreshState()
         {
+            RefreshGuard();
             if (_working) return;
             if (Shell.Install == null || !Shell.Install.IsValid)
             {

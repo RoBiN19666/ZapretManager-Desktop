@@ -33,6 +33,7 @@ namespace ZapretManager
             bool shotMode = !string.IsNullOrEmpty(AppInfo.ShotPath);
             bool selfUpdateMode = HasFlag(args, "--self-update");
             bool tgPrepareMode = HasFlag(args, "--tg-prepare");
+            bool guardOnce = HasFlag(args, "--guard-once");
             bool tgStartMode = HasFlag(args, "--tg-start");
             bool tgStopMode = HasFlag(args, "--tg-stop");
             AppInfo.TrayMode = HasFlag(args, "--tray");
@@ -93,6 +94,22 @@ namespace ZapretManager
                     tgResult = TgProxy.Start(tgConfig, out tgOk);
                 }
                 Log.Info("Команда TG WS Proxy: " + tgResult);
+                return;
+            }
+            if (guardOnce)
+            {
+                AppConfig guardConfig = AppConfig.Load(AppConfig.DefaultPath());
+                SiteGuard.AllowAllProcesses = true;
+                SiteGuard.DebugFirst = 6;
+                string guardError;
+                int guardScanned;
+                System.Collections.Generic.List<string> guardHosts = SiteGuard.NewBrowserHosts(out guardError, out guardScanned);
+                Log.Info("Сторож: событий " + guardScanned + ", имён " + guardHosts.Count + (guardError.Length > 0 ? ", ошибка: " + guardError : ""));
+                foreach (string gh in guardHosts) Log.Info("Сторож: имя из журнала — " + gh);
+                ZapretInstall guardInstall = ZapretInstall.Detect(string.IsNullOrEmpty(rootArg) ? guardConfig.Get("Root", "") : rootArg);
+                System.Collections.Generic.List<string> guardAdded = SiteGuard.Process(guardInstall, guardConfig, guardHosts, true,
+                    delegate(string message) { Log.Warn("Сторож: " + message); });
+                Log.Info("Сторож: добавлено доменов — " + guardAdded.Count + ".");
                 return;
             }
             if (tgPrepareMode)
