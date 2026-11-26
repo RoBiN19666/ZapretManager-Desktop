@@ -13,6 +13,7 @@ use super::log;
 use super::ops::{self, ZapretOps};
 use super::process;
 use super::textfile;
+use super::winverify::{self, SignatureState};
 
 pub const ZAPRET_REPO: &str = "Flowseal/zapret-discord-youtube";
 pub const SELF_REPO: &str = "RoBiN19666/ZapretManager-Desktop";
@@ -732,6 +733,8 @@ pub struct SelfUpdateInfo {
     pub error: String,
     pub asset_url: String,
     pub checksums_url: String,
+    /// Размер ассета из GitHub API (0 — API его не сообщил).
+    pub asset_size: u64,
 }
 
 static SELF_CACHE: Mutex<Option<(Instant, SelfUpdateInfo)>> = Mutex::new(None);
@@ -776,6 +779,12 @@ pub fn self_check(force: bool) -> SelfUpdateInfo {
             };
             info.asset_url = pick("ZapretManager.exe");
             info.checksums_url = pick("checksums.txt");
+            info.asset_size = release
+                .assets
+                .iter()
+                .find(|a| a.name.eq_ignore_ascii_case("ZapretManager.exe"))
+                .map(|a| a.size)
+                .unwrap_or(0);
             info.ok = true;
         }
         Err(e) => {
@@ -825,12 +834,31 @@ pub fn self_apply(info: &SelfUpdateInfo) -> Result<String, String> {
     ] {
         match download_verify(&url, &target, &info.checksums_url) {
             Ok(()) => {
+                if let Err(e) = check_asset_size(&target, info.asset_size) {
+                    let _ = std::fs::remove_file(&target);
+                    return Err(e);
+                }
                 return install_self_exe(&target, &info.remote);
             }
             Err(e) => last_error = e,
         }
     }
     Err(format!("Не удалось скачать обновление: {}", last_error))
+}
+
+/// Сверить размер скачанного файла с тем, что сообщил GitHub API для ассета.
+fn check_asset_size(path: &Path, expected: u64) -> Result<(), String> {
+    if expected == 0 {
+        return Ok(());
+    }
+    let actual = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    if actual != expected {
+        return Err(format!(
+            "размер обновления не совпал с релизом: ждём {} байт, получили {}",
+            expected, actual
+        ));
+    }
+    Ok(())
 }
 
 /// Заменить текущий exe и запустить новую версию.
@@ -932,11 +960,43 @@ fn download_verify(url: &str, target: &Path, checksums_url: &str) -> Result<(), 
                     &actual[..12.min(actual.len())]
                 ));
             }
+            log::info("Самообновление: контрольная сумма совпала.");
         }
     } else {
-        log::warn("в релизе нет checksums.txt, проверяю только размер и версию файла.");
+        log::warn("в релизе нет checksums.txt, проверяю размер и подпись файла.");
     }
+    check_signature(target)?;
     Ok(())
+}
+
+/// Проверить Authenticode-подпись скачанного обновления.
+///
+/// Неподписанный файл не отбраковываем: пока релизы не подписаны, доверяем
+/// контрольной сумме. А вот недействительную подпись (битый файл, чужой
+/// сертификат, отозванный сертификат) — отбраковываем всегда.
+fn check_signature(target: &Path) -> Result<(), String> {
+    match winverify::check(target) {
+        SignatureState::Valid => {
+            log::ok("Самообновление: подпись скачанного файла действительна.");
+            Ok(())
+        }
+        SignatureState::Unsigned => {
+            log::warn("Самообновление: файл без Authenticode-подписи, доверяем контрольной сумме.");
+            let current = std::env::current_exe()
+                .map(|path| winverify::check(&path))
+                .unwrap_or(SignatureState::Unsigned);
+            if current.is_valid() {
+                log::warn(
+                    "Текущая версия подписана, а обновление — нет: проверьте источник релиза.",
+                );
+            }
+            Ok(())
+        }
+        SignatureState::Invalid(code) => Err(format!(
+            "подпись скачанного файла недействительна (0x{:08X}) — обновление отменено",
+            code as u32
+        )),
+    }
 }
 
 fn parse_checksum(text: &str) -> Option<String> {

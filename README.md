@@ -1,4 +1,4 @@
-﻿# Zapret Manager
+# Zapret Manager
 
 ![Zapret Manager](assets/logo-wide.png)
 
@@ -149,11 +149,25 @@ cargo clippy    # по желанию
 ## Антивирус и ложные срабатывания
 
 Defender иногда помечает `ZapretManager.exe` как `Trojan:Win32/Bearfoos.A!ml` —
-это ложное срабатывание ML-эвристики для неподписанной утилиты, которая
-управляет сетью, службами и WinDivert. Проверьте SHA-256 релиза, восстановите
-файл из карантина и отправьте ложное срабатывание в Microsoft.
+это ложное срабатывание ML-эвристики для утилиты, которая управляет сетью,
+службами и WinDivert.
 
-Подробно: [SECURITY.md](SECURITY.md).
+Что помогает проверить файл и что уже сделано в проекте:
+
+- рядом с exe в каждом релизе лежит `checksums.txt` — сверьте SHA-256
+  (`Get-FileHash .\ZapretManager.exe -Algorithm SHA256`);
+- exe собирается в GitHub Actions из тега (`.github/workflows/release.yml`),
+  а `tools/verify-exe.ps1` в CI проверяет манифест, ресурс версии и отсутствие
+  упаковщика;
+- в exe встроен манифест (`asInvoker`, поддерживаемые версии Windows, DPI,
+  long paths) — без него Windows считает неподписанный exe установщиком;
+- самообновление сверяет SHA-256, размер и Authenticode-подпись скачанного
+  файла;
+- подпись кода через [SignPath Foundation](https://signpath.org/) уже
+  подключена в workflow и включается добавлением secrets — см. SECURITY.md.
+
+Если хэш совпал — восстановите файл из карантина и отправьте ложное
+срабатывание в Microsoft. Подробно: [SECURITY.md](SECURITY.md).
 
 ## Лицензия
 

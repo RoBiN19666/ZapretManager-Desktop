@@ -1,14 +1,20 @@
-//! Встраивание иконки и сведений о версии в exe (Windows).
+//! Встраивание манифеста, иконки и сведений о версии в exe (Windows).
 //!
 //! Для GNU-тулчейна используется `windres`, для MSVC — `rc.exe`.
 //! Без этого Explorer показывает у exe стандартную пустую иконку, хотя
 //! оконная иконка и значок в трее задаются во время выполнения.
+//!
+//! Манифест (`app.manifest`) описывает `asInvoker`, поддерживаемые версии
+//! Windows, DPI-awareness и long paths. Он же отключает эвристику Windows
+//! «это установщик, нужен UAC», из-за которой неподписанный exe выглядит
+//! подозрительно для антивирусов.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/zapret-manager.ico");
+    println!("cargo:rerun-if-changed=app.manifest");
     println!("cargo:rerun-if-changed=build.rs");
 
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
@@ -16,22 +22,28 @@ fn main() {
     }
 
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    let icon = manifest.join("assets").join("zapret-manager.ico");
-    if !icon.is_file() {
-        println!(
-            "cargo:warning=assets/zapret-manager.ico не найден — exe останется без иконки"
-        );
-        return;
-    }
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".to_string());
     let (major, minor, patch) = version_parts(&version);
-    let icon_rc = icon.to_string_lossy().replace('\\', "/");
-    let rc_path = out.join("zapret-manager.rc");
-    let rc = format!(
-        r#"#pragma code_page(65001)
-1 ICON "{icon_rc}"
-1 VERSIONINFO
+
+    // .rc: иконка и манифест — по возможности, VERSIONINFO — всегда.
+    let mut rc = String::from("#pragma code_page(65001)\n");
+    let icon = manifest.join("assets").join("zapret-manager.ico");
+    if icon.is_file() {
+        rc.push_str(&format!("1 ICON \"{}\"\n", rc_path(&icon)));
+    } else {
+        println!(
+            "cargo:warning=assets/zapret-manager.ico не найден — exe останется без иконки"
+        );
+    }
+    let app_manifest = manifest.join("app.manifest");
+    if app_manifest.is_file() {
+        rc.push_str(&format!("1 24 \"{}\"\n", rc_path(&app_manifest)));
+    } else {
+        println!("cargo:warning=app.manifest не найден — exe останется без манифеста");
+    }
+    rc.push_str(&format!(
+        r#"1 VERSIONINFO
 FILEVERSION {major},{minor},{patch},0
 PRODUCTVERSION {major},{minor},{patch},0
 FILEOS 0x40004L
@@ -57,7 +69,9 @@ FILETYPE 0x1L
   }}
 }}
 "#
-    );
+    ));
+
+    let rc_path = out.join("zapret-manager.rc");
     if let Err(error) = std::fs::write(&rc_path, rc) {
         println!("cargo:warning=не удалось записать .rc: {error}");
         return;
@@ -66,13 +80,15 @@ FILETYPE 0x1L
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
     if target_env == "gnu" {
         let Some(windres) = find_windres() else {
-            println!("cargo:warning=windres не найден — exe останется без иконки");
+            println!("cargo:warning=windres не найден — exe останется без иконки и манифеста");
             return;
         };
         let obj = out.join("zapret-manager-res.o");
         let status = Command::new(&windres)
             .arg("-I")
             .arg(manifest.join("assets"))
+            .arg("-I")
+            .arg(&manifest)
             .arg("-i")
             .arg(&rc_path)
             .arg("-o")
@@ -84,12 +100,12 @@ FILETYPE 0x1L
             Ok(s) if s.success() && obj.is_file() => {
                 println!("cargo:rustc-link-arg-bins={}", obj.display());
             }
-            Ok(s) => println!("cargo:warning=windres завершился с кодом {s} — иконка не встроена"),
+            Ok(s) => println!("cargo:warning=windres завершился с кодом {s} — ресурсы не встроены"),
             Err(error) => println!("cargo:warning=не удалось запустить windres: {error}"),
         }
     } else if target_env == "msvc" {
         let Some(rc_exe) = find_rc() else {
-            println!("cargo:warning=rc.exe не найден — exe останется без иконки");
+            println!("cargo:warning=rc.exe не найден — exe останется без иконки и манифеста");
             return;
         };
         let res = out.join("zapret-manager-res.res");
@@ -103,10 +119,15 @@ FILETYPE 0x1L
             Ok(s) if s.success() && res.is_file() => {
                 println!("cargo:rustc-link-arg-bins={}", res.display());
             }
-            Ok(s) => println!("cargo:warning=rc.exe завершился с кодом {s} — иконка не встроена"),
+            Ok(s) => println!("cargo:warning=rc.exe завершился с кодом {s} — ресурсы не встроены"),
             Err(error) => println!("cargo:warning=не удалось запустить rc.exe: {error}"),
         }
     }
+}
+
+/// Путь к файлу ресурса в форме, понятной и windres, и rc.exe.
+fn rc_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn version_parts(version: &str) -> (u32, u32, u32) {

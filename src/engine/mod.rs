@@ -28,5 +28,6 @@ pub mod tgsource;
 pub mod textfile;
 pub mod uninstall;
 pub mod update;
+pub mod winverify;
 
 pub use log::{LogLevel, LogLine};
