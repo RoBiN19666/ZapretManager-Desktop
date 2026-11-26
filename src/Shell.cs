@@ -367,7 +367,7 @@ namespace ZapretManager
             _tray.Visible = true;
             _tray.DoubleClick += delegate { ShowFromTray(); };
 
-            ContextMenuStrip menu = new ContextMenuStrip();
+            DarkMenu menu = new DarkMenu();
             menu.BackColor = Theme.Surface;
             menu.ForeColor = Theme.Text;
             menu.Renderer = new DarkMenuRenderer();
@@ -387,6 +387,18 @@ namespace ZapretManager
             });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Выход", null, delegate { ExitApplication(); });
+            // значки и отступы: строки меню чуть выше, слева место под пиктограмму
+            foreach (ToolStripItem item in menu.Items)
+            {
+                if (item is ToolStripSeparator) continue;
+                item.Font = Theme.Base;
+                item.Padding = new Padding(Theme.Px(30), Theme.Px(7), Theme.Px(18), Theme.Px(7));
+                if (item.Text.StartsWith("Открыть")) item.Tag = "open";
+                else if (item.Text.StartsWith("Запрет")) item.Tag = "shield";
+                else if (item.Text.StartsWith("TG")) item.Tag = "telegram";
+                else if (item.Text.StartsWith("Проверить")) item.Tag = "refresh";
+                else if (item.Text.StartsWith("Выход")) item.Tag = "exit";
+            }
             menu.Opening += delegate
             {
                 bool zapretOn = _shell.State != null && _shell.State.WinwsRunning;

@@ -40,6 +40,7 @@ namespace ZapretManager
             bool checkSelfMode = HasFlag(args, "--check-self");
             bool restoreUacMode = HasFlag(args, "--restore-uac");
             bool cleanupMode = HasFlag(args, "--cleanup");
+            string menuShotPath = FindArgValue(args, "--menu-shot");
             string appWatch = FindArgValue(args, "--app-watch");
             AppInfo.TrayMode = HasFlag(args, "--tray");
             AppInfo.AutostartMode = HasFlag(args, "--autostart");
@@ -121,6 +122,12 @@ namespace ZapretManager
                 System.Collections.Generic.List<string> guardAdded = SiteGuard.Process(guardInstall, guardConfig, guardHosts, true,
                     delegate(string message) { Log.Warn("Сторож: " + message); });
                 Log.Info("Сторож: добавлено доменов — " + guardAdded.Count + ".");
+                return;
+            }
+            if (!string.IsNullOrEmpty(menuShotPath))
+            {
+                Theme.Apply("dark");
+                MenuPreview.Run(menuShotPath);
                 return;
             }
             if (cleanupMode)
