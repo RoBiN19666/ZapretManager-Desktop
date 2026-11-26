@@ -277,13 +277,20 @@ namespace ZapretManager
             if (Items.Count == 0) return;
             Form owner = FindForm();
             Point screen = PointToScreen(new Point(0, Height));
-            using (SelectPopup popup = new SelectPopup(Items, _selected, new Size(Width, 320), screen))
+            SelectPopup popup = new SelectPopup(Items, _selected, new Size(Width, 320), screen);
+            popup.FormClosed += delegate
             {
-                popup.ShowDialog(owner);
-                if (popup.Result >= 0 && popup.Result < Items.Count)
-                {
-                    SelectedIndex = popup.Result;
-                }
+                if (popup.Result >= 0 && popup.Result < Items.Count) SelectedIndex = popup.Result;
+                popup.Dispose();
+            };
+            try
+            {
+                if (owner != null) popup.Show(owner);
+                else popup.Show();
+            }
+            catch
+            {
+                popup.Dispose();
             }
         }
 
