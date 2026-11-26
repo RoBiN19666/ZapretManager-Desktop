@@ -26,15 +26,35 @@ namespace ZapretManager
     {
         public const string Repo = "RoBiN19666/ZapretManager-Windows";
 
-        public static string VersionUrl
+        /// <summary>Зеркала version.txt: raw отдаёт свежий коммит не сразу, jsDelivr — почти сразу.</summary>
+        public static string[] VersionMirrors
         {
-            get { return string.Format("https://raw.githubusercontent.com/{0}/main/version.txt", Repo); }
+            get
+            {
+                return new string[]
+                {
+                    string.Format("https://raw.githubusercontent.com/{0}/main/version.txt", Repo),
+                    string.Format("https://cdn.jsdelivr.net/gh/{0}@main/version.txt", Repo),
+                    string.Format("https://github.com/{0}/raw/main/version.txt", Repo)
+                };
+            }
         }
 
-        public static string ExeUrl
+        public static string[] ExeMirrors
         {
-            get { return string.Format("https://raw.githubusercontent.com/{0}/main/ZapretManager.exe", Repo); }
+            get
+            {
+                return new string[]
+                {
+                    string.Format("https://raw.githubusercontent.com/{0}/main/ZapretManager.exe", Repo),
+                    string.Format("https://cdn.jsdelivr.net/gh/{0}@main/ZapretManager.exe", Repo),
+                    string.Format("https://github.com/{0}/raw/main/ZapretManager.exe", Repo)
+                };
+            }
         }
+
+        public static string VersionUrl { get { return VersionMirrors[0]; } }
+        public static string ExeUrl { get { return ExeMirrors[0]; } }
 
         public static SelfUpdateInfo Last;
 
@@ -43,21 +63,30 @@ namespace ZapretManager
             if (!force && Last != null && (DateTime.Now - Last.CheckedAt).TotalMinutes < 5) return Last;
             SelfUpdateInfo info = new SelfUpdateInfo();
             info.Local = AppInfo.Version;
-            try
+            string lastError = "";
+            foreach (string mirror in VersionMirrors)
             {
-                string url = VersionUrl + "?t=" + DateTime.Now.Ticks;
-                string text = Web.GetString(url, 12000).Trim();
-                Match m = Regex.Match(text, "[0-9]+(\\.[0-9]+)*");
-                if (!m.Success) throw new ApplicationException("version.txt не содержит версии");
-                info.Remote = m.Value;
-                info.Available = Versions.Compare(info.Remote, info.Local) > 0;
-                info.ExeUrl = ExeUrl;
-                info.Ok = true;
+                try
+                {
+                    string url = mirror + (mirror.IndexOf('?') >= 0 ? "&" : "?") + "t=" + DateTime.Now.Ticks;
+                    string text = Web.GetString(url, 15000).Trim();
+                    Match m = Regex.Match(text, "[0-9]+(\\.[0-9]+)*");
+                    if (!m.Success) throw new ApplicationException("в файле версии нет номера");
+                    info.Remote = m.Value;
+                    info.Available = Versions.Compare(info.Remote, info.Local) > 0;
+                    info.ExeUrl = ExeUrl;
+                    info.Ok = true;
+                    lastError = "";
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                }
             }
-            catch (Exception ex)
+            if (!info.Ok)
             {
-                info.Ok = false;
-                info.Error = ex.Message;
+                info.Error = lastError.Length > 0 ? lastError : "не удалось получить файл версии";
             }
             Last = info;
             return info;
@@ -82,10 +111,26 @@ namespace ZapretManager
                 string newExe = Path.Combine(dir, "ZapretManager-" + info.Remote + ".exe");
 
                 if (progress != null) progress(3, "Скачивание обновления " + info.Remote + "…");
-                Web.Download(info.ExeUrl, newExe, delegate(int percent, long read, long total)
+                string downloadError = "";
+                bool downloaded = false;
+                foreach (string mirror in ExeMirrors)
                 {
-                    if (progress != null) progress(percent < 0 ? 20 : 3 + (int)(percent * 0.8), "Скачивание: " + (percent < 0 ? 0 : percent) + "%");
-                }, 180000);
+                    try
+                    {
+                        if (File.Exists(newExe)) File.Delete(newExe);
+                        Web.Download(mirror, newExe, delegate(int percent, long read, long total)
+                        {
+                            if (progress != null) progress(percent < 0 ? 20 : 3 + (int)(percent * 0.8), "Скачивание: " + (percent < 0 ? 0 : percent) + "%");
+                        }, 240000);
+                        downloaded = true;
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        downloadError = ex.Message;
+                    }
+                }
+                if (!downloaded) return "Не удалось скачать обновление: " + downloadError;
 
                 FileInfo fi = new FileInfo(newExe);
                 if (!fi.Exists || fi.Length < 200 * 1024)
