@@ -91,7 +91,7 @@ static LOG_CACHE: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
 pub fn log_enabled() -> bool {
     if let Ok(cache) = LOG_CACHE.lock() {
         if let Some((at, value)) = *cache {
-            if at.elapsed() < Duration::from_secs(5) {
+            if at.elapsed() < Duration::from_secs(30) {
                 return value;
             }
         }
@@ -111,6 +111,9 @@ pub fn enable_log() -> String {
         &["sl", CHANNEL, "/e:true"],
         Duration::from_secs(15),
     );
+    if let Ok(mut cache) = LOG_CACHE.lock() {
+        *cache = None;
+    }
     if r.exit_code == 0 && log_enabled() {
         "Журнал DNS-клиента включён.".to_string()
     } else {
@@ -127,7 +130,13 @@ pub struct DnsEvent {
 
 /// Прочитать новые события DNS-журнала (не более 200).
 pub fn new_events(allowed_pids: Option<&[u32]>, allow_all: bool) -> (Vec<DnsEvent>, String, usize) {
-    let query = "*[System[(EventID=3020 or EventID=3022 or EventID=3021)]]";
+    let cursor_before = cursor_get();
+    let mut query = "*[System[(EventID=3020 or EventID=3022 or EventID=3021)".to_string();
+    if let Some(cursor) = cursor_before {
+        // Не перечитывать весь хвост журнала каждые несколько секунд.
+        query.push_str(&format!(" and (EventRecordID > {})", cursor));
+    }
+    query.push_str("]]");
     let r = process::run(
         "wevtutil.exe",
         &[
@@ -145,10 +154,20 @@ pub fn new_events(allowed_pids: Option<&[u32]>, allow_all: bool) -> (Vec<DnsEven
     }
     let xml = r.all();
     let events = parse_events(&xml);
-    let cursor = cursor_get();
+    let cursor = cursor_before;
     let mut scanned = 0usize;
     let mut out: Vec<DnsEvent> = Vec::new();
     let mut max_id = cursor.unwrap_or(-1);
+    // Раньше список процессов запрашивался заново для каждого события (до 200
+    // снимков Toolhelp за один тик) — это давало заметную нагрузку на CPU.
+    let process_names = if allowed_pids.is_none() && !allow_all {
+        super::sys::list_processes()
+            .into_iter()
+            .map(|p| (p.pid, p.name.to_lowercase()))
+            .collect::<HashMap<u32, String>>()
+    } else {
+        HashMap::new()
+    };
     for ev in events {
         if let Some(c) = cursor {
             if ev.record_id <= c {
@@ -167,11 +186,7 @@ pub fn new_events(allowed_pids: Option<&[u32]>, allow_all: bool) -> (Vec<DnsEven
                 continue;
             }
         } else if !allow_all && ev.pid > 0 {
-            let name = super::sys::list_processes()
-                .into_iter()
-                .find(|p| p.pid == ev.pid)
-                .map(|p| p.name.to_lowercase())
-                .unwrap_or_default();
+            let name = process_names.get(&ev.pid).cloned().unwrap_or_default();
             let base = name.trim_end_matches(".exe").to_string();
             if !BROWSERS.contains(&base.as_str()) {
                 continue;

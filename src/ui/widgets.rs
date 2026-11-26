@@ -36,20 +36,41 @@ pub fn secondary(ui: &mut Ui, p: &Palette, text: &str) -> Response {
 }
 
 pub fn ghost(ui: &mut Ui, p: &Palette, text: &str) -> Response {
-    let resp = ui.add(
-        egui::Button::new(RichText::new(text).color(p.text_dim))
-            .fill(Color32::TRANSPARENT)
-            .stroke(Stroke::NONE)
-            .min_size(Vec2::new(0.0, 30.0)),
-    );
-    if resp.hovered() {
-        ui.painter().rect_filled(resp.rect, Rounding::same(6), p.hover);
-    }
-    resp
+    with_widget_fill(ui, Color32::TRANSPARENT, p.hover, |ui| {
+        ui.add(
+            egui::Button::new(RichText::new(text).color(p.text_dim))
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(6))
+                .min_size(Vec2::new(0.0, 30.0)),
+        )
+    })
 }
 
 pub fn danger(ui: &mut Ui, p: &Palette, text: &str) -> Response {
     button(ui, p, text, p.danger, Color32::WHITE, 1.0)
+}
+
+/// Подменить цвета фона виджета на время добавления кнопки.
+///
+/// Важно: раньше hover-фон рисовался вручную **после** `ui.add(Button)`, то есть
+/// поверх текста — при наведении надпись исчезала. Теперь цвет фона задаётся
+/// через стиль egui, и кнопка сама рисует фон под текстом.
+fn with_widget_fill<R>(
+    ui: &mut Ui,
+    fill: Color32,
+    hover: Color32,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let old_style = ui.style().clone();
+    {
+        let widgets = &mut ui.style_mut().visuals.widgets;
+        widgets.inactive.weak_bg_fill = fill;
+        widgets.hovered.weak_bg_fill = hover;
+        widgets.active.weak_bg_fill = hover;
+    }
+    let result = add(ui);
+    ui.set_style(old_style);
+    result
 }
 
 fn button(
@@ -60,21 +81,25 @@ fn button(
     fg: Color32,
     stroke_width: f32,
 ) -> Response {
-    let resp = ui.add(
-        egui::Button::new(RichText::new(text).color(fg).strong())
-            .fill(fill)
-            .stroke(if stroke_width > 0.0 {
-                Stroke::new(1.0, p.border_strong)
-            } else {
-                Stroke::NONE
-            })
-            .rounding(Rounding::same(7))
-            .min_size(Vec2::new(0.0, 32.0)),
-    );
-    if resp.hovered() && fill == p.accent {
-        ui.painter().rect_filled(resp.rect, Rounding::same(7), p.accent_hover);
-    }
-    resp
+    let hover_fill = if fill == p.accent {
+        p.accent_hover
+    } else if fill == p.danger {
+        p.danger
+    } else {
+        p.hover
+    };
+    with_widget_fill(ui, fill, hover_fill, |ui| {
+        ui.add(
+            egui::Button::new(RichText::new(text).color(fg).strong())
+                .stroke(if stroke_width > 0.0 {
+                    Stroke::new(1.0, p.border_strong)
+                } else {
+                    Stroke::NONE
+                })
+                .rounding(Rounding::same(7))
+                .min_size(Vec2::new(0.0, 32.0)),
+        )
+    })
 }
 
 pub fn link(ui: &mut Ui, p: &Palette, text: &str) -> Response {

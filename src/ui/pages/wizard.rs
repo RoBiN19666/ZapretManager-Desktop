@@ -40,6 +40,7 @@ impl App {
         let p = self.p;
         let mut close = false;
         let mut install = false;
+        let mut picked_root: Option<String> = None;
         egui::Window::new("Первая настройка Zapret Manager")
             .collapsible(false)
             .resizable(false)
@@ -53,7 +54,7 @@ impl App {
             .show(ctx, |ui| {
                 ui.label(
                     RichText::new(
-                        "Отметьте, что нужно установить. Скачиваются официальные сборки: zapret (bol-van) в варианте zapret-discord-youtube (Flowseal) и TG WS Proxy (Flowseal). Позже это можно повторить из «Инструменты» → «Мастер установки».",
+                        "Если zapret уже установлен, просто укажите его папку — мастер закроется. Если нет, можно скачать официальную сборку zapret и TG WS Proxy. Папку также можно изменить позже в «Настройки» → «Папка zapret».",
                     )
                     .size(12.0)
                     .color(p.text_dim),
@@ -79,23 +80,59 @@ impl App {
                         .size(11.5)
                         .color(if self.install.is_valid() { p.success } else { p.warn }),
                 );
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Папка для установки:").size(11.5).color(p.text_dim));
-                    ui.add(
-                        egui::TextEdit::singleline(&mut wizard.zapret_dir)
-                            .desired_width(360.0)
-                            .interactive(!self.install.is_valid()),
-                    );
-                    if w::ghost(ui, &p, "Обзор…").clicked() {
-                        if let Some(dir) = rfd::FileDialog::new()
-                            .set_title("Выберите папку")
-                            .pick_folder()
-                        {
-                            wizard.zapret_dir = dir.to_string_lossy().to_string();
+                if self.install.is_valid()
+                    && !wizard.running
+                    && w::ghost(ui, &p, "Указать другую папку…").clicked()
+                {
+                    if let Some(dir) = rfd::FileDialog::new()
+                        .set_title("Выберите папку zapret (где лежит service.bat)")
+                        .pick_folder()
+                    {
+                        if let Some(dir) = ZapretInstall::resolve_valid_dir(&dir) {
+                            picked_root = Some(dir.to_string_lossy().to_string());
+                        } else {
+                            self.notify(
+                                "В выбранной папке нет service.bat и bin\\winws.exe",
+                                LogLevel::Error,
+                            );
                         }
                     }
-                });
+                }
                 if !self.install.is_valid() {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Куда скачать:").size(11.5).color(p.text_dim));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut wizard.zapret_dir)
+                                .desired_width(360.0),
+                        );
+                        if w::ghost(ui, &p, "Обзор…").clicked() {
+                            if let Some(dir) = rfd::FileDialog::new()
+                                .set_title("Куда установить zapret?")
+                                .pick_folder()
+                            {
+                                wizard.zapret_dir = dir.to_string_lossy().to_string();
+                            }
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        if !wizard.running
+                            && w::secondary(ui, &p, "Указать уже установленную папку…").clicked()
+                        {
+                            if let Some(dir) = rfd::FileDialog::new()
+                                .set_title("Выберите папку zapret (где лежит service.bat)")
+                                .pick_folder()
+                            {
+                                if let Some(dir) = ZapretInstall::resolve_valid_dir(&dir) {
+                                    picked_root = Some(dir.to_string_lossy().to_string());
+                                } else {
+                                    self.notify(
+                                        "В выбранной папке нет service.bat и bin\\winws.exe",
+                                        LogLevel::Error,
+                                    );
+                                }
+                            }
+                        }
+                    });
                     w::toggle_row(
                         ui,
                         &p,
@@ -126,23 +163,22 @@ impl App {
                         .size(11.5)
                         .color(if tg_state.installed { p.success } else { p.warn }),
                 );
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Папка для установки:").size(11.5).color(p.text_dim));
-                    ui.add(
-                        egui::TextEdit::singleline(&mut wizard.tg_dir)
-                            .desired_width(360.0)
-                            .interactive(!tg_state.installed),
-                    );
-                    if w::ghost(ui, &p, "Обзор…").clicked() {
-                        if let Some(dir) = rfd::FileDialog::new()
-                            .set_title("Выберите папку")
-                            .pick_folder()
-                        {
-                            wizard.tg_dir = dir.to_string_lossy().to_string();
-                        }
-                    }
-                });
                 if !tg_state.installed {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Куда установить:").size(11.5).color(p.text_dim));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut wizard.tg_dir)
+                                .desired_width(360.0),
+                        );
+                        if w::ghost(ui, &p, "Обзор…").clicked() {
+                            if let Some(dir) = rfd::FileDialog::new()
+                                .set_title("Куда установить TG WS Proxy?")
+                                .pick_folder()
+                            {
+                                wizard.tg_dir = dir.to_string_lossy().to_string();
+                            }
+                        }
+                    });
                     w::toggle_row(
                         ui,
                         &p,
@@ -171,23 +207,38 @@ impl App {
                     );
                 }
                 ui.add_space(8.0);
+                let nothing_to_install = !wizard.install_zapret && !wizard.install_tg;
                 ui.horizontal(|ui| {
                     if w::secondary(ui, &p, "Пропустить").clicked() && !wizard.running {
                         close = true;
                     }
-                    let label = if self.install.is_valid() {
-                        "Проверить настройки"
+                    if wizard.done {
+                        if w::primary(ui, &p, "Закрыть").clicked() {
+                            close = true;
+                        }
+                    } else if nothing_to_install {
+                        if w::primary(ui, &p, "Готово").clicked() && !wizard.running {
+                            close = true;
+                        }
                     } else {
-                        "Установить и продолжить"
-                    };
-                    if w::primary(ui, &p, label).clicked() && !wizard.running && !wizard.done {
-                        install = true;
-                    }
-                    if wizard.done && w::primary(ui, &p, "Закрыть").clicked() {
-                        close = true;
+                        let label = "Установить и продолжить";
+                        if w::primary(ui, &p, label).clicked() && !wizard.running {
+                            install = true;
+                        }
                     }
                 });
             });
+        if let Some(root) = picked_root {
+            self.set_root(&root);
+            self.ini.set("SetupDone", &crate::engine::sys::local_now().to_string());
+            let _ = self.ini.save();
+            self.pages.wizard = None;
+            self.notify(
+                format!("Папка zapret выбрана: {}", self.install.root),
+                LogLevel::Ok,
+            );
+            return;
+        }
         if install {
             wizard.running = true;
             wizard.error.clear();
@@ -200,9 +251,8 @@ impl App {
                 let mut errors = Vec::new();
                 if install_zapret {
                     let parent = std::path::PathBuf::from(&zapret_dir);
-                    let target = parent.join("zapret");
                     match update::get_latest_release(update::ZAPRET_REPO).and_then(|release| {
-                        update::install_fresh(&release, &target, |percent, stage| {
+                        update::install_fresh(&release, &parent, |percent, stage| {
                             let _ = tx.send(Msg::Progress("wizard", percent, stage.to_string()));
                         })
                     }) {

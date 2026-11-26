@@ -4,7 +4,6 @@ use eframe::egui::{self, RichText, Ui};
 
 use crate::engine::log::LogLevel;
 use crate::engine::update::{self, UpdateOptions};
-use crate::engine::install::ZapretInstall;
 
 use crate::ui::app::{App, Msg};
 use crate::ui::widgets as w;
@@ -36,7 +35,7 @@ impl App {
                 RichText::new(if valid {
                     self.install.root.clone()
                 } else {
-                    "Укажите папку zapret или установите его автоматически".to_string()
+                    "Установите zapret или укажите папку в «Настройки» → «Папка zapret».".to_string()
                 })
                 .size(11.5)
                 .color(p.text_muted),
@@ -45,6 +44,10 @@ impl App {
             ui.horizontal(|ui| {
                 if w::secondary(ui, &p, "Проверить обновления").clicked() {
                     self.check_updates();
+                }
+                if !valid && w::ghost(ui, &p, "Открыть настройки папки").clicked() {
+                    self.page = crate::ui::app::Page::Settings;
+                    self.on_navigate(crate::ui::app::Page::Settings);
                 }
                 if !self.pages.update.stage.is_empty() {
                     ui.label(
@@ -330,42 +333,6 @@ impl App {
             }
         });
 
-        w::card(ui, &p, "Установка с нуля", |ui| {
-            w::small(
-                ui,
-                &p,
-                "Если zapret ещё не установлен: программа скачает официальный архив, распакует его в выбранную папку и сразу подхватит.",
-            );
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if w::primary(ui, &p, "Скачать и установить zapret").clicked() {
-                    if let Some(dir) = rfd::FileDialog::new()
-                        .set_title("Куда установить zapret?")
-                        .pick_folder()
-                    {
-                        self.fresh_install(dir);
-                    }
-                }
-                if w::ghost(ui, &p, "Указать папку…").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .set_title("Выберите service.bat в папке zapret")
-                        .add_filter("service.bat", &["bat"])
-                        .pick_file()
-                    {
-                        let dir = path.parent().unwrap_or(&path);
-                        if ZapretInstall::looks_valid(dir) {
-                            self.set_root(&dir.to_string_lossy());
-                        } else {
-                            self.notify(
-                                "В выбранной папке нет service.bat и bin\\winws.exe",
-                                LogLevel::Error,
-                            );
-                        }
-                    }
-                }
-            });
-        });
-
         w::card(ui, &p, "Параметры", |ui| {
             let mut check = self.ini.get_bool("CheckUpdatesOnStartup", true);
             if w::toggle_row(
@@ -433,7 +400,7 @@ impl App {
         );
     }
 
-    fn fresh_install(&mut self, parent: std::path::PathBuf) {
+    pub(crate) fn fresh_install(&mut self, parent: std::path::PathBuf) {
         self.pages.update.running = true;
         self.pages.update.progress = 0;
         self.pages.update.stage = "Получение информации о релизе…".to_string();

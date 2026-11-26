@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use zapret_manager::engine::config::Ini;
 use zapret_manager::engine::install::ZapretInstall;
-use zapret_manager::engine::{diagnostics, doctor, guard, log, paths, sys, update};
+use zapret_manager::engine::{diagnostics, doctor, guard, log, paths, sys, tgproxy, tgsource, update};
 use zapret_manager::engine::appprobe;
 use zapret_manager::engine::ops::ZapretOps;
 
@@ -55,6 +55,8 @@ fn main() {
         || has_flag(&args, "--app-watch")
         || has_flag(&args, "--guard-once")
         || has_flag(&args, "--tg-prepare")
+        || has_flag(&args, "--tg-start")
+        || has_flag(&args, "--tg-stop")
         || has_flag(&args, "--selftest")
         || arg_value(&args, "--check-site").is_some();
     if shot.is_none() && !headless && !sys::acquire_single_instance("ZapretManagerRust_SingleInstance") {
@@ -150,7 +152,30 @@ fn main() {
         return;
     }
     if has_flag(&args, "--tg-prepare") {
-        log::error("Тихий режим TG WS Proxy в Rust-версии пока не поддерживается.");
+        log::info("Подготовка тихого режима TG WS Proxy…");
+        let result = tgsource::prepare_latest(|percent, stage| {
+            log::info(format!("Тихий режим TG WS Proxy: [{}%] {}", percent, stage));
+        });
+        match result {
+            Ok(message) => log::ok(format!("Тихий режим TG WS Proxy: {}", message)),
+            Err(error) => log::error(format!("Тихий режим TG WS Proxy: {}", error)),
+        }
+        return;
+    }
+    if has_flag(&args, "--tg-start") {
+        let (message, ok) = tgproxy::start(&ini);
+        log::write(
+            if ok {
+                zapret_manager::engine::LogLevel::Ok
+            } else {
+                zapret_manager::engine::LogLevel::Error
+            },
+            &format!("TG WS Proxy: {}", message),
+        );
+        return;
+    }
+    if has_flag(&args, "--tg-stop") {
+        log::info(format!("TG WS Proxy: {}", tgproxy::stop_all()));
         return;
     }
 

@@ -1,5 +1,6 @@
 //! Значок в области уведомлений: скрытое окно, Shell_NotifyIcon, собственное меню.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -16,9 +17,20 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_NULL, WM_RBUTTONUP,
 };
 
-use super::super::engine::sys::wide;
+use crate::engine::config::Ini;
+use crate::engine::install::ZapretInstall;
+use crate::engine::ops::ZapretOps;
+use crate::engine::{log, paths, sys, tgproxy};
+use crate::engine::sys::wide;
 
 pub const WM_TRAY: u32 = WM_APP + 1;
+
+/// Запрос «Выход» из меню трея. UI-поток проверяет флаг в начале кадра.
+static EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+pub fn take_exit_request() -> bool {
+    EXIT_REQUESTED.swap(false, Ordering::SeqCst)
+}
 
 const TPM_RETURNCMD: u32 = 0x0100;
 const TPM_NONOTIFY: u32 = 0x0080;
@@ -99,11 +111,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 }
 
 fn show_menu(hwnd: HWND) {
-    let Some((zapret_on, tg_on)) = with_context(|c| {
-        c.state
+    let Some((state, zapret_on, tg_on)) = with_context(|c| {
+        let (zapret_on, tg_on) = c
+            .state
             .lock()
             .map(|s| (s.zapret_on, s.tg_on))
-            .unwrap_or((false, false))
+            .unwrap_or((false, false));
+        (c.state.clone(), zapret_on, tg_on)
     }) else {
         return;
     };
@@ -155,18 +169,77 @@ fn show_menu(hwnd: HWND) {
         );
         PostMessageW(hwnd, WM_NULL, 0, 0);
         DestroyMenu(menu);
-        let event = match cmd {
-            1 => Some(TrayEvent::Show),
-            2 => Some(TrayEvent::ToggleZapret),
-            3 => Some(TrayEvent::ToggleTg),
-            4 => Some(TrayEvent::CheckUpdates),
-            5 => Some(TrayEvent::Exit),
-            _ => None,
-        };
-        if let Some(event) = event {
-            with_context(|c| c.events.send(event));
+        match cmd {
+            1 => {
+                // Показываем окно напрямую: если оно скрыто в трей, цикл egui
+                // может не получать кадры, и событие из канала не обработается.
+                sys::activate_window("Zapret Manager");
+                send_event(TrayEvent::Show);
+            }
+            2 => toggle_zapret(state),
+            3 => toggle_tg(state),
+            4 => {
+                sys::activate_window("Zapret Manager");
+                send_event(TrayEvent::CheckUpdates);
+            }
+            5 => {
+                EXIT_REQUESTED.store(true, Ordering::SeqCst);
+                sys::activate_window("Zapret Manager");
+                send_event(TrayEvent::Exit);
+            }
+            _ => {}
         }
     }
+}
+
+fn send_event(event: TrayEvent) {
+    with_context(|c| {
+        let _ = c.events.send(event);
+    });
+}
+
+/// Переключить zapret из трея, не дожидаясь кадра UI.
+fn toggle_zapret(state: Arc<Mutex<TrayState>>) {
+    std::thread::spawn(move || {
+        let ini = Ini::load(&paths::config_path());
+        let install = ZapretInstall::detect(&ini.get("Root", ""));
+        if !install.is_valid() {
+            log::warn("Меню трея: папка zapret не найдена.");
+            return;
+        }
+        let ops = ZapretOps::new(install);
+        let before = ops.get_state();
+        let message = if before.winws_running {
+            ops.stop()
+        } else if let Some(strategy) = ops.pick_strategy(&ini.get("LastStrategy", "")) {
+            ops.start(strategy).message
+        } else {
+            "Меню трея: стратегии не найдены.".to_string()
+        };
+        log::info(format!("Меню трея: {}", message));
+        let after = ops.get_state();
+        if let Ok(mut st) = state.lock() {
+            st.zapret_on = after.winws_running;
+        }
+    });
+}
+
+/// Переключить TG WS Proxy из трея.
+fn toggle_tg(state: Arc<Mutex<TrayState>>) {
+    std::thread::spawn(move || {
+        let ini = Ini::load(&paths::config_path());
+        let before = tgproxy::get_state(&ini);
+        let message = if before.running {
+            tgproxy::stop(&before.dir)
+        } else {
+            tgproxy::start(&ini).0
+        };
+        log::info(format!("Меню трея TG WS Proxy: {}", message));
+        let after = tgproxy::get_state(&ini);
+        if let Ok(mut st) = state.lock() {
+            st.tg_on = after.running;
+        }
+    });
 }
 
 fn icon_handle(bytes: Option<&[u8]>) -> isize {

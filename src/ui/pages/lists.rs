@@ -96,10 +96,9 @@ impl App {
             .count();
         if file.name == "list-general-user.txt" && entries == 0 {
             self.notify(
-                "Список «Мои домены» нельзя сохранить пустым — winws.exe не запустится.",
-                LogLevel::Error,
+                "Список «Мои домены» пуст — это нормально: winws просто не будет применять пользовательский список.",
+                LogLevel::Info,
             );
-            return;
         }
         if file.name == "ipset-all.txt" && entries == 0 {
             self.notify(
@@ -125,7 +124,7 @@ impl App {
         let p = self.p;
         if !self.install.is_valid() {
             w::card(ui, &p, "Списки", |ui| {
-                w::small(ui, &p, "Папка zapret не найдена. Укажите её на странице «Обзор».");
+                w::small(ui, &p, "Папка zapret не найдена. Укажите её в «Настройки» → «Папка zapret».");
             });
             return;
         }

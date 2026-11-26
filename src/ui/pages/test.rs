@@ -5,6 +5,8 @@ use std::sync::atomic::Ordering;
 use eframe::egui::{self, RichText, Ui};
 
 use crate::engine::log::LogLevel;
+use crate::engine::autotune;
+use crate::engine::install::{StrategyDef, StrategyKind};
 use crate::engine::ops::ZapretOps;
 use crate::engine::tester::{self, StrategyTestRow, TesterOptions};
 
@@ -16,7 +18,7 @@ impl App {
         let p = self.p;
         if !self.install.is_valid() {
             w::card(ui, &p, "Тест стратегий", |ui| {
-                w::small(ui, &p, "Папка zapret не найдена. Укажите её на странице «Обзор».");
+                w::small(ui, &p, "Папка zapret не найдена. Укажите её в «Настройки» → «Папка zapret».");
             });
             return;
         }
@@ -71,7 +73,10 @@ impl App {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let label = if running { "Идёт прогон…" } else { "Запустить тест" };
-                if w::primary(ui, &p, label).clicked() && !running {
+                if w::primary(ui, &p, label).clicked()
+                    && !running
+                    && !self.pages.test.auto_running
+                {
                     self.start_test();
                 }
                 let stop = ui.add_enabled(
@@ -111,6 +116,119 @@ impl App {
             );
         });
 
+        w::card(ui, &p, "Автоподбор стратегии", |ui| {
+            w::small(
+                ui,
+                &p,
+                "Долгая проверка: берёт выбранную стратегию и перебирает desync-параметры (повторы, split-pos, seqovl, fake-файлы и т.п.), используя значения из всех .bat. Побеждает вариант, который проходит больше целей.",
+            );
+            if self.pages.test.auto_base.is_empty()
+                || !self
+                    .install
+                    .strategies
+                    .iter()
+                    .any(|s| s.name.eq_ignore_ascii_case(&self.pages.test.auto_base))
+            {
+                self.pages.test.auto_base = self
+                    .pages
+                    .test
+                    .selected
+                    .and_then(|i| self.pages.test.rows.get(i))
+                    .map(|r| r.strategy_name.clone())
+                    .or_else(|| self.install.default_strategy().map(|s| s.name.clone()))
+                    .unwrap_or_default();
+            }
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("База:").size(12.0).color(p.text_dim));
+                egui::ComboBox::from_id_salt("auto_base")
+                    .selected_text(if self.pages.test.auto_base.is_empty() {
+                        "—".to_string()
+                    } else {
+                        self.pages.test.auto_base.clone()
+                    })
+                    .width(300.0)
+                    .show_ui(ui, |ui| {
+                        for s in &self.install.strategies {
+                            ui.selectable_value(
+                                &mut self.pages.test.auto_base,
+                                s.name.clone(),
+                                s.name.clone(),
+                            );
+                        }
+                    });
+                ui.add_space(8.0);
+                ui.label(RichText::new("Глубина:").size(12.0).color(p.text_dim));
+                for (limit, label) in [(40usize, "быстро"), (120, "долго"), (250, "очень долго")] {
+                    if w::mode_button(
+                        ui,
+                        &p,
+                        label,
+                        self.pages.test.auto_limit == limit,
+                    )
+                    .clicked()
+                    {
+                        self.pages.test.auto_limit = limit;
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                if self.pages.test.auto_running {
+                    if w::danger(ui, &p, "Остановить автоподбор").clicked() {
+                        self.pages.test
+                            .auto_cancel
+                            .store(true, Ordering::SeqCst);
+                    }
+                } else if w::primary(ui, &p, "Запустить автоподбор").clicked()
+                    && !self.pages.test.running
+                {
+                    self.start_auto_search();
+                }
+                if let Some(file) = self.pages.test.auto_best_file.clone() {
+                    if w::secondary(ui, &p, "Запустить лучшую").clicked() {
+                        self.run_auto_best(file.clone());
+                    }
+                    if w::secondary(ui, &p, "Установить службой").clicked() {
+                        self.install_auto_best(file.clone());
+                    }
+                }
+                if w::ghost(ui, &p, "Открыть папку zapret").clicked() {
+                    crate::engine::sys::open_folder(std::path::Path::new(&self.install.root));
+                }
+            });
+            if self.pages.test.auto_running {
+                let ratio = if self.pages.test.auto_total > 0 {
+                    self.pages.test.auto_done as f32 / self.pages.test.auto_total as f32
+                } else {
+                    0.0
+                };
+                w::progress_bar(ui, &p, ratio);
+            }
+            if !self.pages.test.auto_stage.is_empty() {
+                ui.label(
+                    RichText::new(&self.pages.test.auto_stage)
+                        .size(11.5)
+                        .color(p.text_muted),
+                );
+            }
+            if let Some(best) = &self.pages.test.auto_best {
+                ui.label(
+                    RichText::new(format!(
+                        "Лучший: {} — {} из {}",
+                        best.strategy_name,
+                        best.passed(),
+                        best.total()
+                    ))
+                    .size(12.0)
+                    .color(if best.passed() > 0 { p.success } else { p.warn }),
+                );
+                if let Some(file) = &self.pages.test.auto_best_file {
+                    w::muted(ui, &p, &format!("Сохранено: {}", file.to_string_lossy()));
+                }
+            }
+        });
+
         let rows = self.pages.test.rows.clone();
         let group_names: Vec<String> = groups
             .iter()
@@ -119,16 +237,28 @@ impl App {
             .collect();
         let best_score = rows
             .iter()
-            .filter(|r| r.error.is_empty())
+            .filter(|r| r.error.is_empty() && r.total() > 0)
             .map(|r| r.passed())
             .max()
             .unwrap_or(0);
+        let best_index = if best_score == 0 {
+            None
+        } else {
+            rows.iter().position(|r| {
+                r.error.is_empty() && r.total() > 0 && r.passed() == best_score
+            })
+        };
         let mut apply_selected = false;
         w::card(ui, &p, "Результаты", |ui| {
             ui.label(
                 RichText::new(&self.pages.test.summary)
                     .size(12.5)
                     .color(if rows.is_empty() { p.text_dim } else { p.text }),
+            );
+            w::muted(
+                ui,
+                &p,
+                "«да»/«нет» — доступность цели, «1/4» — сколько целей группы прошло, «не старт» — winws.exe не запустился (наведите на строку). Нажмите строку, чтобы выбрать стратегию для запуска или установки службой.",
             );
             ui.add_space(8.0);
             if rows.is_empty() {
@@ -156,16 +286,18 @@ impl App {
                 } else if resp.hovered() {
                     ui.painter().rect_filled(rect, egui::Rounding::same(4), p.hover);
                 }
-                let is_best = !row.error.is_empty() == false
-                    && row.passed() == best_score
-                    && row.total() > 0;
+                let is_best = best_index == Some(idx);
                 let mut x = rect.left() + 8.0;
                 let name = if is_best {
                     format!("★ {}", row.strategy_name)
                 } else {
                     row.strategy_name.clone()
                 };
-                ui.painter().text(
+                let name_clip = egui::Rect::from_min_max(
+                    egui::pos2(x, rect.top()),
+                    egui::pos2(rect.left() + widths.0 - 6.0, rect.bottom()),
+                );
+                ui.painter().with_clip_rect(name_clip).text(
                     egui::pos2(x, rect.center().y),
                     egui::Align2::LEFT_CENTER,
                     name,
@@ -185,7 +317,11 @@ impl App {
                         Some(_) => p.danger,
                         None => p.text_muted,
                     };
-                    ui.painter().text(
+                    let cell_clip = egui::Rect::from_min_max(
+                        egui::pos2(x, rect.top()),
+                        egui::pos2(x + widths.1 - 6.0, rect.bottom()),
+                    );
+                    ui.painter().with_clip_rect(cell_clip).text(
                         egui::pos2(x, rect.center().y),
                         egui::Align2::LEFT_CENTER,
                         text,
@@ -194,12 +330,16 @@ impl App {
                     );
                     x += widths.1;
                 }
-                let score = if row.total() == 0 {
+                let score = if !row.error.is_empty() {
+                    "не старт".to_string()
+                } else if row.total() == 0 {
                     "—".to_string()
                 } else {
                     format!("{} / {}", row.passed(), row.total())
                 };
-                let color = if row.total() == 0 {
+                let color = if !row.error.is_empty() {
+                    p.danger
+                } else if row.total() == 0 {
                     p.text_muted
                 } else if row.all_ok() {
                     p.success
@@ -208,22 +348,22 @@ impl App {
                 } else {
                     p.danger
                 };
-                ui.painter().text(
+                let score_clip = egui::Rect::from_min_max(
+                    egui::pos2(x, rect.top()),
+                    egui::pos2(rect.right() - 4.0, rect.bottom()),
+                );
+                ui.painter().with_clip_rect(score_clip).text(
                     egui::pos2(x, rect.center().y),
                     egui::Align2::LEFT_CENTER,
                     score,
                     egui::FontId::new(11.5, egui::FontFamily::Proportional),
                     color,
                 );
-                if !row.error.is_empty() {
-                    ui.painter().text(
-                        egui::pos2(rect.right() - 8.0, rect.center().y),
-                        egui::Align2::RIGHT_CENTER,
-                        "не запустилась",
-                        egui::FontId::new(11.0, egui::FontFamily::Proportional),
-                        p.danger,
-                    );
-                }
+                let resp = if row.error.is_empty() {
+                    resp
+                } else {
+                    resp.on_hover_text(row.error.as_str())
+                };
                 if resp.clicked() {
                     self.pages.test.selected = Some(idx);
                 }
@@ -327,6 +467,98 @@ impl App {
                 }
             });
         }
+    }
+
+    fn start_auto_search(&mut self) {
+        if !self.require_admin("Автоподбор стратегии") {
+            return;
+        }
+        if self.pages.test.enabled.is_empty() {
+            self.notify("Выберите хотя бы одну группу целей.", LogLevel::Warn);
+            return;
+        }
+        if self.install.strategies.is_empty() {
+            self.notify("Стратегии не найдены.", LogLevel::Error);
+            return;
+        }
+        if self.pages.test.auto_base.is_empty() {
+            self.pages.test.auto_base = self
+                .pick_strategy()
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| self.install.strategies[0].name.clone());
+        }
+        let install = self.install.clone();
+        let base = self.pages.test.auto_base.clone();
+        let limit = self.pages.test.auto_limit;
+        let groups: Vec<String> = self.pages.test.enabled.iter().cloned().collect();
+        let options = TesterOptions {
+            timeout_ms: self.pages.test.timeout_ms,
+            deep_check: self.pages.test.deep,
+            restore_after: true,
+        };
+        self.pages.test.auto_running = true;
+        self.pages.test.auto_done = 0;
+        self.pages.test.auto_total = limit;
+        self.pages.test.auto_candidates = 0;
+        self.pages.test.auto_best = None;
+        self.pages.test.auto_best_file = None;
+        self.pages.test.auto_stage = "Генерация вариантов…".to_string();
+        self.pages.test.auto_cancel =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel = self.pages.test.auto_cancel.clone();
+        self.spawn_bg(move |tx| {
+            let tx2 = tx.clone();
+            let cancelled = move || cancel.load(Ordering::SeqCst);
+            let result = autotune::run_search(
+                &install,
+                &base,
+                limit,
+                &groups,
+                &options,
+                |done, total, name| {
+                    let _ = tx2.send(Msg::AutoProgress(
+                        done,
+                        total,
+                        name.to_string(),
+                    ));
+                },
+                |_row| {},
+                &cancelled,
+            );
+            let _ = tx.send(Msg::AutoDone(result));
+        });
+    }
+
+    fn run_auto_best(&mut self, file: std::path::PathBuf) {
+        let name = file
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "AUTO".to_string());
+        self.start_strategy(StrategyDef {
+            file,
+            name: name.clone(),
+            short_name: "AUTO".to_string(),
+            kind: StrategyKind::Other,
+            description: "Автоподбор".to_string(),
+            warning: false,
+            order: 0,
+        });
+    }
+
+    fn install_auto_best(&mut self, file: std::path::PathBuf) {
+        let name = file
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "AUTO".to_string());
+        self.install_service(StrategyDef {
+            file,
+            name: name.clone(),
+            short_name: "AUTO".to_string(),
+            kind: StrategyKind::Other,
+            description: "Автоподбор".to_string(),
+            warning: false,
+            order: 0,
+        });
     }
 
     fn start_test(&mut self) {

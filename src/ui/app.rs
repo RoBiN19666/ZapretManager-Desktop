@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Color32, FontId, RichText, Rounding, Sense, Stroke, Vec2};
 
 use crate::engine::appprobe::AppEntry;
+use crate::engine::autotune::AutoReport;
 use crate::engine::config::Ini;
 use crate::engine::diagnostics::CheckResult;
 use crate::engine::doctor::SiteProbe;
@@ -43,10 +44,11 @@ pub enum Page {
     Update,
     Diagnostics,
     Tools,
+    About,
 }
 
 impl Page {
-    pub const ALL: [Page; 10] = [
+    pub const ALL: [Page; 11] = [
         Page::Overview,
         Page::Strategies,
         Page::Test,
@@ -57,6 +59,7 @@ impl Page {
         Page::Update,
         Page::Diagnostics,
         Page::Tools,
+        Page::About,
     ];
 
     pub fn key(&self) -> &'static str {
@@ -71,6 +74,7 @@ impl Page {
             Page::Update => "update",
             Page::Diagnostics => "diagnostics",
             Page::Tools => "tools",
+            Page::About => "about",
         }
     }
 
@@ -90,6 +94,7 @@ impl Page {
             Page::Update => "Обновление",
             Page::Diagnostics => "Диагностика",
             Page::Tools => "Инструменты",
+            Page::About => "О программе",
         }
     }
 
@@ -105,6 +110,7 @@ impl Page {
             Page::Update => "Обновление zapret с сохранением ваших списков",
             Page::Diagnostics => "Поиск конфликтов и типичных проблем с обходом",
             Page::Tools => "Служба, hosts, тест стратегий и файлы",
+            Page::About => "Версия, ссылки и поддержка проекта",
         }
     }
 
@@ -121,6 +127,7 @@ impl Page {
             Page::Update => "\u{E896}",
             Page::Diagnostics => "\u{E9D2}",
             Page::Tools => "\u{E90F}",
+            Page::About => "\u{E946}",
         }
     }
 
@@ -137,6 +144,7 @@ impl Page {
             Page::Update => "↧",
             Page::Diagnostics => "✚",
             Page::Tools => "▣",
+            Page::About => "ⓘ",
         }
     }
 }
@@ -160,11 +168,15 @@ pub enum Msg {
     TestProgress(usize, usize, String),
     TestRow(Box<StrategyTestRow>),
     TestDone(Vec<StrategyTestRow>),
+    AutoProgress(usize, usize, String),
+    AutoDone(Result<AutoReport, String>),
     DiagStep(String),
     DiagDone(Vec<CheckResult>),
     TgLatest(Result<(String, String), String>),
     TgInstallDone(Result<String, String>),
     TgPrepared(Vec<String>),
+    TgPrepareDone(Result<String, String>),
+    TgState(TgState),
     Progress(&'static str, u32, String),
     UpdateDone(Result<String, String>),
     SelfApplyDone(Result<String, String>),
@@ -212,6 +224,16 @@ pub struct TestState {
     pub report_index: usize,
     pub official: Option<OfficialReport>,
     pub default_enabled: bool,
+    pub auto_running: bool,
+    pub auto_done: usize,
+    pub auto_total: usize,
+    pub auto_stage: String,
+    pub auto_candidates: usize,
+    pub auto_best: Option<StrategyTestRow>,
+    pub auto_best_file: Option<std::path::PathBuf>,
+    pub auto_cancel: Arc<AtomicBool>,
+    pub auto_base: String,
+    pub auto_limit: usize,
 }
 
 impl Default for TestState {
@@ -233,6 +255,16 @@ impl Default for TestState {
             report_index: 0,
             official: None,
             default_enabled: false,
+            auto_running: false,
+            auto_done: 0,
+            auto_total: 0,
+            auto_stage: String::new(),
+            auto_candidates: 0,
+            auto_best: None,
+            auto_best_file: None,
+            auto_cancel: Arc::new(AtomicBool::new(false)),
+            auto_base: String::new(),
+            auto_limit: 120,
         }
     }
 }
@@ -285,6 +317,10 @@ pub struct TgPageState {
     pub stage: String,
     pub progress: u32,
     pub working: bool,
+    pub quiet_busy: bool,
+    pub quiet_status: String,
+    pub quiet_progress: u32,
+    pub quiet_prepared: bool,
 }
 
 pub struct SettingsState {
@@ -348,24 +384,24 @@ pub fn list_files() -> Vec<ListFileInfo> {
             label: "Мои домены",
             official: false,
             tracked: false,
-            hint: "Домены, которые нужно обходить (добавляются к официальному списку)",
-            template: "# Никогда не оставляйте этот файл пустым\r\ndomain.example.abc\r\n",
+            hint: "Домены, которые нужно обходить (добавляются к официальному списку). Файл может быть пустым.",
+            template: "# Мои домены (файл может быть пустым)\r\n",
         },
         ListFileInfo {
             name: "list-exclude-user.txt".to_string(),
             label: "Исключения",
             official: false,
             tracked: false,
-            hint: "Домены, которые обходить НЕ нужно (перекрывают оба списка)",
-            template: "domain.example.abc\r\n",
+            hint: "Домены, которые обходить НЕ нужно (перекрывают оба списка). Файл может быть пустым.",
+            template: "# Исключения (файл может быть пустым)\r\n",
         },
         ListFileInfo {
             name: "ipset-exclude-user.txt".to_string(),
             label: "Исключения IP",
             official: false,
             tracked: false,
-            hint: "IP-подсети, которые обходить не нужно",
-            template: "203.0.113.113/32\r\n",
+            hint: "IP-подсети, которые обходить не нужно. Файл может быть пустым.",
+            template: "# Исключения IP (файл может быть пустым)\r\n",
         },
         official(
             "list-general.txt",
@@ -560,7 +596,8 @@ pub struct App {
     last_maximized: bool,
     window_hwnd: Option<isize>,
     titlebar_dark: Option<bool>,
-    pub shot: Option<String>,
+    icon_set: bool,
+    pub(crate) about_logo: Option<egui::TextureHandle>,    pub shot: Option<String>,
     shot_frames: u32,
     pub progress: HashMap<&'static str, (u32, String)>,
     pub start_hidden: bool,
@@ -633,6 +670,8 @@ impl App {
             last_maximized: true,
             window_hwnd: None,
             titlebar_dark: None,
+            icon_set: false,
+            about_logo: None,
             shot,
             shot_frames: 0,
             progress: HashMap::new(),
@@ -659,6 +698,16 @@ impl App {
         app.pages.settings.scale = (scale * 100.0).round() as i32;
         app.pages.sites.guard_enabled = app.ini.get_bool("SiteGuard", false);
         app.pages.sites.guard_auto = app.ini.get_bool("SiteGuardAutoAdd", false);
+        if app.pages.sites.guard_enabled {
+            // Если сторож уже был включён в прошлой сессии, журнал DNS мог
+            // остаться выключенным. Включаем его сами, в фоне.
+            std::thread::spawn(|| {
+                if !guard::log_enabled() {
+                    let message = guard::enable_log();
+                    log::info(format!("Фоновый сторож: {}", message));
+                }
+            });
+        }
         app.pages.update.notes.clear();
         app.init_tray();
         app.load_lists();
@@ -667,6 +716,18 @@ impl App {
         app.sync_settings();
         app.refresh_tg_state();
         app.start_update_check();
+        // Первый запуск: показываем мастер настройки, как в C#-версии. В тихом
+        // автозапуске и в режиме снимков окно не открываем.
+        if app.shot.is_none()
+            && !start_hidden
+            && !autostart_mode
+            && app.ini.get("SetupDone", "").trim().is_empty()
+        {
+            app.open_wizard();
+        }
+        if shot_page.as_deref() == Some("wizard") {
+            app.open_wizard();
+        }
         app
     }
 
@@ -757,6 +818,32 @@ impl App {
         let _ = self.ini.save();
         self.refresh_state(false);
         log::info(format!("Папка zapret: {}", self.install.root));
+    }
+
+    /// Единый выбор уже установленной папки zapret.
+    ///
+    /// Выбирается папка, а не `service.bat`: пользователю не нужно знать,
+    /// какой файл просить у проводника. Валидность проверяется по наличию
+    /// `service.bat` и `bin\winws.exe`.
+    pub fn pick_zapret_folder(&mut self) {
+        let Some(dir) = rfd::FileDialog::new()
+            .set_title("Выберите папку zapret (где лежит service.bat)")
+            .pick_folder()
+        else {
+            return;
+        };
+        if let Some(dir) = ZapretInstall::resolve_valid_dir(&dir) {
+            self.set_root(&dir.to_string_lossy());
+            self.notify(
+                format!("Папка zapret: {}", self.install.root),
+                LogLevel::Ok,
+            );
+        } else {
+            self.notify(
+                "В выбранной папке нет service.bat и bin\\winws.exe. Выберите папку zapret или её родителя.",
+                LogLevel::Error,
+            );
+        }
     }
 
     pub fn pick_strategy(&self) -> Option<StrategyDef> {
@@ -976,7 +1063,7 @@ impl App {
                 }
                 Msg::State(st) => {
                     self.state = st;
-                    state_changed = true;
+                    self.update_tray_state();
                 }
                 Msg::StartDone(result) => {
                     self.status_hint = if result.ok {
@@ -1050,6 +1137,99 @@ impl App {
                     self.pages.test.running = false;
                     self.pages.test.status = "Готово.".to_string();
                     self.pages.test.summary = test_summary(&self.pages.test);
+                    // Сразу выделяем лучшую стратегию, чтобы кнопка
+                    // «Запустить выбранную» была понятной и доступной.
+                    let best = self
+                        .pages
+                        .test
+                        .rows
+                        .iter()
+                        .filter(|r| r.error.is_empty() && r.total() > 0)
+                        .map(|r| r.passed())
+                        .max()
+                        .unwrap_or(0);
+                    self.pages.test.selected = if best == 0 {
+                        None
+                    } else {
+                        self.pages.test.rows.iter().position(|r| {
+                            r.error.is_empty() && r.total() > 0 && r.passed() == best
+                        })
+                    };
+                }
+                Msg::AutoProgress(done, total, name) => {
+                    self.pages.test.auto_done = done;
+                    self.pages.test.auto_total = total;
+                    self.pages.test.auto_stage = format!("{} из {}: {}", done, total, name);
+                }
+                Msg::AutoDone(result) => {
+                    self.pages.test.auto_running = false;
+                    match result {
+                        Ok(report) => {
+                            self.pages.test.auto_candidates = report.candidates;
+                            self.pages.test.auto_best = report.best.clone();
+                            self.pages.test.auto_best_file = report.best_file.clone();
+                            self.pages.test.rows = report.rows;
+                            self.pages.test.running = false;
+                            let best = self
+                                .pages
+                                .test
+                                .rows
+                                .iter()
+                                .filter(|r| r.error.is_empty() && r.total() > 0)
+                                .max_by_key(|r| r.passed())
+                                .cloned();
+                            self.pages.test.selected = best.as_ref().and_then(|b| {
+                                self.pages
+                                    .test
+                                    .rows
+                                    .iter()
+                                    .position(|r| r.strategy_name == b.strategy_name)
+                            });
+                            self.pages.test.summary = test_summary(&self.pages.test);
+                            self.pages.test.status = "Автоподбор завершён.".to_string();
+                            self.install.rescan();
+                            match &report.best {
+                                Some(best) => {
+                                    self.pages.test.auto_stage = format!(
+                                        "Лучший вариант: {} — {} из {}",
+                                        best.strategy_name,
+                                        best.passed(),
+                                        best.total()
+                                    );
+                                    let message = match &report.best_file {
+                                        Some(path) => format!(
+                                            "Автоподбор: лучший вариант «{}» сохранён как {}",
+                                            best.strategy_name,
+                                            path.to_string_lossy()
+                                        ),
+                                        None => format!(
+                                            "Автоподбор: лучший вариант «{}» ({} из {}), но сохранить файл не удалось.",
+                                            best.strategy_name,
+                                            best.passed(),
+                                            best.total()
+                                        ),
+                                    };
+                                    self.notify(message, LogLevel::Ok);
+                                }
+                                None => {
+                                    self.pages.test.auto_stage =
+                                        "Автоподбор не нашёл рабочего варианта.".to_string();
+                                    self.notify(
+                                        "Автоподбор не нашёл варианта, который проходит проверки.",
+                                        LogLevel::Warn,
+                                    );
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            self.pages.test.auto_stage =
+                                format!("Ошибка автоподбора: {}", error);
+                            self.notify(
+                                format!("Автоподбор: {}", error),
+                                LogLevel::Error,
+                            );
+                        }
+                    }
                 }
                 Msg::DiagStep(step) => {
                     self.pages.diagnostics.step = step;
@@ -1092,6 +1272,40 @@ impl App {
                         self.notify(m, LogLevel::Info);
                     }
                 }
+                Msg::TgState(st) => {
+                    self.pages.tg.quiet_prepared = st.quiet_prepared;
+                    self.pages.tg.state = st;
+                }
+                Msg::TgPrepareDone(result) => {                    self.pages.tg.quiet_busy = false;
+                    self.pages.tg.quiet_progress = 0;
+                    self.pages.tg.quiet_prepared = crate::engine::tgsource::is_prepared();
+                    match result {
+                        Ok(message) => {
+                            self.pages.tg.quiet_status = message.clone();
+                            self.notify(message, LogLevel::Ok);
+                            if crate::engine::tgproxy::run_mode(&self.ini) == "quiet" {
+                                self.pages.tg.quiet_status = format!(
+                                    "{}\nВключён тихий режим — прокси будет запущен без трея.",
+                                    self.pages.tg.quiet_status
+                                );
+                                self.restart_tg_proxy_for_mode();
+                            }
+                        }
+                        Err(error) => {
+                            self.pages.tg.quiet_status =
+                                format!("Ошибка подготовки: {}", error);
+                            self.notify(
+                                format!("Тихий режим TG WS Proxy: {}", error),
+                                LogLevel::Error,
+                            );
+                            if !self.pages.tg.quiet_prepared
+                                && crate::engine::tgproxy::run_mode(&self.ini) == "quiet"
+                            {
+                                crate::engine::tgproxy::set_run_mode(&mut self.ini, false);
+                            }
+                        }
+                    }
+                }
                 Msg::Progress(tag, percent, stage) => {
                     self.progress.insert(tag, (percent, stage.clone()));
                     if tag == "update" {
@@ -1103,6 +1317,9 @@ impl App {
                     } else if tag == "tg" {
                         self.pages.tg.progress = percent;
                         self.pages.tg.stage = stage;
+                    } else if tag == "tg-quiet" {
+                        self.pages.tg.quiet_progress = percent;
+                        self.pages.tg.quiet_status = stage;
                     } else if tag == "wizard" {
                         if let Some(wizard) = self.pages.wizard.as_mut() {
                             wizard.progress = percent;
@@ -1275,7 +1492,7 @@ impl App {
         if !self.pages.sites.guard_enabled || self.busy > 0 || !self.install.is_valid() {
             return;
         }
-        if self.last_guard.elapsed() < Duration::from_secs(6) {
+        if self.last_guard.elapsed() < Duration::from_secs(10) {
             return;
         }
         self.last_guard = Instant::now();
@@ -1654,6 +1871,13 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // События трея обрабатываем до управления видимостью: если окно было
+        // скрыто, пункт «Открыть» уже показал его напрямую, и цикл кадров снова
+        // работает. Иначе visibility-код спрятал бы окно обратно.
+        if super::tray::take_exit_request() {
+            self.exit_requested = true;
+        }
+        self.poll_tray();
 
         // Пользовательский масштаб интерфейса (90/100/110 %).
         if (ctx.zoom_factor() - self.scale).abs() > 0.01 {
@@ -1708,19 +1932,28 @@ impl eframe::App for App {
             self.window_visibility_sent = Some(self.window_visible);
         }
 
-        self.poll_tray();
         self.handle_messages();
-        if self.last_refresh.elapsed() > Duration::from_secs(5) && self.busy == 0 {
+        if self.last_refresh.elapsed() > Duration::from_secs(5) {
             self.last_refresh = Instant::now();
+            // Перебор процессов не должен подвешивать UI-поток во время скролла.
             let ops = ZapretOps::new(self.install.clone());
-            self.state = ops.get_state();
-            self.update_tray_state();
+            let tx = self.tx.clone();
+            std::thread::spawn(move || {
+                let st = ops.get_state();
+                let _ = tx.send(Msg::State(st));
+            });
         }
         self.poll_guard();
-        // Состояние TG-прокси обновляем не чаще раза в 2 секунды: get_state перебирает процессы.
+        // Состояние TG-прокси обновляем не чаще раза в 2 секунды и в фоне:
+        // get_state перебирает процессы и иначе даёт микро-фризы при скролле.
         if self.last_tg_refresh.elapsed() > Duration::from_secs(2) {
-            self.pages.tg.state = tgproxy::get_state(&self.ini);
             self.last_tg_refresh = Instant::now();
+            let ini = self.ini.clone();
+            let tx = self.tx.clone();
+            std::thread::spawn(move || {
+                let st = tgproxy::get_state(&ini);
+                let _ = tx.send(Msg::TgState(st));
+            });
         }
         let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
         self.last_maximized = maximized;
@@ -1731,6 +1964,13 @@ impl eframe::App for App {
             self.window_hwnd = sys::window_for_current_process("Zapret Manager");
         }
         if let Some(hwnd) = self.window_hwnd {
+            if !self.icon_set {
+                let ok = sys::set_window_icon(hwnd);
+                if !ok {
+                    log::warn("Не удалось установить иконку окна из ресурса exe.");
+                }
+                self.icon_set = true;
+            }
             if self.titlebar_dark != Some(self.dark) {
                 sys::set_titlebar_theme_isize(hwnd, self.dark);
                 self.titlebar_dark = Some(self.dark);
@@ -1787,6 +2027,7 @@ impl eframe::App for App {
                             Page::Update => self.page_update(ui),
                             Page::Diagnostics => self.page_diagnostics(ui),
                             Page::Tools => self.page_tools(ui),
+                            Page::About => self.page_about(ui),
                         }
                         ui.add_space(24.0);
                     });
@@ -1955,7 +2196,7 @@ pub fn lists_info_of(st: &crate::ui::app::ListsState) -> String {
         entries
     );
     if !file.official && entries == 0 {
-        info.push_str("  •  файл пуст — так нельзя для списка доменов");
+        info.push_str("  •  файл пуст — список не будет применяться");
     }
     if dups > 0 {
         info.push_str(&format!("  •  дубликатов: {}", dups));

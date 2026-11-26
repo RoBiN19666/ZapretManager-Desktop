@@ -5,6 +5,7 @@ use std::io::Cursor;
 use eframe::egui::{Color32, ColorImage};
 
 const APP_ICON_PNG: &[u8] = include_bytes!("../../assets/app-icon.png");
+const LOGO_WIDE_PNG: &[u8] = include_bytes!("../../assets/logo-wide.png");
 const TRAY_ICON_ICO: &[u8] = include_bytes!("../../assets/tray.ico");
 
 /// Декодировать PNG в RGBA.
@@ -53,6 +54,11 @@ pub fn window_icon() -> Option<egui::IconData> {
         width: image.size[0] as u32,
         height: image.size[1] as u32,
     })
+}
+
+/// Широкий логотип «Zapret Manager» для страницы «О программе».
+pub fn logo_wide() -> Option<ColorImage> {
+    decode_png(LOGO_WIDE_PNG)
 }
 
 pub fn tray_icon_bytes() -> Option<Vec<u8>> {

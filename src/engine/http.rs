@@ -139,7 +139,9 @@ pub fn request(
         handles.0.push(request);
 
         // Редиректы и современный TLS. Ошибки этих настроек не критичны.
-        let redirect = 0u32; // ALWAYS
+        // WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS = 2 (0 — это NEVER, из-за чего
+        // GitHub отдавал 302 на ссылках релизов и ничего не скачивалось).
+        let redirect = 2u32;
         WinHttpSetOption(
             request,
             WINHTTP_OPTION_REDIRECT_POLICY,
@@ -341,7 +343,9 @@ pub fn download_with_headers(
             return Err("WinHTTP: не удалось создать запрос".to_string());
         }
         handles.0.push(request);
-        let redirect = 0u32;
+        // ALWAYS (2), иначе GitHub-редирект на objects.githubusercontent.com
+        // возвращается как HTTP 302 и скачивание обрывается.
+        let redirect = 2u32;
         WinHttpSetOption(
             request,
             WINHTTP_OPTION_REDIRECT_POLICY,

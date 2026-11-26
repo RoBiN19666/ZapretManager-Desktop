@@ -94,11 +94,49 @@ pub fn get_argv(
         }
     }
 
-    let argv = tokenize(&cmd);
+    let argv: Vec<String> = tokenize(&cmd)
+        .into_iter()
+        .filter(|arg| keep_argument(inst, arg))
+        .collect();
     if argv.is_empty() {
         return Err("Не удалось разобрать аргументы стратегии".to_string());
     }
     Ok(argv)
+}
+
+/// Пустые пользовательские списки не передаём в winws: официальный service.bat
+/// создаёт в них заглушки, но при прямом запуске winws отсутствующий/пустой
+/// `--hostlist`/`--ipset-exclude` приводит к ошибке запуска. Без аргумента
+/// список просто не применяется — это безопасно и позволяет держать файл пустым.
+fn keep_argument(inst: &ZapretInstall, arg: &str) -> bool {
+    let Some((key, value)) = arg.split_once('=') else {
+        return true;
+    };
+    let key = key.trim_matches('"');
+    if !matches!(
+        key,
+        "--hostlist" | "--hostlist-exclude" | "--ipset" | "--ipset-exclude"
+    ) {
+        return true;
+    }
+    let value = value.trim_matches('"');
+    let lower = value.to_lowercase();
+    if !lower.ends_with("-user.txt") {
+        return true;
+    }
+    let path = if Path::new(value).is_absolute() {
+        std::path::PathBuf::from(value)
+    } else {
+        Path::new(&inst.root).join(value)
+    };
+    if !path.is_file() {
+        return false;
+    }
+    let text = textfile::read(&path);
+    text.lines().any(|line| {
+        let line = line.trim();
+        !line.is_empty() && !line.starts_with('#')
+    })
 }
 
 fn parse_set_line(raw: &str) -> Option<(String, String)> {
@@ -244,6 +282,34 @@ mod tests {
         assert_eq!(tokens.len(), 3);
         assert_eq!(tokens[1], "\"C:\\Program Files\\x.txt\"");
         assert_eq!(build_command_line(&tokens), "--wf-tcp=80,443 \"C:\\Program Files\\x.txt\" --flag");
+    }
+
+    #[test]
+    fn empty_user_list_argument_is_dropped() {
+        use super::super::install::ZapretInstall;
+        let root = std::env::temp_dir().join(format!(
+            "zapret-bat-userlists-{}",
+            std::process::id()
+        ));
+        let lists = root.join("lists");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&lists).unwrap();
+        let inst = ZapretInstall {
+            root: root.to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        let user = lists.join("list-general-user.txt");
+        std::fs::write(&user, "").unwrap();
+        let arg = format!("--hostlist=\"{}\"", user.to_string_lossy());
+        assert!(!keep_argument(&inst, &arg));
+        std::fs::write(&user, "example.com\r\n").unwrap();
+        assert!(keep_argument(&inst, &arg));
+        // Официальный пустой список не трогаем.
+        let official = lists.join("list-general.txt");
+        std::fs::write(&official, "").unwrap();
+        let official_arg = format!("--hostlist=\"{}\"", official.to_string_lossy());
+        assert!(keep_argument(&inst, &official_arg));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

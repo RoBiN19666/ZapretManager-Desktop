@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use super::guard;
+use super::log;
 use super::process;
 use super::sys;
 
@@ -185,6 +186,12 @@ pub fn watch(
     seconds: u32,
     mut progress: impl FnMut(u32, usize, usize),
 ) -> (Vec<String>, Vec<String>) {
+    // Наблюдение возможно только по журналу DNS-клиента. Включаем его сами,
+    // чтобы пользователю не нужно было искать отдельную кнопку.
+    if !guard::log_enabled() {
+        let message = guard::enable_log();
+        log::info(format!("Наблюдение за приложением: {}", message));
+    }
     let mut allowed: Vec<u32> = same_app(pid);
     for child in with_children(pid) {
         if !allowed.contains(&child) {

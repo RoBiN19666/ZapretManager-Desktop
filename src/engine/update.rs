@@ -409,7 +409,7 @@ fn copy_tree(src: &Path, dst: &Path, filter: &dyn Fn(&Path) -> bool) -> Result<u
     Ok(copied)
 }
 
-fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
+pub(crate) fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
     let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Не удалось открыть архив: {}", e))?;
     std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;

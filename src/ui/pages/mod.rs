@@ -1,5 +1,6 @@
 //! Страницы интерфейса.
 
+pub mod about;
 pub mod diagnostics;
 pub mod lists;
 pub mod overview;

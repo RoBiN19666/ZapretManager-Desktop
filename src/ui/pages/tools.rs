@@ -4,7 +4,7 @@ use eframe::egui::{RichText, Ui};
 
 use crate::engine::log::LogLevel;
 use crate::engine::ops::ZapretOps;
-use crate::engine::{doctor, paths, sys, tester};
+use crate::engine::{paths, sys, tester};
 
 use crate::ui::app::App;
 use crate::ui::widgets as w;
@@ -12,7 +12,6 @@ use crate::ui::widgets as w;
 impl App {
     pub(crate) fn page_tools(&mut self, ui: &mut Ui) {
         let p = self.p;
-        let valid = self.install.is_valid();
 
         w::card(ui, &p, "Служба Windows", |ui| {
             let mut status = format!(
@@ -183,73 +182,7 @@ impl App {
                 if w::ghost(ui, &p, "Журнал менеджера").clicked() {
                     sys::select_in_explorer(&paths::log_path());
                 }
-                if w::ghost(ui, &p, "Мастер установки").clicked() {
-                    self.open_wizard();
-                }
             });
-        });
-
-        w::card(ui, &p, "О программе", |ui| {
-            ui.label(
-                RichText::new(format!(
-                    "Zapret Manager {} — неофициальная графическая оболочка.",
-                    crate::APP_VERSION
-                ))
-                .size(13.0)
-                .color(p.text),
-            );
-            ui.label(
-                RichText::new(
-                    "Обход DPI — проект zapret (bol-van), сборка и стратегии — zapret-discord-youtube (Flowseal), прокси Telegram — TG WS Proxy (Flowseal). Сам обход выполняют winws.exe и драйвер WinDivert из состава zapret.",
-                )
-                .size(12.0)
-                .color(p.text_dim),
-            );
-            ui.add_space(8.0);
-            ui.horizontal_wrapped(|ui| {
-                let links = [
-                    (
-                        "Репозиторий",
-                        "https://github.com/RoBiN19666/ZapretManager-Desktop",
-                    ),
-                    (
-                        "Руководство",
-                        "https://github.com/RoBiN19666/ZapretManager-Desktop/blob/main/docs/guide.md",
-                    ),
-                    (
-                        "zapret-discord-youtube",
-                        "https://github.com/Flowseal/zapret-discord-youtube",
-                    ),
-                    ("zapret (bol-van)", "https://github.com/bol-van/zapret"),
-                    ("TG WS Proxy", "https://github.com/Flowseal/tg-ws-proxy"),
-                ];
-                for (label, url) in links {
-                    if w::link(ui, &p, label).clicked() {
-                        sys::open_url(url);
-                    }
-                }
-            });
-            ui.add_space(8.0);
-            ui.label(RichText::new("Поддержать проект").size(12.5).color(p.text_dim));
-            ui.horizontal(|ui| {
-                if w::link(ui, &p, "Boosty").clicked() {
-                    sys::open_url("https://boosty.to/robin19666");
-                }
-                if w::link(ui, &p, "DonationAlerts").clicked() {
-                    sys::open_url("https://www.donationalerts.com/r/robin19666");
-                }
-            });
-            ui.add_space(6.0);
-            w::hint(
-                ui,
-                &p,
-                &format!(
-                    "Настройки и журнал: {}",
-                    paths::data_dir().to_string_lossy()
-                ),
-            );
-            let _ = doctor::hosts_file_exists();
-            let _ = valid;
         });
     }
 }

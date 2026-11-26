@@ -153,16 +153,16 @@ impl GroupResult {
             return "—".to_string();
         }
         if self.passed == 0 {
-            return "✗".to_string();
+            return "нет".to_string();
         }
         if self.passed == self.total {
             if self.ms > 0 {
-                format!("✓ {} мс", self.ms)
+                format!("да {} мс", self.ms)
             } else {
-                "✓".to_string()
+                "да".to_string()
             }
         } else {
-            format!("{}/{} {} мс", self.passed, self.total, self.ms)
+            format!("{}/{}", self.passed, self.total)
         }
     }
 }
@@ -270,16 +270,39 @@ pub fn run(
     install: &ZapretInstall,
     selected_groups: &[String],
     options: &TesterOptions,
+    progress: impl FnMut(usize, usize, &str),
+    row_done: impl FnMut(&StrategyTestRow),
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> Vec<StrategyTestRow> {
+    run_candidates(
+        install,
+        &install.strategies,
+        selected_groups,
+        options,
+        progress,
+        row_done,
+        cancelled,
+    )
+}
+
+/// Прогон произвольного набора стратегий (нужен автоподбору).
+#[allow(clippy::too_many_arguments)]
+pub fn run_candidates(
+    install: &ZapretInstall,
+    strategies: &[StrategyDef],
+    selected_groups: &[String],
+    options: &TesterOptions,
     mut progress: impl FnMut(usize, usize, &str),
     mut row_done: impl FnMut(&StrategyTestRow),
     cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Vec<StrategyTestRow> {
     let all_groups = load_targets(&install.utils_dir().join("targets.txt"));
+    install.ensure_user_lists();
     let groups: Vec<TargetGroup> = all_groups
         .into_iter()
         .filter(|g| selected_groups.iter().any(|s| s.eq_ignore_ascii_case(&g.name)))
         .collect();
-    if groups.is_empty() || install.strategies.is_empty() {
+    if groups.is_empty() || strategies.is_empty() {
         return Vec::new();
     }
 
@@ -333,8 +356,8 @@ pub fn run(
     }
 
     let mut rows: Vec<StrategyTestRow> = Vec::new();
-    let total_strategies = install.strategies.len();
-    for (i, strategy) in install.strategies.iter().enumerate() {
+    let total_strategies = strategies.len();
+    for (i, strategy) in strategies.iter().enumerate() {
         if cancelled() {
             break;
         }

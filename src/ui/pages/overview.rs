@@ -79,32 +79,16 @@ impl App {
             w::card(ui, &p2, "Zapret не найден", |ui| {
                 ui.label(
                     RichText::new(
-                        "Поместите ZapretManager.exe в папку zapret (рядом с service.bat) или укажите папку вручную. Можно также скачать и установить свежую версию автоматически.",
+                        "Укажите папку zapret в одном месте — «Настройки» → «Папка zapret». Там же можно скачать и установить zapret с нуля.",
                     )
                     .size(12.5)
                     .color(p2.text_dim),
                 );
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if w::secondary(ui, &p2, "Указать папку zapret…").clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .set_title("Выберите service.bat в папке zapret")
-                            .add_filter("service.bat", &["bat"])
-                            .pick_file()
-                        {
-                            let dir = path.parent().unwrap_or(&path);
-                            if crate::engine::install::ZapretInstall::looks_valid(dir) {
-                                self.set_root(&dir.to_string_lossy());
-                            } else {
-                                self.notify(
-                                    "В выбранной папке нет service.bat и bin\\winws.exe",
-                                    LogLevel::Error,
-                                );
-                            }
-                        }
-                    }
-                    if w::primary(ui, &p2, "Скачать и установить").clicked() {
-                        self.page = Page::Update;
+                    if w::primary(ui, &p2, "Открыть настройки папки").clicked() {
+                        self.page = Page::Settings;
+                        self.on_navigate(Page::Settings);
                     }
                 });
             });

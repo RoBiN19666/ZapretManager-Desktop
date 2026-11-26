@@ -63,6 +63,53 @@ impl App {
         let valid = self.install.is_valid();
         let p2 = p;
 
+        // Единое место, где выбирается папка zapret и ставится новая версия.
+        w::card(ui, &p2, "Папка zapret", |ui| {
+            w::small(
+                ui,
+                &p2,
+                "Здесь указывается уже установленная папка или ставится zapret с нуля. В других разделах папку выбирать не нужно.",
+            );
+            ui.add_space(6.0);
+            let path = if self.install.root.is_empty() {
+                "не найдена".to_string()
+            } else {
+                self.install.root.clone()
+            };
+            ui.label(
+                RichText::new(path)
+                    .size(12.0)
+                    .color(if valid { p2.text } else { p2.warn }),
+            );
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                if w::secondary(ui, &p2, "Указать папку…").clicked() {
+                    self.pick_zapret_folder();
+                }
+                if w::primary(ui, &p2, "Скачать и установить…").clicked() {
+                    if let Some(parent) = rfd::FileDialog::new()
+                        .set_title("Куда установить zapret?")
+                        .pick_folder()
+                    {
+                        self.fresh_install(parent);
+                    }
+                }
+                if valid && w::ghost(ui, &p2, "Открыть папку").clicked() {
+                    crate::engine::sys::open_folder(std::path::Path::new(&self.install.root));
+                }
+                if w::ghost(ui, &p2, "Мастер установки…").clicked() {
+                    self.open_wizard();
+                }
+            });
+            if !valid {
+                w::muted(
+                    ui,
+                    &p2,
+                    "Для уже установленного zapret выберите папку, где лежат service.bat и bin\\winws.exe.",
+                );
+            }
+        });
+
         // игровой фильтр
         w::card(ui, &p2, "Игровой фильтр", |ui| {
             w::small(
@@ -467,9 +514,6 @@ impl App {
                     }),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if w::ghost(ui, &p2, "Мастер установки").clicked() {
-                        self.open_wizard();
-                    }
                     if w::ghost(ui, &p2, "Планировщик заданий").clicked() {
                         autostart::open_task_scheduler();
                     }

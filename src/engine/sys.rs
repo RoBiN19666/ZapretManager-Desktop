@@ -14,6 +14,7 @@ use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
     HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD, REG_SZ,
 };
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 use windows_sys::Win32::System::Threading::{
     GetExitCodeProcess, OpenProcess, QueryFullProcessImageNameW, TerminateProcess,
@@ -21,9 +22,10 @@ use windows_sys::Win32::System::Threading::{
 };
 use windows_sys::Win32::UI::Shell::{ShellExecuteExW, ShellExecuteW, SHELLEXECUTEINFOW};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, GetCursorPos, GetForegroundWindow, MessageBoxW, SetForegroundWindow, ShowWindow,
-    MB_ICONERROR, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, SW_RESTORE,
-    SW_SHOWNORMAL,
+    FindWindowW, GetCursorPos, GetForegroundWindow, GetSystemMetrics, LoadImageW, MessageBoxW,
+    SendMessageW, SetClassLongPtrW, SetForegroundWindow, ShowWindow, GCLP_HICON, GCLP_HICONSM,
+    ICON_BIG, ICON_SMALL, IMAGE_ICON, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK,
+    MB_SETFOREGROUND, SM_CXICON, SM_CXSMICON, SW_RESTORE, SW_SHOWNORMAL, WM_SETICON,
 };
 
 use crate::util::LocalDateTime;
@@ -764,6 +766,46 @@ pub fn window_for_current_process(title_contains: &str) -> Option<isize> {
     let result = FOUND.lock().ok().and_then(|f| *f);
     TITLE.with(|t| t.borrow_mut().clear());
     result
+}
+
+/// Поставить на окно иконку из ресурса exe (ID 1).
+///
+/// Winit/eframe ставят только `ICON_SMALL` (и иногда промахиваются мимо окна),
+/// из-за чего панель задач показывает стандартную иконку. Здесь явно задаём
+/// `ICON_BIG` и `ICON_SMALL` из встроенного `assets/zapret-manager.ico`.
+pub fn set_window_icon(hwnd: isize) -> bool {
+    if hwnd == 0 {
+        return false;
+    }
+    unsafe {
+        let module = GetModuleHandleW(std::ptr::null());
+        if module.is_null() {
+            return false;
+        }
+        let resource = 1usize as *const u16; // MAKEINTRESOURCE(1)
+        let big_size = GetSystemMetrics(SM_CXICON).max(32);
+        let small_size = GetSystemMetrics(SM_CXSMICON).max(16);
+        let big = LoadImageW(module, resource, IMAGE_ICON, big_size, big_size, 0);
+        let mut small = LoadImageW(module, resource, IMAGE_ICON, small_size, small_size, 0);
+        if big.is_null() {
+            crate::engine::log::warn(format!(
+                "Иконка окна: ресурс 1 не загрузился ({})",
+                error_text(GetLastError())
+            ));
+            return false;
+        }
+        if small.is_null() {
+            small = big;
+        }
+        let hwnd = hwnd as HWND;
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG as usize, big as isize);
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, small as isize);
+        // Дополнительно обновляем иконку класса окна: её используют Alt+Tab
+        // и некоторые сценарии панели задач, если у окна нет своей иконки.
+        SetClassLongPtrW(hwnd, GCLP_HICON, big as isize);
+        SetClassLongPtrW(hwnd, GCLP_HICONSM, small as isize);
+        true
+    }
 }
 
 /// Покрасить заголовок окна (isize-вариант для UI-слоя).

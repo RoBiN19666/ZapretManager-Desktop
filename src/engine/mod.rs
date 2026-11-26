@@ -2,6 +2,7 @@
 
 pub mod appprobe;
 pub mod autostart;
+pub mod autotune;
 pub mod bat;
 pub mod config;
 pub mod diagnostics;
@@ -21,6 +22,7 @@ pub mod service;
 pub mod sys;
 pub mod tester;
 pub mod tgproxy;
+pub mod tgsource;
 pub mod textfile;
 pub mod update;
 

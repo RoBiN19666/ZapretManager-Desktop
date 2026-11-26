@@ -4,6 +4,7 @@ use eframe::egui::{self, RichText, Ui};
 
 use crate::engine::log::LogLevel;
 use crate::engine::tgproxy::{self, TgState};
+use crate::engine::tgsource;
 
 use crate::ui::app::{App, Msg};
 use crate::ui::widgets as w;
@@ -11,6 +12,7 @@ use crate::ui::widgets as w;
 impl App {
     pub(crate) fn refresh_tg_state(&mut self) {
         self.pages.tg.state = tgproxy::get_state(&self.ini);
+        self.pages.tg.quiet_prepared = tgsource::is_prepared();
         self.last_tg_refresh = std::time::Instant::now();
     }
 
@@ -270,21 +272,117 @@ impl App {
         });
 
         w::card(ui, &p, "Режим запуска", |ui| {
-            ui.label(
-                RichText::new("Без иконки в трее (из исходников)")
-                    .size(12.5)
-                    .color(p.text_dim),
-            );
+            let mut quiet = tgproxy::run_mode(&self.ini) == "quiet";
+            if w::toggle_row(
+                ui,
+                &p,
+                "Без иконки в трее (из исходников)",
+                "Официальные исходники Flowseal запускаются через портативный Python — без окна и без значка в трее",
+                &mut quiet,
+            ) {
+                self.apply_tg_mode(quiet);
+            }
+
+            let prepared = self.pages.tg.quiet_prepared;
+            let status = if prepared {
+                let version = tgsource::prepared_version();
+                let running = if quiet && st.quiet_running {
+                    format!("  •  работает без трея (PID {})", st.pid)
+                } else {
+                    "  •  можно включать".to_string()
+                };
+                format!("Подготовлено: {}{}", version, running)
+            } else {
+                "Тихий режим не подготовлен: нажмите «Подготовить» — портативный Python (≈10 МБ) скачается автоматически.".to_string()
+            };
+            ui.label(RichText::new(status).size(11.5).color(p.text_muted));
+
+            if !self.pages.tg.quiet_status.is_empty() {
+                ui.label(
+                    RichText::new(&self.pages.tg.quiet_status)
+                        .size(11.5)
+                        .color(if self.pages.tg.quiet_busy { p.text_dim } else { p.text_muted }),
+                );
+            }
+            if self.pages.tg.quiet_busy {
+                w::progress_bar(ui, &p, self.pages.tg.quiet_progress as f32 / 100.0);
+            }
+            ui.add_space(4.0);
+            let label = if prepared {
+                "Обновить исходники"
+            } else {
+                "Подготовить"
+            };
+            if w::secondary(ui, &p, label).clicked() && !self.pages.tg.quiet_busy {
+                self.prepare_tg_quiet();
+            }
             w::hint(
                 ui,
                 &p,
-                "Тихий режим (запуск официальных исходников Flowseal через портативный Python) в Rust-версии пока не поддерживается — используйте официальный exe с иконкой в трее.",
+                "Python устанавливать не нужно: менеджер скачает embeddable-сборку и зависимости в свою папку.",
             );
         });
 
         if !st.config_error.is_empty() {
             w::muted(ui, &p, &format!("config.json: {}", st.config_error));
         }
+    }
+
+    /// Включить/выключить тихий режим. Если он ещё не подготовлен — сразу готовим.
+    fn apply_tg_mode(&mut self, quiet: bool) {
+        tgproxy::set_run_mode(&mut self.ini, quiet);
+        self.pages.tg.quiet_status.clear();
+        if quiet && !self.pages.tg.quiet_prepared {
+            self.notify(
+                "Тихий режим включён: сначала подготовим исходники и портативный Python.",
+                LogLevel::Info,
+            );
+            self.prepare_tg_quiet();
+            return;
+        }
+        self.notify(
+            if quiet {
+                "Тихий режим включён — прокси будет работать без иконки в трее."
+            } else {
+                "Тихий режим выключен — используется официальный TgWsProxy_windows.exe."
+            },
+            LogLevel::Ok,
+        );
+        self.restart_tg_proxy_for_mode();
+    }
+
+    /// Перезапустить работающий прокси, чтобы применить режим.
+    pub(crate) fn restart_tg_proxy_for_mode(&mut self) {
+        if !self.pages.tg.state.running {
+            return;
+        }
+        let ini = self.ini.clone();
+        self.spawn_bg(move |tx| {
+            let _ = tgproxy::stop_all();
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            let (message, ok) = tgproxy::start(&ini);
+            let _ = tx.send(Msg::Notify(
+                message,
+                if ok { LogLevel::Ok } else { LogLevel::Error },
+            ));
+        });
+    }
+
+    /// Подготовка тихого режима в фоне (исходники + Python + зависимости).
+    fn prepare_tg_quiet(&mut self) {
+        if self.pages.tg.quiet_busy {
+            return;
+        }
+        self.pages.tg.quiet_busy = true;
+        self.pages.tg.quiet_progress = 2;
+        self.pages.tg.quiet_status = "Подготовка тихого режима…".to_string();
+        self.spawn_bg(|tx| {
+            let tx2 = tx.clone();
+            let result = tgsource::prepare_latest(|percent, stage| {
+                let _ = tx2.send(Msg::Progress("tg-quiet", percent, stage.to_string()));
+            });
+            let _ = tx.send(Msg::TgPrepareDone(result));
+        });
     }
 
     fn install_tg(&mut self, tag: String, dir: std::path::PathBuf) {

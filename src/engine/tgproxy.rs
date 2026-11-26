@@ -9,6 +9,7 @@ use super::log;
 use super::process;
 use super::sys;
 use super::textfile;
+use super::tgsource;
 
 #[derive(Debug, Clone, Default)]
 pub struct TgState {
@@ -26,6 +27,12 @@ pub struct TgState {
     pub port_listening: bool,
     pub instance_count: usize,
     pub startup_folder_exe: Option<PathBuf>,
+    /// Выбран тихий режим (исходники вместо exe с иконкой в трее).
+    pub quiet: bool,
+    /// Тихий режим подготовлен (исходники + портативный Python).
+    pub quiet_prepared: bool,
+    /// Тихий режим реально запущен (процесс pythonw с tg_ws_proxy.py).
+    pub quiet_running: bool,
 }
 
 impl TgState {
@@ -63,6 +70,31 @@ pub fn default_dir() -> PathBuf {
 pub fn proxy_config_path() -> PathBuf {
     let appdata = std::env::var("APPDATA").unwrap_or_default();
     Path::new(&appdata).join("TgWsProxy").join("config.json")
+}
+
+/// Режим запуска: "exe" (официальный файл с треем) или "quiet" (исходники без трея).
+pub fn run_mode(ini: &Ini) -> String {
+    // Если тихий режим уже подготовлен, а ключ потерялся (например, старый
+    // менеджер перезаписал manager.ini), считаем выбранным тихий режим.
+    let default = if tgsource::is_prepared() {
+        "quiet"
+    } else {
+        "exe"
+    };
+    if ini
+        .get("TgRunMode", default)
+        .trim()
+        .eq_ignore_ascii_case("quiet")
+    {
+        "quiet".to_string()
+    } else {
+        "exe".to_string()
+    }
+}
+
+pub fn set_run_mode(ini: &mut Ini, quiet: bool) {
+    ini.set("TgRunMode", if quiet { "quiet" } else { "exe" });
+    let _ = ini.save();
 }
 
 pub fn proxy_log_path() -> PathBuf {
@@ -157,6 +189,8 @@ pub fn get_state(ini: &Ini) -> TgState {
     st.port = port;
     st.secret = secret;
     st.config_error = config_error;
+    let quiet = run_mode(ini) == "quiet";
+    st.quiet = quiet;
 
     // 1. Путь из настроек.
     let from_ini = ini.get("TgExe", "");
@@ -201,7 +235,7 @@ pub fn get_state(ini: &Ini) -> TgState {
         if st.version.is_empty() {
             st.version = ini.get("TgVersion", "");
         }
-        let exe_path = st.exe.clone().unwrap_or_default();
+        let exe_path = path.clone();
         if let Some(p) = procs.iter().find(|p| {
             sys::process_exe_path(p.pid)
                 .map(|path| {
@@ -219,6 +253,25 @@ pub fn get_state(ini: &Ini) -> TgState {
         st.dir = PathBuf::from(ini.get("TgDir", ""));
     } else {
         st.dir = default_dir();
+    }
+
+    // Тихий режим: работаем из исходников, без иконки в трее.
+    if quiet {
+        st.quiet_prepared = tgsource::is_prepared();
+        let quiet_procs = tgsource::find_processes();
+        if !quiet_procs.is_empty() {
+            st.running = true;
+            st.quiet_running = true;
+            st.instance_count = quiet_procs.len();
+            st.pid = quiet_procs[0].pid;
+            st.started_unix = sys::process_start_unix(quiet_procs[0].pid);
+        }
+        if st.quiet_prepared {
+            st.installed = true;
+            st.dir = tgsource::root_dir();
+            st.exe = Some(tgsource::script_path());
+            st.version = tgsource::prepared_version();
+        }
     }
     st.port_listening = is_port_listening(st.port);
     st
@@ -249,9 +302,51 @@ fn find_exe_in(dir: &Path) -> Option<PathBuf> {
     candidates.into_iter().next()
 }
 
-/// Запустить прокси (exe-режим, конфиг читает сам прокси).
+/// Запустить прокси в выбранном режиме (exe или тихий из исходников).
 pub fn start(ini: &Ini) -> (String, bool) {
     let st = get_state(ini);
+    if st.quiet {
+        if !st.quiet_prepared {
+            return (
+                "Тихий режим не подготовлен: нажмите «Подготовить» на странице «TG-прокси»."
+                    .to_string(),
+                false,
+            );
+        }
+        if st.quiet_running {
+            return (
+                format!("TG WS Proxy уже запущен без трея (PID {}).", st.pid),
+                true,
+            );
+        }
+        if st.running {
+            return (
+                "Тихий режим включён, но сейчас работает TgWsProxy_windows.exe. Остановите его или нажмите «Перезапустить»."
+                    .to_string(),
+                false,
+            );
+        }
+        return match tgsource::start(st.port, &st.secret) {
+            Ok((_pid, message)) => {
+                // Даём прокси время открыть порт, как в C#-версии.
+                let deadline = Instant::now() + Duration::from_secs(6);
+                while Instant::now() < deadline {
+                    if is_port_listening(st.port) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(300));
+                }
+                (
+                    format!(
+                        "{} Подключение в Telegram — кнопкой «Открыть в Telegram».",
+                        message
+                    ),
+                    true,
+                )
+            }
+            Err(error) => (error, false),
+        };
+    }
     if !st.installed {
         return (
             "TG WS Proxy не установлен. Установите его на странице «TG-прокси».".to_string(),
@@ -292,8 +387,9 @@ pub fn start(ini: &Ini) -> (String, bool) {
     }
 }
 
-/// Остановить только копии из указанной папки.
+/// Остановить только копии из указанной папки (и тихий режим, если запущен).
 pub fn stop(dir: &Path) -> String {
+    let quiet_stopped = tgsource::stop();
     let mut killed = 0;
     for p in proxy_processes() {
         let Some(exe) = sys::process_exe_path(p.pid) else {
@@ -310,6 +406,27 @@ pub fn stop(dir: &Path) -> String {
     if killed > 0 {
         std::thread::sleep(Duration::from_millis(400));
         format!("TG WS Proxy остановлен (процессов: {}).", killed)
+    } else if quiet_stopped > 0 {
+        "TG WS Proxy (тихий режим) остановлен.".to_string()
+    } else {
+        "TG WS Proxy уже остановлен.".to_string()
+    }
+}
+
+/// Остановить все экземпляры (нужно при смене режима exe ↔ тихий).
+pub fn stop_all() -> String {
+    let quiet_stopped = tgsource::stop();
+    let mut killed = 0usize;
+    for p in proxy_processes() {
+        if sys::kill_process(p.pid) {
+            killed += 1;
+        }
+    }
+    if killed > 0 {
+        std::thread::sleep(Duration::from_millis(400));
+        format!("TG WS Proxy остановлен (процессов: {}).", killed)
+    } else if quiet_stopped > 0 {
+        "TG WS Proxy (тихий режим) остановлен.".to_string()
     } else {
         "TG WS Proxy уже остановлен.".to_string()
     }

@@ -50,11 +50,28 @@ fn read_stream<R: Read + Send + 'static>(mut r: R) -> std::thread::JoinHandle<Ve
 
 /// Запустить программу, дождаться выхода (не дольше timeout) и вернуть вывод.
 pub fn run(exe: &str, args: &[&str], timeout: Duration) -> ProcResult {
+    run_with_env(exe, args, None, &[], timeout)
+}
+
+/// То же, но с рабочей папкой и переменными окружения.
+pub fn run_with_env(
+    exe: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    envs: &[(&str, String)],
+    timeout: Duration,
+) -> ProcResult {
     let mut cmd = command(exe);
     cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {

@@ -259,6 +259,7 @@ impl ZapretOps {
             res.message = "Запуск требует прав администратора.".to_string();
             return res;
         }
+        self.install.ensure_user_lists();
         let snap = service::query("zapret");
         if snap.installed && snap.status == "работает" {
             res.message =
@@ -492,6 +493,7 @@ impl ZapretOps {
         if !self.install.winws_exe().is_file() {
             return Err("Файл bin\\winws.exe не найден.".to_string());
         }
+        self.install.ensure_user_lists();
         let gf = GameFilterState::load(&self.install.root);
         let argv = bat::get_argv(&self.install, strategy, &gf)?;
         let args = bat::build_command_line(&argv);

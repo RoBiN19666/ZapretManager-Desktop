@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::util::natural_cmp;
 
-use super::{paths, sys};
+use super::{log, paths, sys, textfile};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrategyKind {
@@ -98,6 +98,55 @@ impl ZapretInstall {
 
     pub fn looks_valid(dir: &Path) -> bool {
         dir.join("service.bat").is_file() && dir.join("bin").join("winws.exe").is_file()
+    }
+
+    /// Принять саму папку zapret или её родителя с единственной установкой внутри.
+    pub fn resolve_valid_dir(dir: &Path) -> Option<PathBuf> {
+        if Self::looks_valid(dir) {
+            return Some(dir.to_path_buf());
+        }
+        for entry in std::fs::read_dir(dir).ok()?.flatten() {
+            let path = entry.path();
+            if path.is_dir() && Self::looks_valid(&path) {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    /// Создать отсутствующие пользовательские списки.
+    ///
+    /// `general*.bat` вызывает `service.bat load_user_lists`, но winws.exe в
+    /// Rust-версии запускается напрямую, без cmd.exe. Если файлов нет,
+    /// winws падает с «cannot access ipset file ...-user.txt». Поэтому
+    /// создаём те же шаблоны, что и официальный service.bat.
+    pub fn ensure_user_lists(&self) -> Vec<String> {
+        let dir = self.lists_dir();
+        if !dir.is_dir() {
+            return Vec::new();
+        }
+        let mut created = Vec::new();
+        let templates: [(&str, &str); 3] = [
+            ("list-general-user.txt", "# Мои домены (файл может быть пустым)\r\n"),
+            ("list-exclude-user.txt", "# Исключения (файл может быть пустым)\r\n"),
+            ("ipset-exclude-user.txt", "# Исключения IP (файл может быть пустым)\r\n"),
+        ];
+        for (name, template) in templates {
+            let path = dir.join(name);
+            if path.is_file() {
+                continue;
+            }
+            if textfile::write_text_atomic(&path, template).is_ok() {
+                created.push(name.to_string());
+            }
+        }
+        if !created.is_empty() {
+            log::warn(format!(
+                "Созданы недостающие файлы списков: {}",
+                created.join(", ")
+            ));
+        }
+        created
     }
 
     /// Папка, из которой запущена служба zapret (по ImagePath в реестре).
@@ -204,6 +253,7 @@ impl ZapretInstall {
             def.order = order;
             self.strategies.push(def);
         }
+        self.ensure_user_lists();
     }
 
     fn describe(&self, name: &str) -> StrategyDef {
@@ -398,5 +448,28 @@ mod tests {
     #[test]
     fn version_token() {
         assert_eq!(extract_version_token("v1.9.9d\n").as_deref(), Some("1.9.9d"));
+    }
+
+    #[test]
+    fn creates_missing_user_lists() {
+        let root = std::env::temp_dir().join(format!(
+            "zapret-user-lists-test-{}",
+            std::process::id()
+        ));
+        let lists = root.join("lists");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&lists).unwrap();
+        let install = ZapretInstall {
+            root: root.to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        let created = install.ensure_user_lists();
+        assert_eq!(created.len(), 3);
+        assert!(lists.join("list-general-user.txt").is_file());
+        assert!(lists.join("list-exclude-user.txt").is_file());
+        assert!(lists.join("ipset-exclude-user.txt").is_file());
+        // Повторный вызов ничего не перезаписывает.
+        assert!(install.ensure_user_lists().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
