@@ -6,6 +6,6 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyProduct("Zapret Manager")]
 [assembly: AssemblyCompany("RoBiN19666")]
 [assembly: AssemblyCopyright("Открытый исходный код. Оболочка не является официальным приложением Flowseal.")]
-[assembly: AssemblyVersion("1.2.5.0")]
-[assembly: AssemblyFileVersion("1.2.5.0")]
+[assembly: AssemblyVersion("1.2.6.0")]
+[assembly: AssemblyFileVersion("1.2.6.0")]
 [assembly: ComVisible(false)]

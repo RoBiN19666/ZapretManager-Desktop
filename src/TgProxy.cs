@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -398,6 +398,9 @@ namespace ZapretManager
 
         // ---------- обновление ----------
 
+        /// <summary>Последний известный релиз (заполняется любой проверкой обновлений).</summary>
+        public static ReleaseInfo LastKnownLatest;
+
         public static ReleaseInfo CheckLatest()
         {
             string tag = GitHub.LatestTagByRedirect(Repo);
@@ -411,6 +414,7 @@ namespace ZapretManager
             asset.Url = DownloadUrl(tag);
             rel.Assets.Add(asset);
             rel.Body = "Описание изменений: " + rel.HtmlUrl;
+            LastKnownLatest = rel;
             return rel;
         }
 

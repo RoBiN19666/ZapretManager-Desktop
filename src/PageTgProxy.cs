@@ -380,6 +380,7 @@ namespace ZapretManager
                     ? string.Format("Установленная версия: {0}", st.Version.Length > 0 ? st.Version : "неизвестна")
                     : "TG WS Proxy ещё не установлен";
                 _versionLine.ForeColor = st.Installed ? Theme.Text : Theme.TextMuted;
+                if (_latest == null && TgProxy.LastKnownLatest != null) _latest = TgProxy.LastKnownLatest;
                 if (_latest != null)
                 {
                     bool available = TgProxy.UpdateAvailable(st, _latest);
