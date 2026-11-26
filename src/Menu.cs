@@ -166,27 +166,31 @@ namespace ZapretManager
     {
         public static void RunAtCursor(string path)
         {
-            System.Drawing.Point physical = Native.CursorPosition();
-            Log.Info(string.Format("Курсор: GetCursorPos {0},{1}", physical.X, physical.Y));
-            using (Form owner = new Form())
+            System.Drawing.Point at = Native.CursorPosition();
+            using (Form host = new Form())
             {
-                owner.StartPosition = FormStartPosition.Manual;
-                owner.Location = new System.Drawing.Point(physical.X - 20, physical.Y - 20);
-                owner.ShowInTaskbar = false;
-                owner.FormBorderStyle = FormBorderStyle.None;
-                owner.Size = new Size(10, 10);
-                owner.Opacity = 0.01;
-                owner.Show();
+                host.ShowInTaskbar = false;
+                host.FormBorderStyle = FormBorderStyle.None;
+                host.StartPosition = FormStartPosition.Manual;
+                host.Location = new System.Drawing.Point(80, 80);
+                host.Size = new Size(400, 300);
+                host.Show();
+                host.Hide();
+                Log.Info("Проба: окно скрыто, visible=" + host.Visible);
 
                 DarkMenu menu = new DarkMenu();
-                menu.Items.Add(new ToolStripMenuItem("Проверка позиции"));
-                menu.Show(physical);
+                menu.Items.Add(new ToolStripMenuItem("Проба"));
+                menu.Show(at);
+                Native.SetForegroundWindow(menu.Handle);
                 Application.DoEvents();
-                Log.Info(string.Format("Меню: {0},{1} {2}x{3}, DPI меню {4}, формы {5}",
-                    menu.Bounds.Left, menu.Bounds.Top, menu.Bounds.Width, menu.Bounds.Height,
-                    menu.DeviceDpi, owner.DeviceDpi));
+                Application.DoEvents();
+                Log.Info("Проба: после меню visible=" + host.Visible + ", state=" + host.WindowState + ", меню " + menu.Bounds);
+
+                host.BeginInvoke((MethodInvoker)delegate { if (host.Visible) { host.Hide(); host.ShowInTaskbar = false; } });
+                Application.DoEvents();
+                Application.DoEvents();
+                Log.Info("Проба: после скрытия visible=" + host.Visible);
                 menu.Close();
-                owner.Close();
             }
         }
 

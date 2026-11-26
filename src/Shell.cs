@@ -412,19 +412,32 @@ namespace ZapretManager
             _tray.MouseUp += delegate(object s, MouseEventArgs e)
             {
                 if (e.Button != MouseButtons.Right) return;
+
+                // состояние окна до показа меню: меню активирует процесс, и Windows
+                // восстанавливает свёрнутое (или скрытое) окно — возвращаем как было
                 bool wasHidden = !Visible;
+                bool wasMinimized = WindowState == FormWindowState.Minimized;
+
                 System.Drawing.Point at = Native.CursorPosition();
                 menu.Show(at);
-                if (!wasHidden) Native.SetForegroundWindow(menu.Handle);
-                // меню принадлежит процессу, и оболочка «заодно» показывает главное окно:
-                // если оно было свёрнуто в трей — возвращаем как было
-                if (wasHidden && Visible)
+                // фокус меню обязателен: без него оно не закрывается по клику вне его
+                Native.SetForegroundWindow(menu.Handle);
+
+                BeginInvoke((MethodInvoker)delegate
                 {
-                    Hide();
-                    ShowInTaskbar = false;
-                }
-                Log.Info(string.Format("Меню трея: курсор {0},{1}, меню {2},{3} {4}x{5}, окно было скрыто: {6}",
-                    at.X, at.Y, menu.Bounds.Left, menu.Bounds.Top, menu.Bounds.Width, menu.Bounds.Height, wasHidden));
+                    if (wasHidden && Visible)
+                    {
+                        Hide();
+                        ShowInTaskbar = false;
+                    }
+                    else if (wasMinimized && WindowState != FormWindowState.Minimized)
+                    {
+                        WindowState = FormWindowState.Minimized;
+                    }
+                });
+
+                Log.Info(string.Format("Меню трея: курсор {0},{1}, меню {2},{3} {4}x{5}, скрыто: {6}, свёрнуто: {7}",
+                    at.X, at.Y, menu.Bounds.Left, menu.Bounds.Top, menu.Bounds.Width, menu.Bounds.Height, wasHidden, wasMinimized));
             };
         }
 
