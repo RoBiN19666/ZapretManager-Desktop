@@ -371,7 +371,6 @@ namespace ZapretManager
             menu.BackColor = Theme.Surface;
             menu.ForeColor = Theme.Text;
             menu.Renderer = new DarkMenuRenderer();
-            menu.ShowImageMargin = false;
             menu.Items.Add("Открыть Zapret Manager", null, delegate { ShowFromTray(); });
             ToolStripMenuItem zapretItem = new ToolStripMenuItem("Запрет (обход DPI)");
             zapretItem.Click += delegate { TrayToggleZapret(); };
@@ -387,17 +386,18 @@ namespace ZapretManager
             });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Выход", null, delegate { ExitApplication(); });
-            // значки и отступы: строки меню чуть выше, слева место под пиктограмму
+            // иконки и отступы: картинку ставит сам пункт, поэтому выравнивание штатное
             foreach (ToolStripItem item in menu.Items)
             {
                 if (item is ToolStripSeparator) continue;
                 item.Font = Theme.Base;
-                item.Padding = new Padding(Theme.Px(30), Theme.Px(7), Theme.Px(18), Theme.Px(7));
-                if (item.Text.StartsWith("Открыть")) item.Tag = "open";
-                else if (item.Text.StartsWith("Запрет")) item.Tag = "shield";
-                else if (item.Text.StartsWith("TG")) item.Tag = "telegram";
-                else if (item.Text.StartsWith("Проверить")) item.Tag = "refresh";
-                else if (item.Text.StartsWith("Выход")) item.Tag = "exit";
+                item.Padding = new Padding(Theme.Px(2), Theme.Px(7), Theme.Px(18), Theme.Px(7));
+                item.ImageScaling = ToolStripItemImageScaling.None;
+                if (item.Text.StartsWith("Открыть")) item.Image = MenuIcons.Get("open");
+                else if (item.Text.StartsWith("Запрет")) item.Image = MenuIcons.Get("shield");
+                else if (item.Text.StartsWith("TG")) item.Image = MenuIcons.Get("telegram");
+                else if (item.Text.StartsWith("Проверить")) item.Image = MenuIcons.Get("refresh");
+                else if (item.Text.StartsWith("Выход")) item.Image = MenuIcons.Get("exit");
             }
             menu.Opening += delegate
             {

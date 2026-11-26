@@ -92,6 +92,14 @@ namespace ZapretManager
             DropShadowEnabled = true;
         }
 
+        /// <summary>Единое оформление пункта: шрифт, отступы, иконка.</summary>
+        public static void StyleItem(ToolStripItem item, string kind)
+        {
+            item.Font = Theme.Base;
+            item.Padding = new Padding(Theme.Px(2), Theme.Px(7), Theme.Px(18), Theme.Px(7));
+            item.ImageScaling = ToolStripItemImageScaling.None;
+            if (!string.IsNullOrEmpty(kind)) item.Image = MenuIcons.Get(kind);
+        }
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
@@ -165,10 +173,7 @@ namespace ZapretManager
             {
                 if (titles[i] == "-") { menu.Items.Add(new ToolStripSeparator()); continue; }
                 ToolStripMenuItem item = new ToolStripMenuItem(titles[i]);
-                item.Font = Theme.Base;
-                item.Image = MenuIcons.Get(kinds[i]);
-                item.ImageScaling = ToolStripItemImageScaling.None;
-                item.Padding = new Padding(Theme.Px(2), Theme.Px(7), Theme.Px(18), Theme.Px(7));
+                DarkMenu.StyleItem(item, kinds[i]);
                 menu.Items.Add(item);
             }
 
