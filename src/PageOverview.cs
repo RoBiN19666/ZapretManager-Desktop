@@ -312,7 +312,7 @@ namespace ZapretManager
             _logCard.Controls.Add(_log);
             _logCard.Resize += delegate
             {
-                _log.Size = new Size(_logCard.ClientSize.Width - 40, Math.Max(40, _logCard.ClientSize.Height - 66));
+                _log.Size = new Size(_logCard.ClientSize.Width - Theme.Px(40), Math.Max(Theme.Px(40), _logCard.ClientSize.Height - Theme.Px(66)));
             };
         }
 

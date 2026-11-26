@@ -269,7 +269,7 @@ namespace ZapretManager
         private readonly int _maxHeight;
         private int _offset;
         private int _hover = -1;
-        private const int RowH = 28;
+        private static int RowH { get { return Math.Max(28, (int)Math.Round(28 * Theme.S)); } }
 
         public SelectPopup(System.Collections.Generic.List<string> items, int selected, Size size, Point screenLocation)
         {
@@ -373,7 +373,7 @@ namespace ZapretManager
         public DarkEditor()
         {
             BorderStyle = BorderStyle.None;
-            BackColor = Color.FromArgb(16, 19, 24);
+            BackColor = Theme.Editor;
             ForeColor = Theme.Text;
             Font = Theme.Mono;
             DetectUrls = false;

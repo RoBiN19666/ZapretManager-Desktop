@@ -18,6 +18,8 @@ namespace ZapretManager
         public static Color SurfaceTop = Surface;
         public static Color SurfaceBottom = Surface;
         public static Color SurfaceAlt = Color.FromArgb(38, 32, 27);
+        /// <summary>Фон текстовых редакторов: тёплый, в тон карточкам (без синевы).</summary>
+        public static Color Editor = Color.FromArgb(22, 19, 17);
         public static Color Hover = Color.FromArgb(50, 43, 36);
         public static Color Border = Color.FromArgb(52, 44, 37);
         public static Color BorderStrong = Color.FromArgb(78, 66, 54);
@@ -160,6 +162,7 @@ namespace ZapretManager
                 SurfaceTop = Surface;
                 SurfaceBottom = Surface;
                 SurfaceAlt = Color.FromArgb(242, 239, 235);
+                Editor = Color.FromArgb(250, 248, 245);
                 Hover = Color.FromArgb(232, 228, 222);
                 Border = Color.FromArgb(221, 215, 207);
                 BorderStrong = Color.FromArgb(198, 189, 178);
@@ -877,7 +880,7 @@ namespace ZapretManager
                 if (c.Width != w) c.Width = w;
                 y += c.Height + Gap;
             }
-            ContentHeight = y;
+            ContentHeight = y + Theme.Px(120);   // нижний отступ: последняя карточка не упирается в край
             EventHandler h = LayoutDone;
             if (h != null) h(this, EventArgs.Empty);
         }
@@ -1102,7 +1105,7 @@ namespace ZapretManager
         private int _scroll;
         private int _hover = -1;
         private bool _dragBar;
-        private const int RowH = 56;
+        private static int RowH { get { return Math.Max(56, (int)Math.Round(56 * Theme.S)); } }
         private const int BarW = 6;
 
         public StrategyList()
@@ -1139,6 +1142,16 @@ namespace ZapretManager
             _scroll = 0;
             if (_selected >= items.Count) _selected = -1;
             Invalidate();
+        }
+
+        /// <summary>Индекс первой альтернативной стратегии: её описание относится ко всей группе.</summary>
+        private int FirstAlt()
+        {
+            for (int i = 0; i < Items2.Count; i++)
+            {
+                if (string.Equals(Items2[i].Kind, "alt", StringComparison.OrdinalIgnoreCase)) return i;
+            }
+            return -1;
         }
 
         private int ContentHeight { get { return Items2.Count * RowH + 8; } }
@@ -1276,15 +1289,19 @@ namespace ZapretManager
                 if (active) Draw.FillRound(g, new Rectangle(r.X, r.Y + 10, 3, r.Height - 20), 2, Theme.Success);
 
                 int x = r.X + 14;
-                int badgeW = 84;
-                TextRenderer.DrawText(g, s.Name, Theme.Bold, new Rectangle(x, r.Y + 9, r.Width - badgeW - 30, 18),
+                int badgeW = Theme.Px(84);
+                TextRenderer.DrawText(g, s.Name, Theme.Bold, new Rectangle(x, r.Y + Theme.Px(9), r.Width - badgeW - 30, Theme.Px(20)),
                     selected || active ? Theme.Text : Theme.Text, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
-                TextRenderer.DrawText(g, s.Description, Theme.Small, new Rectangle(x, r.Y + 28, r.Width - badgeW - 30, 16),
-                    Theme.TextMuted, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
-
+                // длинное описание показываем только у первой стратегии группы
+                bool showDesc = (i == FirstAlt()) || (i == 0) || !string.Equals(Items2[i - 1].Description, s.Description, StringComparison.Ordinal);
+                if (showDesc)
+                {
+                    TextRenderer.DrawText(g, s.Description, Theme.Small, new Rectangle(x, r.Y + Theme.Px(28), r.Width - badgeW - 30, Theme.Px(18)),
+                        Theme.TextMuted, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+                }
                 string badge = s.ShortName;
-                int bw = Math.Min(badgeW, TextRenderer.MeasureText(badge, Theme.Small).Width + 18);
-                Rectangle badgeRect = new Rectangle(r.Right - bw - 12, r.Y + (r.Height - 20) / 2, bw, 20);
+                int bw = Math.Min(badgeW, TextRenderer.MeasureText(badge, Theme.Small).Width + Theme.Px(18));
+                Rectangle badgeRect = new Rectangle(r.Right - bw - Theme.Px(12), r.Y + (r.Height - Theme.Px(20)) / 2, bw, Theme.Px(20));
                 Color badgeColor = BadgeColor(s.Kind);
                 Draw.FillRound(g, badgeRect, 10, Theme.WithAlpha(badgeColor, 40));
                 TextRenderer.DrawText(g, badge, Theme.Small, badgeRect, badgeColor, Draw.Center);

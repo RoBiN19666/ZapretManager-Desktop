@@ -231,10 +231,24 @@ namespace ZapretManager
             tgproxy.Location = new Point(22, y + 60);
             tgproxy.Click += delegate { Native.OpenUrl("https://github.com/Flowseal/tg-ws-proxy"); };
             _aboutCard.Controls.Add(tgproxy);
-            Label v = L("Настройки и журнал: " + AppPaths.DataDir, Theme.Small, Theme.TextMuted, 22, y + 96);
+
+            _aboutCard.Controls.Add(L("Поддержать проект", Theme.Small, Theme.TextDim, 22, y + 100));
+
+            LinkBadge boosty = new LinkBadge("Boosty", "https://boosty.to/robin19666", Color.FromArgb(255, 107, 0));
+            boosty.Location = new Point(22, y + 124);
+            _aboutCard.Controls.Add(boosty);
+
+            LinkBadge donate = new LinkBadge("DonationAlerts", "https://www.donationalerts.com/r/robin19666", Color.FromArgb(255, 138, 0));
+            donate.Location = new Point(22 + boosty.Width + 10, y + 124);
+            _aboutCard.Controls.Add(donate);
+
+            _aboutCard.Controls.Add(L("На хлебушек", Theme.Small, Theme.TextMuted,
+                22 + boosty.Width + 10 + donate.Width + 12, y + 130));
+
+            Label v = L("Настройки и журнал: " + AppPaths.DataDir, Theme.Small, Theme.TextMuted, 22, y + 164);
             _aboutCard.Controls.Add(v);
 
-            _aboutCard.Height = y + 96 + 16 + 14;
+            _aboutCard.Height = y + 164 + 16 + 16;
             View.Stack.Add(_aboutCard);
         }
         private void InstallService()

@@ -152,8 +152,8 @@ namespace ZapretManager
             _card.Resize += delegate
             {
                 int w = _card.ClientSize.Width;
-                _editor.Size = new Size(w - 288, Math.Max(80, _card.ClientSize.Height - 190));
-                _fileList.Height = Math.Max(80, _card.ClientSize.Height - 108);
+                _editor.Size = new Size(w - Theme.Px(288), Math.Max(Theme.Px(80), _card.ClientSize.Height - Theme.Px(190)));
+                _fileList.Height = Math.Max(Theme.Px(80), _card.ClientSize.Height - Theme.Px(108));
             };
 
             View.Stack.Add(_card);

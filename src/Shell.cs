@@ -1048,6 +1048,9 @@ namespace ZapretManager
             foreach (PageBase p in pages)
             {
                 p.Build();
+                Theme.ScaleKeepingFonts(p.View, Theme.S);
+                p.View.Stack.PerformLayout();
+                p.View.Stack.Height = Math.Max(10, p.View.Stack.ContentHeight);
                 p.View.Visible = false;
                 _pageHost.Controls.Add(p.View);
                 _shell.Pages.Add(p);
