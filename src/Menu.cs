@@ -126,51 +126,46 @@ namespace ZapretManager
         }
     }
 
-    /// <summary>Простые значки для пунктов меню (рисуются линиями, без шрифтов).</summary>
+    /// <summary>Значки пунктов меню из Segoe MDL2 Assets: ровные, штатного размера.</summary>
     public static class MenuGlyph
     {
-        public static void Draw(Graphics g, string kind, Rectangle box, Color color)
+        private static readonly System.Collections.Generic.Dictionary<int, Font> Fonts = new System.Collections.Generic.Dictionary<int, Font>();
+
+        private static string Code(string kind)
         {
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            int cx = box.X + box.Width / 2;
-            int cy = box.Y + box.Height / 2;
-            int s = Math.Min(box.Width, box.Height);
-            using (Pen p = new Pen(color, Math.Max(1.4f, s / 11f)))
+            switch (kind)
             {
-                p.StartCap = LineCap.Round;
-                p.EndCap = LineCap.Round;
-                switch (kind)
-                {
-                    case "open":
-                        g.DrawRectangle(p, cx - s / 4, cy - s / 4, s / 2, s / 2);
-                        g.DrawLine(p, cx - s / 4, cy - s / 4, cx + s / 5, cy + s / 5);
-                        break;
-                    case "shield":
-                        g.DrawArc(p, cx - s / 3, cy - s / 3, s * 2 / 3, s * 2 / 3, 200, 340);
-                        g.DrawLine(p, cx - s / 3, cy - s / 3, cx + s / 5, cy - s / 3);
-                        break;
-                    case "telegram":
-                        g.DrawLines(p, new Point[]
-                        {
-                            new Point(cx - s / 3, cy),
-                            new Point(cx + s / 3, cy - s / 4),
-                            new Point(cx - s / 10, cy + s / 3),
-                            new Point(cx - s / 10, cy + s / 8)
-                        });
-                        break;
-                    case "refresh":
-                        g.DrawArc(p, cx - s / 3, cy - s / 3, s * 2 / 3, s * 2 / 3, 40, 280);
-                        g.DrawLine(p, cx + s / 5, cy - s / 3, cx + s / 12, cy - s / 6);
-                        break;
-                    case "exit":
-                        g.DrawArc(p, cx - s / 3, cy - s / 3, s * 2 / 3, s * 2 / 3, 110, 320);
-                        g.DrawLine(p, cx, cy - s / 3, cx, cy);
-                        break;
-                }
+                case "open": return "\uE8A7";      // окно со стрелкой
+                case "shield": return "\uEA18";    // щит
+                case "telegram": return "\uE724";   // отправить (самолётик)
+                case "refresh": return "\uE72C";   // круговая стрелка
+                case "exit": return "\uE7E8";      // питание
+                default: return "";
             }
         }
-    }
 
+        public static void Draw(Graphics g, string kind, Rectangle box, Color color)
+        {
+            string code = Code(kind);
+            if (code.Length == 0) return;
+            int size = Math.Max(10, box.Height);
+            Font font;
+            if (!Fonts.TryGetValue(size, out font))
+            {
+                try
+                {
+                    font = new Font("Segoe MDL2 Assets", size, FontStyle.Regular, GraphicsUnit.Pixel);
+                    Fonts[size] = font;
+                }
+                catch
+                {
+                    return;
+                }
+            }
+            TextRenderer.DrawText(g, code, font, box, color,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+        }
+    }
     /// <summary>Служебный предпросмотр меню для скриншотов (--menu-shot).</summary>
     public static class MenuPreview
     {
@@ -225,6 +220,44 @@ namespace ZapretManager
             {
                 Log.Warn("Снимок меню: " + ex.Message);
             }
+        }
+    }
+
+    /// <summary>Служебный тест: таблица глифов Segoe MDL2/Fluent для подбора значков.</summary>
+    public static class GlyphTest
+    {
+        public static void Run(string path)
+        {
+            int[] codes = new int[]
+            {
+                0xE700, 0xE713, 0xE72C, 0xE7E8, 0xE8A7, 0xE8AB, 0xE8B7, 0xE8C8,
+                0xE71A, 0xE768, 0xE769, 0xEA18, 0xE83D, 0xE72E, 0xE8F1, 0xE8F2,
+                0xE8FB, 0xE9D9, 0xE7BA, 0xE8A1, 0xE71B, 0xE777, 0xE778, 0xE7EE
+            };
+            Font font = new Font("Segoe MDL2 Assets", 22f, FontStyle.Regular, GraphicsUnit.Point);
+            Font small = new Font("Consolas", 10f);
+            int cell = 90, cols = 6;
+            int rows = (codes.Length + cols - 1) / cols;
+            using (Bitmap bmp = new Bitmap(cols * cell, rows * cell))
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.FromArgb(26, 22, 20));
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+                for (int i = 0; i < codes.Length; i++)
+                {
+                    int x = (i % cols) * cell, y = (i / cols) * cell;
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(244, 238, 231)))
+                    {
+                        g.DrawString(((char)codes[i]).ToString(), font, b, x + 24, y + 14);
+                    }
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(255, 194, 74)))
+                    {
+                        g.DrawString(codes[i].ToString("X4"), small, b, x + 26, y + 62);
+                    }
+                }
+                bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+            }
+            Log.Info("Таблица глифов: " + path);
         }
     }
 }
