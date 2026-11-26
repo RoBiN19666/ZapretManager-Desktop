@@ -541,6 +541,8 @@ pub struct App {
     pub progress: HashMap<&'static str, (u32, String)>,
     pub start_hidden: bool,
     hidden_done: bool,
+    window_visible: bool,
+    window_visibility_sent: Option<bool>,
     pub autostart_mode: bool,
     pub bootstrap_done: bool,
     pub update_check_started: bool,
@@ -548,6 +550,7 @@ pub struct App {
     pub scale: f32,
     pub theme_name: String,
     pub clipboard: Option<String>,
+
 }
 
 impl App {
@@ -606,6 +609,8 @@ impl App {
             progress: HashMap::new(),
             start_hidden,
             hidden_done: !start_hidden,
+            window_visible: !start_hidden,
+            window_visibility_sent: if start_hidden { None } else { Some(true) },
             autostart_mode,
             bootstrap_done: false,
             update_check_started: false,
@@ -613,6 +618,7 @@ impl App {
             scale,
             theme_name,
             clipboard: None,
+
         };
         app.log_seq = log::last_seq();
         // начальные значения страниц
@@ -1180,6 +1186,7 @@ impl App {
             match event {
                 TrayEvent::Show => {
                     self.hidden_done = true;
+                    self.window_visible = true;
                 }
                 TrayEvent::ToggleZapret => {
                     if self.state.winws_running {
@@ -1211,6 +1218,7 @@ impl App {
                 TrayEvent::CheckUpdates => {
                     self.page = Page::Update;
                     self.hidden_done = true;
+                    self.window_visible = true;
                     self.check_updates();
                 }
                 TrayEvent::Exit => {
@@ -1599,32 +1607,40 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // тема и масштаб
+
+        // Пользовательский масштаб интерфейса (90/100/110 %).
+        if (ctx.zoom_factor() - self.scale).abs() > 0.01 {
+            ctx.set_zoom_factor(self.scale);
+        }        // тема и масштаб
         if self.ctx_dark != self.dark {
             theme::apply(ctx, self.dark);
             self.ctx_dark = self.dark;
         }
         self.p = theme::palette(self.dark);
-        if (ctx.zoom_factor() - self.scale).abs() > 0.01 {
-            ctx.set_zoom_factor(self.scale);
-        }
+
 
         // снимок окна
         if let Some(path) = self.shot.clone() {
             self.shot_frames += 1;
-            if self.shot_frames == 90 {
+
+            if self.shot_frames == 12 {
+
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
             }
-            if self.shot_frames > 90 {
+            if self.shot_frames > 12 {
                 let mut saved = false;
                 let events = ctx.input(|i| i.events.clone());
                 for event in events {
                     if let egui::Event::Screenshot { image, .. } = event {
+
                         saved = crate::ui::assets::save_png(&path, &image);
                         break;
                     }
                 }
-                if saved || self.shot_frames > 300 {
+                if saved || self.shot_frames > 40 {
+                    if !saved {
+                        log::error("Не удалось сохранить снимок окна");
+                    }
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     return;
                 }
@@ -1632,10 +1648,17 @@ impl eframe::App for App {
             }
         }
 
-        if self.hidden_done {
-            // окно показывается/скрывается по флагам
-        } else {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        // закрытие окна: свернуть в трей вместо выхода
+        if ctx.input(|i| i.viewport().close_requested()) {
+            if self.shot.is_none() && !self.exit_requested && self.ini.get_bool("CloseToTray", true) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.window_visible = false;
+            }
+        }
+        // видимость окна (тихий старт, трей, показ из трея)
+        if self.window_visibility_sent != Some(self.window_visible) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(self.window_visible));
+            self.window_visibility_sent = Some(self.window_visible);
         }
 
         self.poll_tray();
@@ -1673,11 +1696,13 @@ impl eframe::App for App {
 
         self.sidebar(ctx);
         self.status_bar(ctx);
+        let screen_w = ctx.screen_rect().width();
+        let side = ((screen_w - 236.0 - 1200.0) * 0.5).max(24.0).min(400.0) as i8;
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::none()
                     .fill(self.p.bg)
-                    .inner_margin(egui::Margin::symmetric(24, 0)),
+                    .inner_margin(egui::Margin::symmetric(side, 0)),
             )
             .show(ctx, |ui| {
                 self.header(ui);
@@ -1711,6 +1736,9 @@ impl eframe::App for App {
 
         if self.exit_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if self.shot.is_some() {
+            ctx.request_repaint();
         }
         if self.busy > 0 || self.pages.test.running || self.pages.sites.watching {
             ctx.request_repaint_after(Duration::from_millis(300));

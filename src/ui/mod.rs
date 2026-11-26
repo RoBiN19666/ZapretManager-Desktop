@@ -23,6 +23,7 @@ pub fn run(
     let icon = assets::window_icon();
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size([1280.0, 880.0])
+        .with_maximized(true)
         .with_min_inner_size([1000.0, 700.0])
         .with_title("Zapret Manager")
         .with_app_id("ZapretManager");
