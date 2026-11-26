@@ -16,6 +16,7 @@ namespace ZapretManager
         private static void Main(string[] args)
         {
             Web.EnableModernTls();
+            Theme.InitFonts();
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
@@ -106,6 +107,7 @@ namespace ZapretManager
             Log.Info("Права администратора: " + (Native.IsAdmin() ? "да" : "нет") + " / " + (limited ? "ограниченный режим" : "обычный режим"));
 
             AppConfig config = AppConfig.Load(AppConfig.DefaultPath());
+            Theme.Apply(config.Get("Theme", "auto"));
             string preferred = rootArg;
             if (string.IsNullOrEmpty(preferred)) preferred = config.Get("Root", "");
             ZapretInstall install = ZapretInstall.Detect(preferred);

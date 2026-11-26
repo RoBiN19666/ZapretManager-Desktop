@@ -290,7 +290,7 @@ namespace ZapretManager
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
-            Native.EnableDarkTitleBar(Handle);
+            Native.SetTitleBarTheme(Handle, Theme.IsDark);
             BuildTray();
             StartActivationWatcher();
             RebuildPages();
@@ -777,7 +777,7 @@ namespace ZapretManager
         {
             _statusBar = new Panel();
             _statusBar.Height = 30;
-            _statusBar.BackColor = Color.FromArgb(13, 11, 10);
+            _statusBar.BackColor = Theme.Sidebar;
             _statusBar.Paint += delegate(object s, PaintEventArgs e)
             {
                 using (Pen p = new Pen(Theme.Border))
@@ -1035,6 +1035,24 @@ namespace ZapretManager
             _subtitleLbl.Text = target.Subtitle;
             target.OnShow();
             target.RefreshState();
+        }
+
+        /// <summary>Применяет тему (auto/dark/light) и перестраивает интерфейс.</summary>
+        public void ApplyTheme(string mode)
+        {
+            Theme.Apply(mode);
+            _shell.Config.Set("Theme", Theme.Mode);
+            _shell.Config.Save();
+            BackColor = Theme.Bg;
+            _sidebar.BackColor = Theme.Sidebar;
+            _content.BackColor = Theme.Bg;
+            _statusBar.BackColor = Theme.Sidebar;
+            _titleLbl.ForeColor = Theme.Text;
+            _subtitleLbl.ForeColor = Theme.TextMuted;
+            Native.SetTitleBarTheme(Handle, Theme.IsDark);
+            RebuildPages();
+            _shell.RefreshStateAsync();
+            Log.Info("Оформление: " + Theme.Mode + " (" + (Theme.IsDark ? "тёмная" : "светлая") + ").");
         }
 
         private void StartUpdateCheck()

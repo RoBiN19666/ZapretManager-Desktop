@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -38,15 +38,129 @@ namespace ZapretManager
         public static Color Warn = Color.FromArgb(255, 194, 74);
         public static Color Danger = Color.FromArgb(255, 97, 82);
 
-        public static readonly Font Base = new Font("Segoe UI", 9.5f, FontStyle.Regular, GraphicsUnit.Point);
-        public static readonly Font Small = new Font("Segoe UI", 8.5f, FontStyle.Regular, GraphicsUnit.Point);
-        public static readonly Font Bold = new Font("Segoe UI Semibold", 9.5f, FontStyle.Regular, GraphicsUnit.Point);
-        public static readonly Font Title = new Font("Segoe UI Semibold", 17f, FontStyle.Regular, GraphicsUnit.Point);
-        public static readonly Font H2 = new Font("Segoe UI Semibold", 12f, FontStyle.Regular, GraphicsUnit.Point);
-        public static readonly Font Card = new Font("Segoe UI Semibold", 10f, FontStyle.Regular, GraphicsUnit.Point);
-        public static readonly Font Big = new Font("Segoe UI Semibold", 22f, FontStyle.Regular, GraphicsUnit.Point);
-        public static readonly Font Mono = new Font("Consolas", 9f, FontStyle.Regular, GraphicsUnit.Point);
-        public static readonly Font Icons = new Font("Segoe MDL2 Assets", 11f, FontStyle.Regular, GraphicsUnit.Point);
+        /// <summary>Масштаб шрифтов относительно 96 DPI: при 125% шрифты уменьшаются, чтобы
+        /// не расползаться по фиксированной пиксельной сетке макета.</summary>
+        private static float _fontScale = 1f;
+
+        public static Font Base = new Font("Segoe UI", 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+        public static Font Small = new Font("Segoe UI", 8.5f, FontStyle.Regular, GraphicsUnit.Point);
+        public static Font Bold = new Font("Segoe UI Semibold", 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+        public static Font Title = new Font("Segoe UI Semibold", 17f, FontStyle.Regular, GraphicsUnit.Point);
+        public static Font H2 = new Font("Segoe UI Semibold", 12f, FontStyle.Regular, GraphicsUnit.Point);
+        public static Font Card = new Font("Segoe UI Semibold", 10f, FontStyle.Regular, GraphicsUnit.Point);
+        public static Font Big = new Font("Segoe UI Semibold", 22f, FontStyle.Regular, GraphicsUnit.Point);
+        public static Font Mono = new Font("Consolas", 9f, FontStyle.Regular, GraphicsUnit.Point);
+        public static Font Icons = new Font("Segoe MDL2 Assets", 11f, FontStyle.Regular, GraphicsUnit.Point);
+
+        /// <summary>Подгоняет шрифты под DPI экрана: макет нарисован в пикселях 96 DPI.</summary>
+        public static void InitFonts()
+        {
+            float dpi = 96f;
+            try
+            {
+                using (Graphics g = Graphics.FromHwnd(IntPtr.Zero)) dpi = g.DpiX;
+            }
+            catch { }
+            if (dpi < 96f) dpi = 96f;
+            _fontScale = dpi / 96f;
+            if (_fontScale > 1.001f)
+            {
+                Font old = Base;
+                Base = new Font("Segoe UI", 9.5f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
+                Small = new Font("Segoe UI", 8.5f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
+                Bold = new Font("Segoe UI Semibold", 9.5f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
+                Title = new Font("Segoe UI Semibold", 17f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
+                H2 = new Font("Segoe UI Semibold", 12f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
+                Card = new Font("Segoe UI Semibold", 10f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
+                Big = new Font("Segoe UI Semibold", 22f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
+                Mono = new Font("Consolas", 9f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
+                Icons = new Font("Segoe MDL2 Assets", 11f / _fontScale, FontStyle.Regular, GraphicsUnit.Point);
+                if (old != null) old.Dispose();
+            }
+        }
+
+        /// <summary>Тёмная или светлая палитра приложения.</summary>
+        public static bool IsDark = true;
+
+        /// <summary>Режим оформления: auto | dark | light.</summary>
+        public static string Mode = "auto";
+
+        /// <summary>Определяет системную тему (Параметры → Персонализация → Цвет приложений).</summary>
+        public static bool SystemPrefersDark()
+        {
+            try
+            {
+                using (Microsoft.Win32.RegistryKey key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
+                {
+                    object v = key == null ? null : key.GetValue("AppsUseLightTheme");
+                    if (v is int) return (int)v == 0;
+                }
+            }
+            catch { }
+            return true;
+        }
+
+        /// <summary>Применяет палитру по режиму. Возвращает true, если тема тёмная.</summary>
+        public static bool Apply(string mode)
+        {
+            Mode = string.Equals(mode, "dark", StringComparison.OrdinalIgnoreCase) ? "dark"
+                 : string.Equals(mode, "light", StringComparison.OrdinalIgnoreCase) ? "light" : "auto";
+            bool dark = Mode == "dark" || (Mode == "auto" && SystemPrefersDark());
+            IsDark = dark;
+            if (dark)
+            {
+                Bg = Color.FromArgb(11, 10, 10);
+                Sidebar = Color.FromArgb(16, 14, 13);
+                SidebarTop = Sidebar;
+                SidebarBottom = Sidebar;
+                Surface = Color.FromArgb(26, 22, 20);
+                SurfaceTop = Surface;
+                SurfaceBottom = Surface;
+                SurfaceAlt = Color.FromArgb(38, 32, 27);
+                Hover = Color.FromArgb(50, 43, 36);
+                Border = Color.FromArgb(52, 44, 37);
+                BorderStrong = Color.FromArgb(78, 66, 54);
+                Text = Color.FromArgb(244, 238, 231);
+                TextDim = Color.FromArgb(178, 167, 155);
+                TextMuted = Color.FromArgb(126, 116, 105);
+                Selection = Color.FromArgb(46, 37, 30);
+                Danger = Color.FromArgb(255, 97, 82);
+                Success = Color.FromArgb(79, 208, 138);
+                Warn = Color.FromArgb(255, 194, 74);
+            }
+            else
+            {
+                Bg = Color.FromArgb(245, 243, 240);
+                Sidebar = Color.FromArgb(237, 234, 230);
+                SidebarTop = Sidebar;
+                SidebarBottom = Sidebar;
+                Surface = Color.FromArgb(255, 255, 255);
+                SurfaceTop = Surface;
+                SurfaceBottom = Surface;
+                SurfaceAlt = Color.FromArgb(242, 239, 235);
+                Hover = Color.FromArgb(232, 228, 222);
+                Border = Color.FromArgb(221, 215, 207);
+                BorderStrong = Color.FromArgb(198, 189, 178);
+                Text = Color.FromArgb(30, 26, 22);
+                TextDim = Color.FromArgb(87, 80, 74);
+                TextMuted = Color.FromArgb(139, 130, 120);
+                Selection = Color.FromArgb(243, 226, 207);
+                Danger = Color.FromArgb(200, 52, 40);
+                Success = Color.FromArgb(30, 140, 88);
+                Warn = Color.FromArgb(170, 118, 20);
+            }
+            Accent = Color.FromArgb(249, 146, 56);
+            AccentHover = Color.FromArgb(255, 172, 96);
+            AccentPressed = Color.FromArgb(226, 116, 26);
+            AccentTop = Color.FromArgb(245, 146, 63);
+            AccentBottom = Color.FromArgb(245, 146, 63);
+            AccentDeep = Color.FromArgb(200, 92, 14);
+            OnAccent = Color.FromArgb(46, 25, 8);
+            return dark;
+        }
+        /// <summary>Текущий масштаб шрифтов (для отладки и логов).</summary>
+        public static float FontScale { get { return _fontScale; } }
 
         public static Color WithAlpha(Color c, int alpha)
         {
@@ -235,7 +349,7 @@ namespace ZapretManager
                 case ButtonKind.Primary:
                     if (!Enabled)
                     {
-                        fill = Color.FromArgb(45, 38, 32);
+                        fill = Theme.SurfaceAlt;
                         border = Theme.Border;
                         text = Theme.TextMuted;
                     }
@@ -249,12 +363,12 @@ namespace ZapretManager
                     }
                     break;
                 case ButtonKind.Secondary:
-                    fill = !Enabled ? Color.FromArgb(36, 31, 27) : (_pressed ? Theme.SurfaceAlt : (_hover ? Theme.Hover : Color.FromArgb(44, 38, 32)));
+                    fill = !Enabled ? Theme.Surface : (_pressed ? Theme.SurfaceAlt : (_hover ? Theme.Hover : Theme.SurfaceAlt));
                     border = _hover && Enabled ? Theme.BorderStrong : Theme.Border;
                     text = !Enabled ? Theme.TextMuted : Theme.Text;
                     break;
                 case ButtonKind.Danger:
-                    fill = !Enabled ? Color.FromArgb(36, 31, 27) : Theme.WithAlpha(Theme.Danger, _hover ? 30 : 16);
+                    fill = !Enabled ? Theme.Surface : Theme.WithAlpha(Theme.Danger, _hover ? 30 : 16);
                     border = Theme.WithAlpha(Theme.Danger, _hover ? 105 : 66);
                     text = !Enabled ? Theme.TextMuted : Color.FromArgb(255, 143, 130);
                     break;
@@ -400,19 +514,19 @@ namespace ZapretManager
 
             if (!Enabled)
             {
-                Draw.FillRound(g, track, radius, Color.FromArgb(48, 42, 36));
+                Draw.FillRound(g, track, radius, Theme.Surface);
                 Draw.DrawRound(g, track, radius, Theme.Border, 1f);
             }
             else if (_pos > 0.02f)
             {
-                Color on = Blend(Color.FromArgb(64, 56, 48), Theme.Accent, _pos);
+                Color on = Blend(Theme.SurfaceAlt, Theme.Accent, _pos);
                 Draw.FillRound(g, track, radius, on);
                 Draw.DrawRound(g, track, radius, Theme.WithAlpha(Color.White, 18), 1f);
             }
             else
             {
-                Draw.FillRound(g, track, radius, _hover ? Color.FromArgb(70, 61, 52) : Color.FromArgb(58, 50, 43));
-                Draw.DrawRound(g, track, radius, _hover ? Theme.BorderStrong : Color.FromArgb(76, 66, 56), 1f);
+                Draw.FillRound(g, track, radius, _hover ? Theme.BorderStrong : Theme.SurfaceAlt);
+                Draw.DrawRound(g, track, radius, _hover ? Theme.BorderStrong : Theme.Border, 1f);
             }
 
             int knob = track.Height - 6;
@@ -471,7 +585,7 @@ namespace ZapretManager
             }
             else if (_hover)
             {
-                Draw.FillRound(g, new Rectangle(10, 2, Width - 20, Height - 4), 9, Color.FromArgb(34, 28, 24));
+                Draw.FillRound(g, new Rectangle(10, 2, Width - 20, Height - 4), 9, Theme.Hover);
             }
 
             Color textColor = Selected ? Theme.Text : (_hover ? Theme.Text : Theme.TextDim);
@@ -585,13 +699,13 @@ namespace ZapretManager
         public InputBox()
         {
             DoubleBuffered = true;
-            BackColor = Color.FromArgb(26, 22, 19);
+            BackColor = Theme.Surface;
             Height = 32;
             Width = 200;
             Padding = new Padding(8, 0, 8, 0);
             Box = new TextBox();
             Box.BorderStyle = BorderStyle.None;
-            Box.BackColor = Color.FromArgb(26, 22, 19);
+            Box.BackColor = Theme.Surface;
             Box.ForeColor = Theme.Text;
             Box.Font = Theme.Base;
             Controls.Add(Box);
@@ -627,7 +741,7 @@ namespace ZapretManager
         public LogView()
         {
             BorderStyle = BorderStyle.None;
-            BackColor = Color.FromArgb(15, 13, 12);
+            BackColor = Theme.Bg;
             ForeColor = Theme.TextDim;
             Font = Theme.Mono;
             ReadOnly = true;
@@ -680,7 +794,8 @@ namespace ZapretManager
         public VStack()
         {
             DoubleBuffered = true;
-            BackColor = Color.Transparent;
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
+            BackColor = Theme.Bg;
         }
 
         public void Add(Control c)
@@ -748,6 +863,17 @@ namespace ZapretManager
             Stack.Location = new Point(0, 0);
             Controls.Add(Stack);
             Stack.LayoutDone += delegate { SyncHeight(); };
+        }
+
+        // WS_EX_COMPOSITED — композитная отрисовка поддерева: убирает «разрыв» картинки при прокрутке
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                cp.ExStyle |= 0x02000000;
+                return cp;
+            }
         }
 
         private int MaxOffset
@@ -1094,14 +1220,14 @@ namespace ZapretManager
                 Rectangle r = new Rectangle(4, top, ClientSize.Width - 8 - (MaxScroll > 0 ? BarW + 4 : 0), RowH - 4);
                 bool selected = i == _selected;
                 bool active = string.Equals(s.Name, ActiveName, StringComparison.OrdinalIgnoreCase);
-                Color fill = selected ? Theme.Selection : (i == _hover ? Color.FromArgb(25, 21, 18) : Theme.Surface);
+                Color fill = selected ? Theme.Selection : (i == _hover ? Theme.Hover : Theme.Surface);
                 Draw.FillRound(g, r, 8, fill);
                 if (active) Draw.FillRound(g, new Rectangle(r.X, r.Y + 10, 3, r.Height - 20), 2, Theme.Success);
 
                 int x = r.X + 14;
                 int badgeW = 84;
                 TextRenderer.DrawText(g, s.Name, Theme.Bold, new Rectangle(x, r.Y + 9, r.Width - badgeW - 30, 18),
-                    selected || active ? Theme.Text : Color.FromArgb(226, 216, 205), TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+                    selected || active ? Theme.Text : Theme.Text, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
                 TextRenderer.DrawText(g, s.Description, Theme.Small, new Rectangle(x, r.Y + 28, r.Width - badgeW - 30, 16),
                     Theme.TextMuted, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
 

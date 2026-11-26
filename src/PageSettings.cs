@@ -17,6 +17,7 @@ namespace ZapretManager
         private ToggleSwitch _tgAutoZapret;
         private ToggleSwitch _tgAutoTg;
         private ToggleSwitch _tgMinimize;
+        private DarkSelect _themeSelect;
         private Label _autoStatus;
 
         private RoundButton[] _modeButtons = new RoundButton[4];
@@ -256,10 +257,31 @@ namespace ZapretManager
             _autoStatus.Text = enabled ? "Автозапуск включён" : "Автозапуск выключен";
             _autoStatus.ForeColor = enabled ? Theme.Success : Theme.TextMuted;
         }
+        private static string ThemeChoice(string mode)
+        {
+            if (string.Equals(mode, "dark", StringComparison.OrdinalIgnoreCase)) return "Тёмная";
+            if (string.Equals(mode, "light", StringComparison.OrdinalIgnoreCase)) return "Светлая";
+            return "Как в Windows";
+        }
+
         private void BuildMiscCard()
         {
-            _miscCard = NewCard("Прочее", 150);
-            _tgManagerUpdate = AddToggleRow(_miscCard, 40, "Проверять обновления при запуске менеджера",
+            _miscCard = NewCard("Прочее", 210);
+
+            _miscCard.Controls.Add(L("Оформление", Theme.Small, Theme.TextDim, 22, 38));
+            _themeSelect = new DarkSelect();
+            _themeSelect.Location = new Point(150, 36);
+            _themeSelect.Width = 220;
+            _themeSelect.SetItems(new System.Collections.Generic.List<string>(new string[] { "Как в Windows", "Тёмная", "Светлая" }), ThemeChoice(Shell.Config.Get("Theme", "auto")));
+            _themeSelect.SelectedIndexChanged += delegate
+            {
+                if (_suppress) return;
+                string mode = _themeSelect.SelectedIndex == 1 ? "dark" : (_themeSelect.SelectedIndex == 2 ? "light" : "auto");
+                Shell.Form.ApplyTheme(mode);
+                Shell.Notify("Оформление: " + _themeSelect.SelectedItem.ToLowerInvariant(), LogLevel.Ok);
+            };
+            _miscCard.Controls.Add(_themeSelect);
+            _tgManagerUpdate = AddToggleRow(_miscCard, 84, "Проверять обновления при запуске менеджера",
                 "При старте и далее раз в 6 часов проверять GitHub (zapret, TG WS Proxy, менеджер)", Shell.Config.GetBool("CheckUpdatesOnStartup", true), delegate
                 {
                     if (_suppress) return;
@@ -269,7 +291,7 @@ namespace ZapretManager
                 });
 
             RoundButton tcp = Btn("Включить TCP timestamps", ButtonKind.Secondary, 210);
-            tcp.Location = new Point(22, 96);
+            tcp.Location = new Point(22, 148);
             tcp.Click += delegate
             {
                 if (!Shell.RequireAdmin("TCP timestamps")) return;
@@ -279,7 +301,7 @@ namespace ZapretManager
             _miscCard.Controls.Add(tcp);
 
             RoundButton dc = Btn("Очистить кэш Discord", ButtonKind.Secondary, 190);
-            dc.Location = new Point(244, 96);
+            dc.Location = new Point(244, 148);
             dc.Click += delegate
             {
                 if (!Dlg.Confirm(this.View.FindForm(), "Очистить кэш Discord?", "Discord будет закрыт, а папки Cache, Code Cache и GPUCache удалены.", "Очистить")) return;

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
@@ -407,10 +407,12 @@ namespace ZapretManager
     {
         public DarkList()
         {
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
+            DoubleBuffered = true;
             DrawMode = DrawMode.OwnerDrawFixed;
             ItemHeight = 36;
             BorderStyle = BorderStyle.None;
-            BackColor = Color.FromArgb(16, 19, 24);
+            BackColor = Theme.Surface;
             ForeColor = Theme.Text;
             Font = Theme.Base;
             IntegralHeight = false;
@@ -431,20 +433,39 @@ namespace ZapretManager
             g.SmoothingMode = SmoothingMode.AntiAlias;
             bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
             Rectangle r = new Rectangle(2, e.Bounds.Top + 1, e.Bounds.Width - 4, e.Bounds.Height - 2);
+            using (SolidBrush back = new SolidBrush(BackColor)) g.FillRectangle(back, e.Bounds);
             if (selected) Draw.FillRound(g, r, 7, Theme.Selection);
-            else if ((e.State & DrawItemState.HotLight) != 0) Draw.FillRound(g, r, 7, Theme.Hover);
+            else if (e.Index == _hot) Draw.FillRound(g, r, 7, Theme.Hover);
             string sub = e.Index < Subtitles.Length ? Subtitles[e.Index] : "";
             TextRenderer.DrawText(g, Convert.ToString(Items[e.Index]), Theme.Bold, new Rectangle(r.X + 10, r.Y + 5, r.Width - 20, 16),
-                selected ? Theme.Text : Color.FromArgb(210, 218, 230), TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+                selected ? Theme.Text : Theme.Text, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
             TextRenderer.DrawText(g, sub, Theme.Small, new Rectangle(r.X + 10, r.Y + 20, r.Width - 20, 14),
                 Theme.TextMuted, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
         }
+
+        private int _hot = -1;
 
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
             int index = IndexFromPoint(e.Location);
-            if (index != -1) Invalidate();
+            if (index == _hot) return;
+            int old = _hot;
+            _hot = index;
+            if (old >= 0) InvalidateRow(old);
+            if (_hot >= 0) InvalidateRow(_hot);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            if (_hot >= 0) { InvalidateRow(_hot); _hot = -1; }
+        }
+
+        private void InvalidateRow(int index)
+        {
+            if (index < 0 || index >= Items.Count) return;
+            Invalidate(new Rectangle(0, index * ItemHeight, Math.Max(1, ClientSize.Width), ItemHeight));
         }
     }
 

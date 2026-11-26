@@ -119,7 +119,8 @@ namespace ZapretManager
 
         private void BuildLinksCard()
         {
-            _linksCard = NewCard("Папки и ссылки", 196);
+            _linksCard = NewCard("Папки", 138);
+
             RoundButton b1 = Btn("Папка zapret", ButtonKind.Secondary, 150);
             b1.Location = new Point(22, 44);
             b1.Click += delegate { if (Shell.Install != null) Native.OpenFolder(Shell.Install.Root); };
@@ -140,32 +141,8 @@ namespace ZapretManager
             b4.Click += delegate { if (Shell.Install != null) Native.OpenFolder(Shell.Install.UtilsDir); };
             _linksCard.Controls.Add(b4);
 
-            RoundButton b5 = Btn("Репозиторий Flowseal", ButtonKind.Link, 190);
-            b5.Location = new Point(22, 90);
-            b5.Click += delegate { Native.OpenUrl("https://github.com/Flowseal/zapret-discord-youtube"); };
-            _linksCard.Controls.Add(b5);
-
-            RoundButton b6 = Btn("Мой форк", ButtonKind.Link, 130);
-            b6.Location = new Point(222, 90);
-            b6.Click += delegate { Native.OpenUrl("https://github.com/RoBiN19666/zapret-discord-youtube"); };
-            _linksCard.Controls.Add(b6);
-
-            RoundButton b7 = Btn("Журнал", ButtonKind.Link, 110);
-            b7.Location = new Point(362, 90);
-            b7.Click += delegate { Native.SelectInExplorer(Path.Combine(AppPaths.DataDir, "manager.log")); };
-            _linksCard.Controls.Add(b7);
-
-            RoundButton wizard = Btn("Мастер установки", ButtonKind.Secondary, 180);
-            wizard.Location = new Point(22, 138);
-            wizard.Click += delegate
-            {
-                using (SetupWizard w = new SetupWizard(Shell)) { w.ShowDialog(this.View.FindForm()); }
-                Shell.RefreshState(true);
-            };
-            _linksCard.Controls.Add(wizard);
-
             RoundButton tgDir = Btn("Папка TG WS Proxy", ButtonKind.Secondary, 190);
-            tgDir.Location = new Point(212, 138);
+            tgDir.Location = new Point(22, 88);
             tgDir.Click += delegate
             {
                 TgProxyState st = TgProxy.GetState(Shell.Config);
@@ -173,13 +150,22 @@ namespace ZapretManager
             };
             _linksCard.Controls.Add(tgDir);
 
-            RoundButton tgCfg = Btn("config.json прокси", ButtonKind.Link, 170);
-            tgCfg.Location = new Point(414, 138);
-            tgCfg.Click += delegate { Native.SelectInExplorer(TgProxy.ConfigPathForApp); };
-            _linksCard.Controls.Add(tgCfg);
+            RoundButton wizard = Btn("Мастер установки", ButtonKind.Secondary, 180);
+            wizard.Location = new Point(222, 88);
+            wizard.Click += delegate
+            {
+                using (SetupWizard w = new SetupWizard(Shell)) { w.ShowDialog(this.View.FindForm()); }
+                Shell.RefreshState(true);
+            };
+            _linksCard.Controls.Add(wizard);
+
+            RoundButton journal = Btn("Журнал менеджера", ButtonKind.Secondary, 180);
+            journal.Location = new Point(412, 88);
+            journal.Click += delegate { Native.SelectInExplorer(Path.Combine(AppPaths.DataDir, "manager.log")); };
+            _linksCard.Controls.Add(journal);
+
             View.Stack.Add(_linksCard);
         }
-
         private void BuildAboutCard()
         {
             _aboutCard = NewCard("О программе", 120);
@@ -202,13 +188,13 @@ namespace ZapretManager
 
             int y = aboutText.Bottom + 8;
 
-            RoundButton repo = Btn("Репозиторий менеджера", ButtonKind.Link, 210);
+            RoundButton repo = Btn("ZapretManager", ButtonKind.Link, 160);
             repo.Location = new Point(22, y);
             repo.Click += delegate { Native.OpenUrl("https://github.com/RoBiN19666/ZapretManager-Windows"); };
             _aboutCard.Controls.Add(repo);
 
             RoundButton zapret = Btn("zapret-discord-youtube", ButtonKind.Link, 210);
-            zapret.Location = new Point(240, y);
+            zapret.Location = new Point(200, y);
             zapret.Click += delegate { Native.OpenUrl("https://github.com/Flowseal/zapret-discord-youtube"); };
             _aboutCard.Controls.Add(zapret);
 

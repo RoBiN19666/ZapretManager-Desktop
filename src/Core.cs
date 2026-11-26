@@ -101,9 +101,15 @@ namespace ZapretManager
 
         public static void EnableDarkTitleBar(IntPtr hwnd)
         {
+            SetTitleBarTheme(hwnd, true);
+        }
+
+        /// <summary>Красит заголовок окна под тему: тёмный или светлый.</summary>
+        public static void SetTitleBarTheme(IntPtr hwnd, bool dark)
+        {
             try
             {
-                int v = 1;
+                int v = dark ? 1 : 0;
                 int hr = DwmSetWindowAttribute(hwnd, 20, ref v, 4);
                 if (hr != 0) DwmSetWindowAttribute(hwnd, 19, ref v, 4);
             }
