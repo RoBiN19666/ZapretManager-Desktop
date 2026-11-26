@@ -5,7 +5,7 @@ use eframe::egui::Ui;
 
 use crate::engine::gamefilter::{GameFilterMode, GameFilterState};
 use crate::engine::log::{self, LogLevel};
-use crate::engine::ops::{self, ZapretOps};
+use crate::engine::ops;
 use crate::engine::tgproxy;
 use crate::engine::update::{self, UpdateCheckResult};
 use crate::engine::{paths, sys};
@@ -347,14 +347,17 @@ impl App {
                     GameFilterMode::Disabled
                 };
                 match gf.save(&self.install.root) {
-                    Ok(()) => self.notify(
-                        if gf_on {
-                            "Игровой фильтр включён (TCP и UDP). Перезапустите ускорение."
-                        } else {
-                            "Игровой фильтр выключен. Перезапустите ускорение."
-                        },
-                        LogLevel::Ok,
-                    ),
+                    Ok(()) => {
+                        self.notify(
+                            if gf_on {
+                                "Игровой фильтр включён (TCP и UDP)."
+                            } else {
+                                "Игровой фильтр выключен."
+                            },
+                            LogLevel::Ok,
+                        );
+                        self.restart_after_change("Игровой фильтр обновлён");
+                    }
                     Err(e) => self.notify(
                         format!("Не удалось сохранить настройку: {}", e),
                         LogLevel::Error,
@@ -370,17 +373,8 @@ impl App {
                 "Ускорение применяется ко всем IP из полного списка",
                 &mut ipset_checked,
             ) {
-                let ops = ZapretOps::new(self.install.clone());
                 let mode = if ipset_checked { "loaded" } else { "none" };
-                self.spawn_bg(move |tx| {
-                    let message = ops.set_ipset_mode(mode);
-                    let level = if message.starts_with("Ошибка") || message.starts_with("Нет ") {
-                        LogLevel::Error
-                    } else {
-                        LogLevel::Ok
-                    };
-                    let _ = tx.send(crate::ui::app::Msg::Notify(message, level));
-                });
+                self.set_ipset_mode_auto(mode);
             }
             if w::toggle_row(
                 ui,

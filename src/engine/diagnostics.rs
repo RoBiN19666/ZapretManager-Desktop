@@ -286,8 +286,11 @@ pub fn run(
                 Severity::Warn
             },
             message,
-            "Служба установлена, но не работает. Перезапустите её.",
+            "Служба установлена, но не работает. Запустите её кнопкой ниже.",
         );
+        if snap.status != "работает" {
+            b.action("restart_service", "Перезапустить службу");
+        }
     }
     if valid {
         if ops.service_points_elsewhere() {
@@ -903,6 +906,16 @@ pub fn run_action(action_id: &str, ops: &ZapretOps) -> String {
         "discord" => ops.clear_discord_cache(),
         "hosts" => ops.clear_hosts_block(),
         "blobs" => blobs::repair(&ops.install),
+        "restart_service" => {
+            let err = admin_error();
+            if !err.is_empty() {
+                return err;
+            }
+            match service::start("zapret") {
+                Ok(()) => "Служба zapret запущена.".to_string(),
+                Err(e) => format!("Не удалось запустить службу: {}", e),
+            }
+        }
         _ => "Действие не поддерживается.".to_string(),
     }
 }

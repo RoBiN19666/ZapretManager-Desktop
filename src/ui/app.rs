@@ -957,6 +957,97 @@ impl App {
         });
     }
 
+    /// Применить режим IPSet и сразу перезапустить работающее ускорение.
+    pub fn set_ipset_mode_auto(&mut self, mode: &str) {
+        if !self.require_admin("Переключение IPSet") {
+            return;
+        }
+        let install = self.install.clone();
+        let mode = mode.to_string();
+        self.spawn_bg(move |tx| {
+            let ops = ZapretOps::new(install);
+            let snap = service::query("zapret");
+            let service_running = snap.installed && snap.status == "работает";
+            let manual_running = ops.get_state().winws_running;
+            let mut message = ops.set_ipset_mode(&mode);
+            let applied = !message.starts_with("Ошибка") && !message.starts_with("Нет ");
+            if applied && (service_running || manual_running) {
+                let restart = if service_running {
+                    let _ = service::stop("zapret");
+                    std::thread::sleep(std::time::Duration::from_millis(1200));
+                    match service::start("zapret") {
+                        Ok(()) => "Служба перезапущена.".to_string(),
+                        Err(e) => format!("Не удалось перезапустить службу: {}", e),
+                    }
+                } else {
+                    let ini = Ini::load(&paths::config_path());
+                    if let Some(strategy) = ops.pick_strategy(&ini.get("LastStrategy", "")) {
+                        ops.restart(strategy)
+                    } else {
+                        "Стратегия для перезапуска не найдена.".to_string()
+                    }
+                };
+                message.push(' ');
+                message.push_str(&restart);
+            }
+            let level = if message.starts_with("Ошибка")
+                || message.starts_with("Нет ")
+                || message.contains("Не удалось")
+            {
+                LogLevel::Error
+            } else {
+                LogLevel::Ok
+            };
+            let _ = tx.send(Msg::Notify(message, level));
+        });
+    }
+
+    /// После изменения списков/настроек перезапустить работающее ускорение,
+    /// чтобы новые данные применились без ручного действия пользователя.
+    pub fn restart_after_change(&mut self, reason: &str) {
+        if !self.install.is_valid() {
+            return;
+        }
+        let install = self.install.clone();
+        let reason = reason.to_string();
+        self.spawn_bg(move |tx| {
+            let ops = ZapretOps::new(install);
+            let snap = service::query("zapret");
+            let service_running = snap.installed && snap.status == "работает";
+            let manual_running = ops.get_state().winws_running;
+            if !service_running && !manual_running {
+                let _ = tx.send(Msg::Notify(
+                    format!("{}. Ускорение не запущено — изменения применятся при следующем запуске.", reason),
+                    LogLevel::Info,
+                ));
+                return;
+            }
+            let result = if service_running {
+                let _ = service::stop("zapret");
+                std::thread::sleep(std::time::Duration::from_millis(1200));
+                match service::start("zapret") {
+                    Ok(()) => "Служба перезапущена.".to_string(),
+                    Err(e) => format!("Не удалось перезапустить службу: {}", e),
+                }
+            } else {
+                let ini = Ini::load(&paths::config_path());
+                if let Some(strategy) = ops.pick_strategy(&ini.get("LastStrategy", "")) {
+                    ops.restart(strategy)
+                } else {
+                    "Стратегия для перезапуска не найдена.".to_string()
+                }
+            };
+            let failed = result.contains("Не удалось")
+                || result.contains("не найдена")
+                || result.contains("не запущена");
+            let _ = tx.send(Msg::Notify(
+                format!("{}. {}", reason, result),
+                if failed { LogLevel::Warn } else { LogLevel::Ok },
+            ));
+            let _ = tx.send(Msg::Text(String::new()));
+        });
+    }
+
     pub fn install_service(&mut self, strategy: StrategyDef) {
         if !self.require_admin("Установка службы") {
             return;

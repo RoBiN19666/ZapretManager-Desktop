@@ -112,9 +112,10 @@ impl App {
                 self.pages.lists.dirty = false;
                 self.pages.lists.info = self.lists_info();
                 self.notify(
-                    format!("Список сохранён: {}. Перезапустите ускорение, чтобы применить.", file.name),
+                    format!("Список сохранён: {}.", file.name),
                     LogLevel::Ok,
                 );
+                self.restart_after_change("Список сохранён");
             }
             Err(e) => self.notify(format!("Не удалось сохранить список: {}", e), LogLevel::Error),
         }
@@ -575,9 +576,10 @@ impl App {
         self.pages.lists.notes = lists::analyze(&self.pages.lists.editor);
         self.pages.lists.info = self.lists_info();
         self.notify(
-            format!("Перенесено строк: {} → {}. Перезапустите ускорение.", moved, user_name),
+            format!("Перенесено строк: {} → {}.", moved, user_name),
             LogLevel::Ok,
         );
+        self.restart_after_change("Списки обновлены");
     }
 
     pub(crate) fn accept_as_official(&mut self) {

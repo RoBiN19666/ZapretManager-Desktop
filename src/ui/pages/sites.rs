@@ -303,16 +303,14 @@ impl App {
                         if !found.is_empty() {
                             self.pages.sites.guard_blocked.clear();
                             self.pages.sites.guard_status = format!(
-                                "Сторож: добавлено доменов {}. Перезапустите ускорение, чтобы применить.",
+                                "Сторож: добавлено доменов {}.",
                                 found.len()
                             );
                             self.notify(
-                                format!(
-                                    "Сторож: добавлено доменов {}. Перезапустите ускорение.",
-                                    found.len()
-                                ),
+                                format!("Сторож: добавлено доменов {}.", found.len()),
                                 LogLevel::Ok,
                             );
+                            self.restart_after_change("Домены добавлены");
                         }
                     }
                     if w::ghost(ui, &p, "Очистить список").clicked() {
@@ -447,10 +445,7 @@ impl App {
         if added > 0 {
             self.pages.sites.status = format!("{} Файл: {}", message, path);
             self.refresh_state(true);
-            self.notify(
-                "Если ускорение запущено, перезапустите его, чтобы новые домены подхватились.",
-                LogLevel::Warn,
-            );
+            self.restart_after_change("Домены добавлены в список");
         }
     }
 

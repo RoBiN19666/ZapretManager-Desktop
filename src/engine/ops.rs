@@ -725,7 +725,7 @@ impl ZapretOps {
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_default();
                 log::ok(format!("Активный фейк {} заменён на {}", active_file_name, name));
-                format!("Активный фейк заменён на «{}». Перезапустите ускорение, чтобы применить.", name)
+                format!("Активный фейк заменён на «{}».", name)
             }
             Err(e) => {
                 log::error(format!("Не удалось заменить фейк: {}", e));

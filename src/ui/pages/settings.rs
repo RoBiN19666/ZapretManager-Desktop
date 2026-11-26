@@ -5,7 +5,7 @@ use eframe::egui::{self, RichText, Ui};
 use crate::engine::gamefilter::{GameFilterMode, GameFilterState};
 use crate::engine::log::LogLevel;
 use crate::engine::ops::ZapretOps;
-use crate::engine::{autostart, service, sys};
+use crate::engine::{autostart, sys};
 use crate::util::is_port_range_valid;
 
 use crate::ui::app::{App, Page};
@@ -163,9 +163,10 @@ impl App {
                         match gf.save(&self.install.root) {
                             Ok(()) => {
                                 self.notify(
-                                    "Настройки игрового фильтра сохранены. Перезапустите ускорение, чтобы применить.",
+                                    "Настройки игрового фильтра сохранены.",
                                     LogLevel::Ok,
                                 );
+                                self.restart_after_change("Игровой фильтр обновлён");
                                 self.refresh_state(false);
                             }
                             Err(e) => self.notify(
@@ -200,49 +201,7 @@ impl App {
                 }
             });
             if let Some(mode) = chosen {
-                if self.require_admin("Переключение IPSet") {
-                    let ops = ZapretOps::new(self.install.clone());
-                    let mode = mode.to_string();
-                    self.spawn_bg(move |tx| {
-                        let snap = service::query("zapret");
-                        let service_running = snap.installed && snap.status == "работает";
-                        let manual_running = ops.get_state().winws_running;
-                        let mut message = ops.set_ipset_mode(&mode);
-                        let applied = !message.starts_with("Ошибка") && !message.starts_with("Нет ");
-                        if applied && (service_running || manual_running) {
-                            let restart = if service_running {
-                                let _ = service::stop("zapret");
-                                std::thread::sleep(std::time::Duration::from_millis(1200));
-                                match service::start("zapret") {
-                                    Ok(()) => "Служба перезапущена.".to_string(),
-                                    Err(e) => format!("Не удалось перезапустить службу: {}", e),
-                                }
-                            } else {
-                                let ini = crate::engine::config::Ini::load(
-                                    &crate::engine::paths::config_path(),
-                                );
-                                if let Some(strategy) =
-                                    ops.pick_strategy(&ini.get("LastStrategy", ""))
-                                {
-                                    ops.restart(strategy)
-                                } else {
-                                    "Стратегия для перезапуска не найдена.".to_string()
-                                }
-                            };
-                            message.push(' ');
-                            message.push_str(&restart);
-                        }
-                        let level = if message.starts_with("Ошибка")
-                            || message.starts_with("Нет ")
-                            || message.contains("Не удалось")
-                        {
-                            LogLevel::Error
-                        } else {
-                            LogLevel::Ok
-                        };
-                        let _ = tx.send(crate::ui::app::Msg::Notify(message, level));
-                    });
-                }
+                self.set_ipset_mode_auto(mode);
             }
             ui.label(RichText::new(&self.pages.settings.ipset_info).size(11.5).color(p2.text_muted));
             ui.add_space(8.0);
@@ -304,7 +263,7 @@ impl App {
                         self.confirm(
                             "Заменить фейк?",
                             &format!(
-                                "ACTIVE_DISCORD_UDP.bin будет заменён содержимым файла {}.bin. Перезапустите ускорение, чтобы применить.",
+                                "ACTIVE_DISCORD_UDP.bin будет заменён содержимым файла {}.bin. Ускорение будет перезапущено автоматически.",
                                 name
                             ),
                             "Заменить",
@@ -314,6 +273,7 @@ impl App {
                                 let message = ops.replace_active_fake("ACTIVE_DISCORD_UDP.bin", &src);
                                 app.notify(message, LogLevel::Ok);
                                 app.reload_fakes();
+                                app.restart_after_change("Фейк заменён");
                             },
                         );
                     }
@@ -340,7 +300,7 @@ impl App {
                         self.confirm(
                             "Заменить фейк?",
                             &format!(
-                                "ACTIVE_GAME_UDP.bin будет заменён содержимым файла {}.bin. Перезапустите ускорение, чтобы применить.",
+                                "ACTIVE_GAME_UDP.bin будет заменён содержимым файла {}.bin. Ускорение будет перезапущено автоматически.",
                                 name
                             ),
                             "Заменить",
@@ -350,6 +310,7 @@ impl App {
                                 let message = ops.replace_active_fake("ACTIVE_GAME_UDP.bin", &src);
                                 app.notify(message, LogLevel::Ok);
                                 app.reload_fakes();
+                                app.restart_after_change("Фейк заменён");
                             },
                         );
                     }
