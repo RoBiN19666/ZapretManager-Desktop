@@ -61,19 +61,27 @@ namespace ZapretManager
         /// <summary>Шрифты под DPI и пользовательский масштаб интерфейса (1.0 = 100%).</summary>
         public static void InitFonts(float userScale)
         {
-            if (userScale <= 0.2f) userScale = 1f;
             float dpi = 96f;
             try
             {
                 using (Graphics g = Graphics.FromHwnd(IntPtr.Zero)) dpi = g.DpiX;
             }
             catch { }
+            InitFonts(userScale, dpi);
+        }
+
+        /// <summary>Шрифты под конкретный DPI (монитор, на котором реально открыто окно).</summary>
+        public static void InitFonts(float userScale, float dpi)
+        {
+            if (userScale <= 0.2f) userScale = 1f;
+            Log.Info(string.Format("DPI окна: {0:0} (масштаб Windows {1:0}%)", dpi, dpi / 96f * 100));
             if (dpi < 96f) dpi = 96f;
-            // На HiDPI шрифты уменьшаем лишь частично: иначе текст становится мелким и «мыльным»,
-            // а фиксированный макет всё равно требует некоторого запаса.
+            // На HiDPI макет растягивается целиком (Theme.S), а шрифты остаются проектными:
+            // 9.5pt на 125 % — это физически крупный, чёткий текст, как в системных приложениях.
             float dpiFactor = dpi / 96f;
-            float soften = 1f + (dpiFactor - 1f) * 0.45f;
-            _fontScale = soften / userScale;
+            if (dpiFactor < 1f) dpiFactor = 1f;
+            S = dpiFactor * userScale;
+            _fontScale = 1f / userScale;
             if (_fontScale > 1.001f || _fontScale < 0.999f)
             {
                 Font old = Base;
@@ -172,6 +180,34 @@ namespace ZapretManager
         }
         /// <summary>Текущий масштаб шрифтов (для отладки и логов).</summary>
         public static float FontScale { get { return _fontScale; } }
+
+        /// <summary>Масштаб макета под DPI: 1.0 при 96 DPI, 1.25 при 125 %.</summary>
+        public static float S = 1f;
+
+        /// <summary>Пиксели макета → физические пиксели.</summary>
+        public static int Px(int design)
+        {
+            return (int)Math.Round(design * S);
+        }
+
+        /// <summary>Масштабирует дерево контролов, сохраняя размеры шрифтов (макет растёт, текст — нет).</summary>
+        public static void ScaleKeepingFonts(Control root, float factor)
+        {
+            if (root == null || factor <= 0f || Math.Abs(factor - 1f) < 0.01f) return;
+            System.Collections.Generic.Dictionary<Control, Font> fonts = new System.Collections.Generic.Dictionary<Control, Font>();
+            CollectFonts(root, fonts);
+            root.Scale(new SizeF(factor, factor));
+            foreach (System.Collections.Generic.KeyValuePair<Control, Font> pair in fonts)
+            {
+                try { pair.Key.Font = pair.Value; } catch { }
+            }
+        }
+
+        private static void CollectFonts(Control control, System.Collections.Generic.Dictionary<Control, Font> fonts)
+        {
+            fonts[control] = control.Font;
+            foreach (Control child in control.Controls) CollectFonts(child, fonts);
+        }
 
         public static Color WithAlpha(Color c, int alpha)
         {

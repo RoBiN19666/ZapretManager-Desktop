@@ -233,6 +233,7 @@ namespace ZapretManager
         private Panel _sidebar;
         private Panel _content;
         private Panel _pageHost;
+        private bool _chromeScaled;
         private Panel _statusBar;
         private Label _titleLbl;
         private Label _subtitleLbl;
@@ -293,7 +294,19 @@ namespace ZapretManager
             Native.SetTitleBarTheme(Handle, Theme.IsDark);
             BuildTray();
             StartActivationWatcher();
+
+            // реальный DPI берём у окна: приложение могло открыться на мониторе с другим масштабом
+            float windowDpi = 96f;
+            try { using (Graphics g = CreateGraphics()) windowDpi = g.DpiX; } catch { }
+            float uiScale = 1f;
+            float.TryParse(_shell.Config.Get("UiScale", "100"), out uiScale);
+            Screen screen = Screen.FromControl(this);
+            Log.Info(string.Format("Монитор: {0}, область {1}x{2}, DPI окна {3:0}", screen.DeviceName, screen.WorkingArea.Width, screen.WorkingArea.Height, windowDpi));
+            Theme.InitFonts(uiScale / 100f, windowDpi);
+            ApplyLayoutScale();
             RebuildPages();
+            ScaleChrome();
+            LayoutChrome();
             _shell.RefreshState(true);
             StartUpdateCheck();
             if (!string.IsNullOrEmpty(AppInfo.ShotPath)) { CaptureAndExit(); return; }
@@ -512,7 +525,7 @@ namespace ZapretManager
             WindowState = FormWindowState.Normal;
             Native.ShowWindow(Handle, 9);
             Rectangle wa = Screen.PrimaryScreen.WorkingArea;
-            Size = new Size(Math.Min(1280, wa.Width - 20), Math.Min(880, wa.Height - 20));
+            Size = new Size(Math.Min(Theme.Px(1280), wa.Width - 20), Math.Min(Theme.Px(880), wa.Height - 20));
             Location = new Point(wa.Left + 10, wa.Top + 10);
             BringToFront();
             Activate();
@@ -720,6 +733,17 @@ namespace ZapretManager
         }
 
         /// <summary>Ручная раскладка: сайдбар слева, контент справа, строка состояния снизу.</summary>
+        /// <summary>Растягивает сайдбар, заголовок и статусбар под DPI (после постройки).</summary>
+        private void ScaleChrome()
+        {
+            if (_chromeScaled) return;
+            _chromeScaled = true;
+            Theme.ScaleKeepingFonts(_sidebar, Theme.S);   // ширина сайдбара тоже увеличится
+            Theme.ScaleKeepingFonts(_statusBar, Theme.S);
+            if (_titleLbl != null) Theme.ScaleKeepingFonts(_titleLbl, Theme.S);
+            if (_subtitleLbl != null) Theme.ScaleKeepingFonts(_subtitleLbl, Theme.S);
+        }
+
         private void LayoutChrome()
         {
             if (_sidebar == null || _content == null || _statusBar == null) return;
@@ -964,6 +988,22 @@ namespace ZapretManager
         public void SetStatusHint(string text)
         {
             _statusLeft.Text = text;
+        }
+
+        /// <summary>Размер окна под масштаб макета: 1116×820 в единицах макета.</summary>
+        private void ApplyLayoutScale()
+        {
+            if (Theme.S <= 1.01f) return;
+            Rectangle work = Screen.FromControl(this).WorkingArea;
+            int width = Math.Min(Theme.Px(1120), work.Width - Theme.Px(20));
+            int height = Math.Min(Theme.Px(860), work.Height - Theme.Px(20));
+            Log.Info(string.Format("Масштаб макета: S={0:0.00}, клиент {1}x{2} → нужно {3}x{4} (экран {5}x{6})",
+                Theme.S, ClientSize.Width, ClientSize.Height, width, height, work.Width, work.Height));
+            if (ClientSize.Width < width || ClientSize.Height < height)
+            {
+                ClientSize = new Size(Math.Max(ClientSize.Width, width), Math.Max(ClientSize.Height, height));
+                Log.Info("Масштаб макета: окно увеличено до " + ClientSize.Width + "x" + ClientSize.Height);
+            }
         }
 
         public void RebuildPages()

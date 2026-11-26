@@ -18,7 +18,7 @@ namespace ZapretManager
         private ToggleSwitch _tgAutoTg;
         private ToggleSwitch _tgMinimize;
         private DarkSelect _themeSelect;
-        private DarkSelect _scaleSelect;
+        private System.Collections.Generic.List<RoundButton> _scaleButtons;
         private Label _autoStatus;
 
         private RoundButton[] _modeButtons = new RoundButton[4];
@@ -265,6 +265,29 @@ namespace ZapretManager
             return "Как в Windows";
         }
 
+        private void ApplyUiScale(string percent)
+        {
+            Shell.Config.Set("UiScale", percent);
+            Shell.Config.Save();
+            float scale = 1f;
+            float.TryParse(percent, out scale);
+            Theme.InitFonts(scale / 100f);
+            Shell.Form.ApplyTheme(Theme.Mode);
+            UpdateScaleButtons(percent);
+            Shell.Notify("Масштаб интерфейса: " + percent + " %.", LogLevel.Ok);
+        }
+
+        private void UpdateScaleButtons(string current)
+        {
+            if (_scaleButtons == null) return;
+            string[] values = new string[] { "90", "100", "110" };
+            for (int i = 0; i < _scaleButtons.Count && i < values.Length; i++)
+            {
+                _scaleButtons[i].Kind = values[i] == current ? ButtonKind.Primary : ButtonKind.Secondary;
+                _scaleButtons[i].Invalidate();
+            }
+        }
+
         private void BuildMiscCard()
         {
             _miscCard = NewCard("Прочее", 258);
@@ -284,33 +307,20 @@ namespace ZapretManager
             _miscCard.Controls.Add(_themeSelect);
 
             _miscCard.Controls.Add(L("Масштаб интерфейса", Theme.Small, Theme.TextDim, 22, 80));
-            _scaleSelect = new DarkSelect();
-            _scaleSelect.Location = new Point(150, 78);
-            _scaleSelect.Width = 120;
-            _scaleSelect.SetItems(new System.Collections.Generic.List<string>(new string[] { "90%", "100%", "110%" }),
-                Shell.Config.Get("UiScale", "100") + "%");
-            _scaleSelect.SelectedIndexChanged += delegate
+            _scaleButtons = new System.Collections.Generic.List<RoundButton>();
+            string currentScale = Shell.Config.Get("UiScale", "100");
+            int bx = 300;
+            foreach (string percent in new string[] { "90", "100", "110" })
             {
-                if (_suppress) return;
-                string percent = "100";
-                switch (_scaleSelect.SelectedIndex)
-                {
-                    case 0: percent = "90"; break;
-                    case 1: percent = "100"; break;
-                    case 2: percent = "110"; break;
-                    case 3: percent = "125"; break;
-                    case 4: percent = "150"; break;
-                }
-                Shell.Config.Set("UiScale", percent);
-                Shell.Config.Save();
-                float scale = 1f;
-                float.TryParse(percent, out scale);
-                Theme.InitFonts(scale / 100f);
-                Shell.Form.ApplyTheme(Theme.Mode);
-                Shell.Notify("Масштаб интерфейса: " + percent + "%.", LogLevel.Ok);
-            };
-            _miscCard.Controls.Add(_scaleSelect);
-
+                string value = percent;
+                RoundButton b = Btn(percent + " %", ButtonKind.Secondary, 82);
+                b.Location = new Point(bx, 74);
+                b.Click += delegate { ApplyUiScale(value); };
+                _miscCard.Controls.Add(b);
+                _scaleButtons.Add(b);
+                bx += 92;
+            }
+            UpdateScaleButtons(currentScale);
             _tgManagerUpdate = AddToggleRow(_miscCard, 120, "Проверять обновления при запуске менеджера",
                 "При старте и далее раз в 6 часов проверять GitHub (zapret, TG WS Proxy, менеджер)", Shell.Config.GetBool("CheckUpdatesOnStartup", true), delegate
                 {
