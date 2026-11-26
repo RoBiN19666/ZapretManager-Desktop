@@ -130,7 +130,7 @@ fn main() {
         };
         let install = ZapretInstall::detect(&preferred);
         guard::reset_cursor();
-        let (events, error, scanned) = guard::new_events(None);
+        let (events, error, scanned) = guard::new_events(None, true);
         let hosts: Vec<String> = events.into_iter().map(|e| e.host).collect();
         log::info(format!(
             "Сторож: просканировано событий {}, доменов {}{}",

@@ -126,7 +126,7 @@ pub struct DnsEvent {
 }
 
 /// Прочитать новые события DNS-журнала (не более 200).
-pub fn new_events(allowed_pids: Option<&[u32]>) -> (Vec<DnsEvent>, String, usize) {
+pub fn new_events(allowed_pids: Option<&[u32]>, allow_all: bool) -> (Vec<DnsEvent>, String, usize) {
     let query = "*[System[(EventID=3020 or EventID=3022 or EventID=3021)]]";
     let r = process::run(
         "wevtutil.exe",
@@ -166,7 +166,7 @@ pub fn new_events(allowed_pids: Option<&[u32]>) -> (Vec<DnsEvent>, String, usize
             if ev.pid == 0 || !allowed.contains(&ev.pid) {
                 continue;
             }
-        } else if ev.pid > 0 {
+        } else if !allow_all && ev.pid > 0 {
             let name = super::sys::list_processes()
                 .into_iter()
                 .find(|p| p.pid == ev.pid)

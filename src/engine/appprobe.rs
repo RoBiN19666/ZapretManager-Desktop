@@ -195,7 +195,7 @@ pub fn watch(
     let mut ips: Vec<String> = Vec::new();
     let mut step = 0u32;
     while step <= seconds {
-        let (events, _err, _scanned) = guard::new_events(Some(&allowed));
+        let (events, _err, _scanned) = guard::new_events(Some(&allowed), false);
         for ev in events {
             if ev.host.is_empty() {
                 continue;

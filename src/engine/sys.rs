@@ -216,6 +216,7 @@ pub fn window_exists(title: &str) -> bool {
 }
 
 /// Активировать произвольное окно по HWND.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn focus_window(hwnd: HWND) {
     unsafe {
         if GetForegroundWindow() != hwnd {
@@ -226,6 +227,7 @@ pub fn focus_window(hwnd: HWND) {
 }
 
 /// Тёмный/светлый заголовок окна (Windows 10 1809+).
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn set_titlebar_theme(hwnd: HWND, dark: bool) {
     if hwnd.is_null() {
         return;
@@ -624,12 +626,14 @@ pub fn acquire_single_instance(name: &str) -> bool {
 }
 
 /// Похоже ли, что окно свёрнуто.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn is_minimized(hwnd: HWND) -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::IsIconic;
     unsafe { IsIconic(hwnd) != 0 }
 }
 
 /// Заголовок окна по HWND (для отладки и снимков).
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn window_title(hwnd: HWND) -> String {
     use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowTextLengthW, GetWindowTextW};
     unsafe {

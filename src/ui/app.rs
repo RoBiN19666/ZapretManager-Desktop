@@ -1283,7 +1283,7 @@ impl App {
         let auto_add = self.pages.sites.guard_auto;
         let tx_outer = self.tx.clone();
         std::thread::spawn(move || {
-            let (events, _err, _scanned) = guard::new_events(None);
+            let (events, _err, _scanned) = guard::new_events(None, false);
             let hosts: Vec<String> = events.into_iter().map(|e| e.host).collect();
             let _ = tx_outer.send(Msg::GuardTick);
             if hosts.is_empty() {
