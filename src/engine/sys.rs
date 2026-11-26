@@ -251,6 +251,21 @@ pub fn set_titlebar_theme(hwnd: HWND, dark: bool) {
                 4,
             );
         }
+        // Windows 11: явно задаём цвет рамки/заголовка/текста, иначе после
+        // переключения тёмной темы на светлую остаётся тёмная рамка.
+        let (caption, border, text) = if dark {
+            (0x000D0E10u32, 0x00252C34u32, 0x00E7EEF4u32)
+        } else {
+            (0x00F7F8F8u32, 0x00D8DBDCu32, 0x00181B1Fu32)
+        };
+        for (attribute, color) in [(35u32, caption), (34u32, border), (36u32, text)] {
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                attribute,
+                &color as *const u32 as *const core::ffi::c_void,
+                4,
+            );
+        }
     }
 }
 

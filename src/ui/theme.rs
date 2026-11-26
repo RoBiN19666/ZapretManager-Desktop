@@ -48,14 +48,14 @@ pub const DARK: Palette = Palette {
 };
 
 pub const LIGHT: Palette = Palette {
-    bg: Color32::from_rgb(245, 243, 240),
-    sidebar: Color32::from_rgb(237, 234, 230),
+    bg: Color32::from_rgb(248, 248, 247),
+    sidebar: Color32::from_rgb(243, 243, 242),
     surface: Color32::from_rgb(255, 255, 255),
-    surface_alt: Color32::from_rgb(240, 236, 231),
-    editor: Color32::from_rgb(250, 249, 247),
-    hover: Color32::from_rgb(230, 224, 216),
-    border: Color32::from_rgb(214, 207, 199),
-    border_strong: Color32::from_rgb(180, 170, 158),
+    surface_alt: Color32::from_rgb(246, 245, 244),
+    editor: Color32::from_rgb(252, 252, 251),
+    hover: Color32::from_rgb(236, 235, 233),
+    border: Color32::from_rgb(220, 219, 216),
+    border_strong: Color32::from_rgb(182, 180, 176),
     text: Color32::from_rgb(31, 27, 24),
     text_dim: Color32::from_rgb(90, 82, 75),
     text_muted: Color32::from_rgb(126, 116, 105),

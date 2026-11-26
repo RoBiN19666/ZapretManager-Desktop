@@ -191,6 +191,7 @@ pub enum Msg {
     Fakes(Vec<FakeFile>),
     HostsChecked(HostsStatus),
     GuardTick,
+    GuardHosts(Vec<String>, Vec<String>),
 }
 
 // ---------------------------------------------------------------------------
@@ -293,6 +294,8 @@ pub struct SitesState {
     pub guard_enabled: bool,
     pub guard_auto: bool,
     pub guard_status: String,
+    pub guard_seen: Vec<String>,
+    pub guard_blocked: Vec<String>,
     pub probe: Option<SiteProbe>,
 }
 
@@ -313,6 +316,8 @@ impl Default for SitesState {
             guard_enabled: false,
             guard_auto: false,
             guard_status: "Сторож выключен.".to_string(),
+            guard_seen: Vec::new(),
+            guard_blocked: Vec::new(),
             probe: None,
         }
     }
@@ -1486,6 +1491,17 @@ impl App {
                     self.pages.tools.hosts_status = Some(status);
                 }
                 Msg::GuardTick => {}
+                Msg::GuardHosts(seen, blocked) => {
+                    self.pages.sites.guard_seen = seen;
+                    self.pages.sites.guard_blocked = blocked;
+                    if !self.pages.sites.guard_seen.is_empty() {
+                        self.pages.sites.guard_status = format!(
+                            "Сторож: перехвачено доменов {}, требуют добавления {}.",
+                            self.pages.sites.guard_seen.len(),
+                            self.pages.sites.guard_blocked.len()
+                        );
+                    }
+                }
             }
         }
         if state_changed {
@@ -1781,21 +1797,32 @@ impl App {
         let auto_add = self.pages.sites.guard_auto;
         let tx_outer = self.tx.clone();
         std::thread::spawn(move || {
-            let (events, _err, _scanned) = guard::new_events(None, false);
+            let (events, _err, _scanned) = guard::new_events(None, true);
             let hosts: Vec<String> = events.into_iter().map(|e| e.host).collect();
             let _ = tx_outer.send(Msg::GuardTick);
             if hosts.is_empty() {
                 return;
             }
+            log::info(format!(
+                "Сторож: новых доменов {}: {}",
+                hosts.len(),
+                hosts.iter().take(12).cloned().collect::<Vec<_>>().join(", ")
+            ));
             let found = guard::process_hosts(&install, &hosts, auto_add, |message| {
                 log::warn(format!("Сторож сайтов: {}", message));
             });
+            let _ = tx_outer.send(Msg::GuardHosts(hosts.clone(), found.clone()));
             if !found.is_empty() {
                 guard::trim();
-                let _ = tx_outer.send(Msg::Notify(
-                    format!("Сторож сайтов: добавлено доменов {}", found.len()),
-                    LogLevel::Warn,
-                ));
+                let text = if auto_add {
+                    format!("Сторож сайтов: найдено и добавлено доменов {}", found.len())
+                } else {
+                    format!(
+                        "Сторож сайтов: найдено доменов {} — проверьте список",
+                        found.len()
+                    )
+                };
+                let _ = tx_outer.send(Msg::Notify(text, LogLevel::Warn));
                 let _ = tx_outer.send(Msg::Text(String::new()));
             }
         });
@@ -1887,7 +1914,7 @@ impl App {
             .interactable(false)
             .show(ctx, |ui| {
                 egui::Frame::none()
-                    .fill(Color32::from_rgb(30, 25, 20))
+                    .fill(p.surface)
                     .stroke(Stroke::new(1.0, p.border_strong))
                     .rounding(Rounding::same(10))
                     .inner_margin(egui::Margin::same(12))
@@ -1896,7 +1923,7 @@ impl App {
                         ui.horizontal(|ui| {
                             let (rect, _) = ui.allocate_exact_size(Vec2::new(3.0, 34.0), Sense::hover());
                             ui.painter().rect_filled(rect, Rounding::same(2), color);
-                            ui.label(RichText::new(text).size(12.5).color(Color32::from_rgb(244, 238, 231)));
+                            ui.label(RichText::new(text).size(12.5).color(p.text));
                         });
                     });
             });

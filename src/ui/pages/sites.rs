@@ -169,12 +169,14 @@ impl App {
                 ui,
                 &p,
                 "Следить за блокировками в фоне",
-                "Пока менеджер работает, он читает журнал DNS Windows: когда браузер запрашивает домен, сторож быстро проверяет его и добавляет в списки те, что рвутся из-за ТСПУ.",
+                "Пока менеджер работает, он читает журнал DNS Windows: когда приложение или браузер запрашивает домен, сторож быстро проверяет его и добавляет в списки те, что рвутся из-за ТСПУ.",
                 &mut enabled,
             ) {
                 self.pages.sites.guard_enabled = enabled;
                 self.ini.set_bool("SiteGuard", enabled);
                 let _ = self.ini.save();
+                self.pages.sites.guard_seen.clear();
+                self.pages.sites.guard_blocked.clear();
                 if enabled {
                     guard::reset_cursor();
                     let message = guard::enable_log();
@@ -202,8 +204,15 @@ impl App {
                 "Сторож выключен.".to_string()
             } else if !log_on {
                 "Журнал DNS выключен — сторож не увидит запросы.".to_string()
+            } else if !self.pages.sites.guard_seen.is_empty() {
+                format!(
+                    "Сторож: перехвачено доменов {}, найдено проблемных {} (автодобавление {}).",
+                    self.pages.sites.guard_seen.len(),
+                    self.pages.sites.guard_blocked.len(),
+                    if self.pages.sites.guard_auto { "вкл" } else { "выкл" }
+                )
             } else {
-                "Сторож работает: журнал DNS включён, запросы браузеров под наблюдением.".to_string()
+                "Сторож работает: журнал DNS включён, запросы приложений под наблюдением.".to_string()
             };
             ui.label(
                 RichText::new(&self.pages.sites.guard_status)
@@ -226,6 +235,91 @@ impl App {
                 self.pages.sites.guard_auto = auto_add;
                 self.ini.set_bool("SiteGuardAutoAdd", auto_add);
                 let _ = self.ini.save();
+            }
+            ui.add_space(8.0);
+            if self.pages.sites.guard_seen.is_empty() {
+                w::muted(
+                    ui,
+                    &p,
+                    "Перехваченных доменов пока нет. Включите сторожа и откройте сайт в браузере — здесь появятся запросы из журнала DNS.",
+                );
+            } else {
+                ui.label(
+                    RichText::new(format!(
+                        "Перехвачено доменов: {}  •  требуют добавления: {}",
+                        self.pages.sites.guard_seen.len(),
+                        self.pages.sites.guard_blocked.len()
+                    ))
+                    .size(12.0)
+                    .color(p.text_dim),
+                );
+                egui::Frame::none()
+                    .fill(p.editor)
+                    .stroke(egui::Stroke::new(1.0, p.border))
+                    .rounding(egui::Rounding::same(7))
+                    .inner_margin(egui::Margin::same(8))
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(120.0)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for host in self.pages.sites.guard_seen.iter().take(40) {
+                                    let blocked = self
+                                        .pages
+                                        .sites
+                                        .guard_blocked
+                                        .iter()
+                                        .any(|b| b.eq_ignore_ascii_case(host));
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{}{}",
+                                            host,
+                                            if blocked {
+                                                if self.pages.sites.guard_auto {
+                                                    "  • проблемный (автодобавление вкл)"
+                                                } else {
+                                                    "  • требует добавления"
+                                                }
+                                            } else {
+                                                ""
+                                            }
+                                        ))
+                                        .size(11.5)
+                                        .color(if blocked { p.warn } else { p.text_muted }),
+                                    );
+                                }
+                            });
+                    });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if !self.pages.sites.guard_blocked.is_empty()
+                        && w::primary(ui, &p, "Добавить найденные").clicked()
+                    {
+                        let install = self.install.clone();
+                        let blocked = self.pages.sites.guard_blocked.clone();
+                        let found = guard::process_hosts(&install, &blocked, true, |message| {
+                            crate::engine::log::warn(format!("Сторож сайтов: {}", message));
+                        });
+                        if !found.is_empty() {
+                            self.pages.sites.guard_blocked.clear();
+                            self.pages.sites.guard_status = format!(
+                                "Сторож: добавлено доменов {}. Перезапустите ускорение, чтобы применить.",
+                                found.len()
+                            );
+                            self.notify(
+                                format!(
+                                    "Сторож: добавлено доменов {}. Перезапустите ускорение.",
+                                    found.len()
+                                ),
+                                LogLevel::Ok,
+                            );
+                        }
+                    }
+                    if w::ghost(ui, &p, "Очистить список").clicked() {
+                        self.pages.sites.guard_seen.clear();
+                        self.pages.sites.guard_blocked.clear();
+                    }
+                });
             }
             w::hint(
                 ui,

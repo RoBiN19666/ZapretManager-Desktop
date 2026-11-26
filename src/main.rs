@@ -145,11 +145,18 @@ fn main() {
                 format!(", ошибка: {}", error)
             }
         ));
+        if !hosts.is_empty() {
+            log::info(format!("Сторож: домены: {}", hosts.join(", ")));
+        }
         let auto_add = ini.get_bool("SiteGuardAutoAdd", false);
         let added = guard::process_hosts(&install, &hosts, auto_add, |message| {
             log::info(message);
         });
-        log::info(format!("Сторож: добавлено доменов {}.", added.len()));
+        log::info(format!(
+            "Сторож: найдено доменов для добавления {} (автодобавление: {}).",
+            added.len(),
+            if auto_add { "вкл" } else { "выкл" }
+        ));
         return;
     }
     if has_flag(&args, "--tg-prepare") {

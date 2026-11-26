@@ -12,12 +12,26 @@ use super::process;
 use super::textfile;
 
 pub const CHANNEL: &str = "Microsoft-Windows-DNS-Client/Operational";
-pub const BROWSERS: [&str; 10] = [
-    "chrome", "msedge", "firefox", "opera", "brave", "vivaldi", "yandex", "browser", "thorium",
+pub const BROWSERS: [&str; 16] = [
+    "chrome",
+    "msedge",
+    "firefox",
+    "opera",
+    "brave",
+    "vivaldi",
+    "yandex",
+    "browser",
+    "thorium",
     "librewolf",
+    "msedgewebview2",
+    "chrome_proxy",
+    "opera_gx",
+    "waterfox",
+    "zen",
+    "arc",
 ];
 
-pub const NOISE: [&str; 36] = [
+pub const NOISE: [&str; 41] = [
     "microsoft.com",
     "windowsupdate.com",
     "windows.com",
@@ -54,6 +68,11 @@ pub const NOISE: [&str; 36] = [
     "riotgames.com",
     "digicert.com",
     "lencr.org",
+    "ubuntu.com",
+    "ntp.org",
+    "time.windows.com",
+    "msftconnecttest.com",
+    "connecttest.com",
 ];
 
 fn is_noise(host: &str) -> bool {
@@ -115,6 +134,8 @@ pub fn enable_log() -> String {
         *cache = None;
     }
     if r.exit_code == 0 && log_enabled() {
+        // Старые ответы в DNS-кэше не создадут новых событий журнала.
+        let _ = process::run("ipconfig.exe", &["/flushdns"], Duration::from_secs(10));
         "Журнал DNS-клиента включён.".to_string()
     } else {
         "Не удалось включить журнал (нужны права администратора).".to_string()
@@ -316,9 +337,9 @@ pub fn process_hosts(
     auto_add: bool,
     mut on_found: impl FnMut(&str),
 ) -> Vec<String> {
-    let mut added = Vec::new();
+    let mut found = Vec::new();
     if !install.is_valid() {
-        return added;
+        return found;
     }
     let now = Instant::now();
     let mut per_cycle = 0usize;
@@ -329,33 +350,36 @@ pub fn process_hosts(
         if host.is_empty() {
             continue;
         }
+        if already_listed(install, host) {
+            continue;
+        }
         {
-            let mut guard = CHECKED.lock().unwrap_or_else(|e| e.into_inner());
-            let map = guard.get_or_insert_with(HashMap::new);
-            if let Some(last) = map.get(host) {
+            let guard = CHECKED.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(last) = guard.as_ref().and_then(|m| m.get(host)) {
                 if now.duration_since(*last) < Duration::from_secs(3600) {
                     continue;
                 }
             }
+        }
+        per_cycle += 1;
+        {
+            let mut guard = CHECKED.lock().unwrap_or_else(|e| e.into_inner());
+            let map = guard.get_or_insert_with(HashMap::new);
             map.insert(host.clone(), now);
             if map.len() > 500 {
                 map.retain(|_, t| now.duration_since(*t) < Duration::from_secs(6 * 3600));
             }
         }
-        if already_listed(install, host) {
-            continue;
-        }
-        per_cycle += 1;
         let (blocked, reason) = netcheck::looks_blocked(host);
         if !blocked {
             continue;
         }
         log::warn(format!("Сторож: {} похоже заблокирован ({}).", host, reason));
+        found.push(host.clone());
         if auto_add {
             let (message, count, _) = super::doctor::add_to_user_list(install, &[host.clone()]);
             if count > 0 {
                 log::ok(format!("Сторож: {} добавлен в список ({})", host, reason));
-                added.push(host.clone());
             } else {
                 log::info(format!("Сторож: {} — {}", host, message));
             }
@@ -371,7 +395,7 @@ pub fn process_hosts(
             }
         ));
     }
-    added
+    found
 }
 
 /// Почистить устаревшие записи троттлинга.
