@@ -178,14 +178,20 @@ impl App {
                 if enabled {
                     guard::reset_cursor();
                     let message = guard::enable_log();
-                    let level = if message.starts_with("Не удалось") {
-                        LogLevel::Error
+                    let ok = !message.starts_with("Не удалось");
+                    self.notify(
+                        if ok {
+                            "Сторож включён: журнал DNS включён.".to_string()
+                        } else {
+                            format!("Сторож включён, но журнал DNS: {}", message)
+                        },
+                        if ok { LogLevel::Ok } else { LogLevel::Error },
+                    );
+                    self.pages.sites.guard_status = if ok {
+                        "Сторож работает: запросы браузеров под наблюдением.".to_string()
                     } else {
-                        LogLevel::Ok
+                        "Сторож включён, но журнал DNS недоступен.".to_string()
                     };
-                    self.notify(message, level);
-                    self.pages.sites.guard_status =
-                        "Сторож работает: запросы браузеров под наблюдением.".to_string();
                 } else {
                     self.notify("Сторож выключен.", LogLevel::Info);
                     self.pages.sites.guard_status = "Сторож выключен.".to_string();
@@ -220,16 +226,6 @@ impl App {
                 self.pages.sites.guard_auto = auto_add;
                 self.ini.set_bool("SiteGuardAutoAdd", auto_add);
                 let _ = self.ini.save();
-            }
-            ui.add_space(6.0);
-            if w::secondary(ui, &p, "Включить журнал DNS").clicked() {
-                let message = guard::enable_log();
-                let level = if message.starts_with("Не удалось") {
-                    LogLevel::Error
-                } else {
-                    LogLevel::Ok
-                };
-                self.notify(message, level);
             }
             w::hint(
                 ui,
