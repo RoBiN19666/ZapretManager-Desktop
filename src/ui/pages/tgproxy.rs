@@ -75,6 +75,21 @@ impl App {
                         .size(11.0)
                         .color(p.text_muted),
                 );
+                if w::ghost(ui, &p, "Открыть папку").clicked() {
+                    let dir = if st.dir.as_os_str().is_empty() {
+                        tgproxy::dir_or_default(&self.ini)
+                    } else {
+                        st.dir.clone()
+                    };
+                    if dir.is_dir() {
+                        crate::engine::sys::open_folder(&dir);
+                    } else {
+                        self.notify(
+                            format!("Папка не найдена: {}", dir.to_string_lossy()),
+                            LogLevel::Warn,
+                        );
+                    }
+                }
             } else {
                 w::small(
                     ui,

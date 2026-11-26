@@ -4,7 +4,7 @@ use eframe::egui::{RichText, Ui};
 
 use crate::engine::log::LogLevel;
 use crate::engine::ops::ZapretOps;
-use crate::engine::{backup, paths, sys, tester};
+use crate::engine::{backup, paths, sys, tester, tgproxy};
 
 use crate::ui::app::App;
 use crate::ui::widgets as w;
@@ -164,18 +164,36 @@ impl App {
         });
 
         w::card(ui, &p, "Папки и файлы", |ui| {
+            let tg_dir = if self.pages.tg.state.installed
+                && !self.pages.tg.state.dir.as_os_str().is_empty()
+            {
+                self.pages.tg.state.dir.clone()
+            } else {
+                tgproxy::dir_or_default(&self.ini)
+            };
             ui.horizontal_wrapped(|ui| {
                 let folders = [
                     ("Папка zapret", Some(self.install.root.clone())),
                     ("bin", Some(self.install.bin_dir().to_string_lossy().to_string())),
                     ("lists", Some(self.install.lists_dir().to_string_lossy().to_string())),
                     ("utils", Some(self.install.utils_dir().to_string_lossy().to_string())),
-                    ("Папка TG WS Proxy", Some(self.ini.get("TgDir", ""))),
+                    (
+                        "Папка TG WS Proxy",
+                        Some(tg_dir.to_string_lossy().to_string()),
+                    ),
                 ];
                 for (label, path) in folders {
                     if w::ghost(ui, &p, label).clicked() {
                         if let Some(path) = path.filter(|p| !p.is_empty()) {
-                            sys::open_folder(std::path::Path::new(&path));
+                            let path = std::path::Path::new(&path);
+                            if path.is_dir() {
+                                sys::open_folder(path);
+                            } else {
+                                self.notify(
+                                    format!("Папка не найдена: {}", path.to_string_lossy()),
+                                    LogLevel::Warn,
+                                );
+                            }
                         }
                     }
                 }
