@@ -15,6 +15,7 @@ namespace ZapretManager
         public bool Available;
         public string Error = "";
         public string ExeUrl = "";
+        public string Tag = "";
         public DateTime CheckedAt = DateTime.Now;
     }
 
@@ -56,6 +57,36 @@ namespace ZapretManager
         public static string VersionUrl { get { return VersionMirrors[0]; } }
         public static string ExeUrl { get { return ExeMirrors[0]; } }
 
+        /// <summary>Тег последнего релиза через редирект /releases/latest (без API-лимитов и кэша CDN).</summary>
+        public static string LatestTag()
+        {
+            try
+            {
+                string loc = Web.GetRedirectLocation(string.Format("https://github.com/{0}/releases/latest", Repo), 15000);
+                if (string.IsNullOrEmpty(loc)) return null;
+                int i = loc.LastIndexOf("/tag/", StringComparison.OrdinalIgnoreCase);
+                if (i < 0) return null;
+                return loc.Substring(i + 5).Trim('/');
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>Кандидаты на скачивание: сначала файл из релиза, потом ветка main.</summary>
+        public static string[] ExeCandidates(SelfUpdateInfo info)
+        {
+            System.Collections.Generic.List<string> list = new System.Collections.Generic.List<string>();
+            if (info != null && !string.IsNullOrEmpty(info.Tag))
+            {
+                list.Add(string.Format("https://github.com/{0}/releases/download/{1}/ZapretManager.exe", Repo, info.Tag));
+                list.Add(string.Format("https://github.com/{0}/releases/download/{1}/ZapretManager-{2}.exe", Repo, info.Tag, info.Remote));
+            }
+            list.AddRange(ExeMirrors);
+            return list.ToArray();
+        }
+
         public static SelfUpdateInfo Last;
 
         public static SelfUpdateInfo Check(bool force)
@@ -63,9 +94,16 @@ namespace ZapretManager
             if (!force && Last != null && (DateTime.Now - Last.CheckedAt).TotalMinutes < 5) return Last;
             SelfUpdateInfo info = new SelfUpdateInfo();
             info.Local = AppInfo.Version;
-            // опрашиваем все зеркала и берём максимальную версию: часть CDN отдаёт кэш
+            // тег релиза + version.txt: часть CDN отдаёт кэш, поэтому берём максимальную версию
             string lastError = "";
             string best = "";
+            string tag = LatestTag();
+            if (!string.IsNullOrEmpty(tag))
+            {
+                info.Tag = tag;
+                Match tm = Regex.Match(tag, "[0-9]+(\\.[0-9]+)*");
+                if (tm.Success) best = tm.Value;
+            }
             foreach (string mirror in VersionMirrors)
             {
                 try
@@ -85,7 +123,9 @@ namespace ZapretManager
             {
                 info.Remote = best;
                 info.Available = Versions.Compare(info.Remote, info.Local) > 0;
-                info.ExeUrl = ExeUrl;
+                info.ExeUrl = !string.IsNullOrEmpty(info.Tag)
+                    ? string.Format("https://github.com/{0}/releases/download/{1}/ZapretManager.exe", Repo, info.Tag)
+                    : ExeUrl;
                 info.Ok = true;
             }
             else
@@ -117,7 +157,7 @@ namespace ZapretManager
                 if (progress != null) progress(3, "Скачивание обновления " + info.Remote + "…");
                 string downloadError = "";
                 bool downloaded = false;
-                foreach (string mirror in ExeMirrors)
+                foreach (string mirror in ExeCandidates(info))
                 {
                     try
                     {
