@@ -451,25 +451,7 @@ assets\         иконка, логотип и их исходники (source\
   <https://github.com/Flowseal/tg-ws-proxy>.
 - **WinDivert** — перехват трафика в user-mode (поставляется в составе zapret).
 
-Zapret Manager — неофициальная графическая оболочка, не связанная с авторами этих проектов.
-
-## Ссылки
-
-- Запрет (обход DPI), оригинальный проект: <https://github.com/bol-van/zapret>
-- Windows-сборка zapret от bol-van: <https://github.com/bol-van/zapret-win-bundle>
-- zapret-discord-youtube (сборка и стратегии): <https://github.com/Flowseal/zapret-discord-youtube>
-- TG WS Proxy: <https://github.com/Flowseal/tg-ws-proxy>
-- Репозиторий менеджера: <https://github.com/RoBiN19666/ZapretManager-Windows>
-
-
-
-## Оформление
-
-Интерфейс собран под логотип: тёплый чёрный фон, оранжево-золотой акцент, глянцевые
-кнопки и ползунки, тёмные заголовки окон. Иконка приложения и широкий логотип
-вшиты в `ZapretManager.exe` как ресурсы, поэтому отдельные файлы рядом не нужны.
-Исходники картинок лежат в `assets\source\`, сборка ассетов — `tools\make_assets.py`
-(делает `app-icon.png`, `lock.png`, `logo-wide.png` и многоразмерный `zapret-manager.ico`).
+**Zapret Manager** — неофициальная графическая оболочка, не связанная с авторами этих проектов.
 
 Используются три варианта логотипа: **иконка в рамке** — для exe, таскбара и сайдбара
 (на 38 px читается лучше всего), **замок без рамки** — крупно в мастере установки и в
