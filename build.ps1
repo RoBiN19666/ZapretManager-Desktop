@@ -73,6 +73,10 @@ if ($mv.Success) {
     $genFile = Join-Path $genDir "VersionInfo.cs"
     $genLines = @(
         'using System.Reflection;',
+        ('[assembly: AssemblyTitle("Zapret Manager \u2014 \u043e\u0431\u0445\u043e\u0434 DPI")]'),
+        ('[assembly: AssemblyDescription("Zapret Manager \u2014 \u043e\u0431\u0445\u043e\u0434 DPI \u0434\u043b\u044f Discord \u0438 YouTube")]'),
+        ('[assembly: AssemblyProduct("Zapret Manager")]'),
+        ('[assembly: AssemblyCompany("RoBiN19666")]'),
         ('[assembly: AssemblyVersion("' + $fileVersion + '")]'),
         ('[assembly: AssemblyFileVersion("' + $fileVersion + '")]'),
         ('[assembly: AssemblyInformationalVersion("' + $full + '")]')

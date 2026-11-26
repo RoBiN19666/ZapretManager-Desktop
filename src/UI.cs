@@ -1100,7 +1100,7 @@ namespace ZapretManager
         private static bool IsScrollable(Control c)
         {
             if (c == null || !c.Visible || !c.Enabled) return false;
-            if (c is ListBox || c is TextBoxBase) return true;
+            if (c is ListBox || c is TextBoxBase || c is StrategyList) return true;
             ScrollableControl sc = c as ScrollableControl;
             return sc != null && sc.VerticalScroll.Visible;
         }
