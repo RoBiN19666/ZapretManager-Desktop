@@ -162,6 +162,7 @@ impl App {
                         };
                         match gf.save(&self.install.root) {
                             Ok(()) => {
+                                crate::engine::prefs::remember_game_filter(&mut self.ini, &gf);
                                 self.notify(
                                     "Настройки игрового фильтра сохранены.",
                                     LogLevel::Ok,

@@ -3,7 +3,9 @@
 //! Формат `.zmb` — обычный ZIP с `manifest.json`:
 //!   manager/manager.ini
 //!   zapret/lists/list-*-user.txt
+//!   zapret/lists/ipset-all.txt (+ .backup)
 //!   zapret/utils/game_filter.enabled
+//!   zapret/utils/check_updates.enabled
 //!   zapret/utils/targets.txt
 
 use std::fs::File;
@@ -93,6 +95,8 @@ pub fn create(install: &ZapretInstall, target: &Path) -> Result<BackupInfo, Stri
         "list-general-user.txt",
         "list-exclude-user.txt",
         "ipset-exclude-user.txt",
+        "ipset-all.txt",
+        "ipset-all.txt.backup",
     ] {
         add_file(
             &mut zip,
@@ -102,7 +106,11 @@ pub fn create(install: &ZapretInstall, target: &Path) -> Result<BackupInfo, Stri
         )?;
     }
     let utils = install.utils_dir();
-    for name in ["game_filter.enabled", "targets.txt"] {
+    for name in [
+        "game_filter.enabled",
+        "check_updates.enabled",
+        "targets.txt",
+    ] {
         add_file(
             &mut zip,
             &format!("zapret/utils/{}", name),
@@ -169,7 +177,12 @@ fn target_for(install: &ZapretInstall, entry: &str, config: &Path) -> Option<Pat
         "zapret/lists/list-general-user.txt" => Some(install.lists_dir().join("list-general-user.txt")),
         "zapret/lists/list-exclude-user.txt" => Some(install.lists_dir().join("list-exclude-user.txt")),
         "zapret/lists/ipset-exclude-user.txt" => Some(install.lists_dir().join("ipset-exclude-user.txt")),
+        "zapret/lists/ipset-all.txt" => Some(install.lists_dir().join("ipset-all.txt")),
+        "zapret/lists/ipset-all.txt.backup" => Some(install.lists_dir().join("ipset-all.txt.backup")),
         "zapret/utils/game_filter.enabled" => Some(install.utils_dir().join("game_filter.enabled")),
+        "zapret/utils/check_updates.enabled" => {
+            Some(install.utils_dir().join("check_updates.enabled"))
+        }
         "zapret/utils/targets.txt" => Some(install.utils_dir().join("targets.txt")),
         _ => None,
     }
@@ -248,13 +261,15 @@ mod tests {
         std::fs::create_dir_all(root.join("utils")).unwrap();
         std::fs::write(root.join("lists").join("list-general-user.txt"), "example.com\n").unwrap();
         std::fs::write(root.join("utils").join("targets.txt"), "[YouTube]\nyoutube.com\n").unwrap();
+        std::fs::write(root.join("lists").join("ipset-all.txt"), "1.2.3.4/32\n").unwrap();
+        std::fs::write(root.join("utils").join("check_updates.enabled"), "ENABLED").unwrap();
         let install = ZapretInstall {
             root: root.to_string_lossy().to_string(),
             ..Default::default()
         };
         let target = root.join("backup.zmb");
         let info = create(&install, &target).unwrap();
-        assert!(info.files >= 2);
+        assert!(info.files >= 4);
         let file = File::open(&target).unwrap();
         let mut zip = ZipArchive::new(file).unwrap();
         let mut manifest = String::new();
@@ -265,6 +280,8 @@ mod tests {
         assert!(manifest.contains(FORMAT));
         assert!(zip.by_name("zapret/lists/list-general-user.txt").is_ok());
         assert!(zip.by_name("zapret/utils/targets.txt").is_ok());
+        assert!(zip.by_name("zapret/lists/ipset-all.txt").is_ok());
+        assert!(zip.by_name("zapret/utils/check_updates.enabled").is_ok());
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -274,6 +274,7 @@ impl App {
                 };
                 match gf.save(&self.install.root) {
                     Ok(()) => {
+                        crate::engine::prefs::remember_game_filter(&mut self.ini, &gf);
                         self.notify(
                             if gf_on {
                                 "Игровой фильтр включён (TCP и UDP)."
@@ -318,14 +319,17 @@ impl App {
                     Ok(())
                 };
                 match result {
-                    Ok(()) => self.notify(
-                        if auto_check {
-                            "Авто-проверка обновлений включена."
-                        } else {
-                            "Авто-проверка обновлений выключена."
-                        },
-                        LogLevel::Ok,
-                    ),
+                    Ok(()) => {
+                        crate::engine::prefs::remember_check_updates(&mut self.ini, auto_check);
+                        self.notify(
+                            if auto_check {
+                                "Авто-проверка обновлений включена."
+                            } else {
+                                "Авто-проверка обновлений выключена."
+                            },
+                            LogLevel::Ok,
+                        );
+                    }
                     Err(e) => self.notify(
                         format!("Не удалось изменить флаг: {}", e),
                         LogLevel::Error,

@@ -75,6 +75,23 @@ pub fn config_path() -> PathBuf {
     data_dir().join("manager.ini")
 }
 
+/// `manager.ini` в «другом» месте: рядом с exe, если работаем из `%APPDATA%`,
+/// или наоборот. Нужен, чтобы предупредить о настройках, которые не видны
+/// из-за переноса exe между папками с разными правами.
+pub fn alternate_config_path() -> Option<PathBuf> {
+    let current = data_dir();
+    let current_key = current.to_string_lossy().to_lowercase();
+    let mut candidates: Vec<PathBuf> = vec![exe_dir().join("data")];
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        candidates.push(PathBuf::from(appdata).join("ZapretManager"));
+    }
+    candidates
+        .into_iter()
+        .filter(|dir| dir.to_string_lossy().to_lowercase() != current_key)
+        .map(|dir| dir.join("manager.ini"))
+        .find(|path| path.is_file())
+}
+
 pub fn log_path() -> PathBuf {
     data_dir().join("manager.log")
 }

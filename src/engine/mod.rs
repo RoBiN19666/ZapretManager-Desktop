@@ -18,6 +18,7 @@ pub mod log;
 pub mod netcheck;
 pub mod ops;
 pub mod paths;
+pub mod prefs;
 pub mod selftest;
 pub mod process;
 pub mod service;

@@ -763,6 +763,18 @@ impl App {
         app.sync_settings();
         app.refresh_tg_state();
         app.start_update_check();
+        // Настройки могли остаться в другой папке (exe перенесли из Program
+        // Files или обратно) — предупреждаем, иначе выглядит как сброс.
+        if let Some(other) = paths::alternate_config_path() {
+            app.notify(
+                format!(
+                    "Настройки найдены в другой папке: {}. Сейчас используется {}. Перенесите manager.ini вручную, чтобы вернуть их.",
+                    other.display(),
+                    paths::data_dir().display()
+                ),
+                LogLevel::Warn,
+            );
+        }
         // Первый запуск: показываем мастер настройки, как в C#-версии. В тихом
         // автозапуске и в режиме снимков окно не открываем.
         if app.shot.is_none()
@@ -971,6 +983,9 @@ impl App {
         if !self.require_admin("Переключение IPSet") {
             return;
         }
+        // Запоминаем намерение: при установке zapret в новую папку режим
+        // восстановится из manager.ini (см. engine::prefs).
+        crate::engine::prefs::remember_ipset(&mut self.ini, mode);
         let install = self.install.clone();
         let mode = mode.to_string();
         self.spawn_bg(move |tx| {
@@ -1499,11 +1514,16 @@ impl App {
                     self.ops = ZapretOps::new(self.install.clone());
                     self.ini.set("Root", &self.install.root);
                     let _ = self.ini.save();
+                    // Новая папка zapret создана с нуля: возвращаем на неё
+                    // быстрые настройки из manager.ini.
+                    let applied = crate::engine::prefs::apply_saved(&self.install, &self.ini);
                     self.refresh_state(true);
-                    self.notify(
-                        format!("zapret установлен: {}", self.install.root),
-                        LogLevel::Ok,
-                    );
+                    let mut message = format!("zapret установлен: {}", self.install.root);
+                    for line in applied {
+                        message.push_str(" · ");
+                        message.push_str(&line);
+                    }
+                    self.notify(message, LogLevel::Ok);
                 }
                 Msg::WizardDone(result) => {
                     self.handle_wizard_msg(result);
