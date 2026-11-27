@@ -11,11 +11,15 @@ name: Release
 #     приложении сверяет хэш именно того файла, который лежит в релизе.
 #
 # Что нужно один раз настроить в Settings → Secrets and variables → Actions:
-#   secrets.SIGNPATH_API_TOKEN                  — токен SignPath (Actions → API token)
-#   vars.SIGNPATH_ORGANIZATION_ID               — id организации SignPath
-#   vars.SIGNPATH_PROJECT_SLUG                  — слаг проекта (например zapret-manager)
-#   vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG   — конфигурация артефакта (например initial)
-#   vars.SIGNPATH_SIGNING_POLICY                — release-signing
+#   Вариант A (бесплатно для OSS) — SignPath:
+#     secrets.SIGNPATH_API_TOKEN                — токен SignPath (Actions → API token)
+#     vars.SIGNPATH_ORGANIZATION_ID              — id организации SignPath
+#     vars.SIGNPATH_PROJECT_SLUG                 — слаг проекта (например zapret-manager)
+#     vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG  — конфигурация артефакта (например initial)
+#     vars.SIGNPATH_SIGNING_POLICY               — release-signing
+#   Вариант B — свой сертификат:
+#     secrets.SIGNING_PFX_BASE64                 — .pfx в base64
+#     secrets.SIGNING_PFX_PASSWORD               — пароль .pfx
 # Без этих значений workflow всё равно собирает и публикует неподписанный exe.
 
 on:
@@ -60,6 +64,7 @@ jobs:
     timeout-minutes: 45
     env:
       SIGNING_AVAILABLE: ${{ vars.SIGNPATH_PROJECT_SLUG != '' && secrets.SIGNPATH_API_TOKEN != '' }}
+      CERT_AVAILABLE: ${{ secrets.SIGNING_PFX_BASE64 != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -129,6 +134,25 @@ jobs:
           if (-not (Test-Path signed/ZapretManager.exe)) { throw "SignPath не вернул подписанный файл" }
           Copy-Item signed/ZapretManager.exe dist/ZapretManager.exe -Force
 
+      # Альтернатива SignPath: собственный сертификат в PFX (Certum, OV и т.п.).
+      # Секреты: SIGNING_PFX_BASE64 (файл в base64) и SIGNING_PFX_PASSWORD.
+      - name: Sign with own certificate
+        id: pfx
+        if: ${{ env.CERT_AVAILABLE == 'true' && steps.signpath.outcome != 'success' }}
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.SIGNING_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($PFX_B64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+                      Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw 'signtool.exe не найден (Windows SDK)' }
+          & $signtool.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $pfx /p $PFX_PASSWORD dist/ZapretManager.exe
+          if ($LASTEXITCODE -ne 0) { throw "signtool завершился с кодом $LASTEXITCODE" }
+          Remove-Item $pfx -Force
+
       - name: Verify final executable
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File tools/verify-exe.ps1 dist/ZapretManager.exe
@@ -162,10 +186,10 @@ jobs:
           "tag=$($tag.Trim())" >> $env:GITHUB_OUTPUT
 
       - name: Warn about unsigned release
-        if: ${{ steps.tag.outputs.tag != '' && env.SIGNING_AVAILABLE != 'true' }}
+        if: ${{ steps.tag.outputs.tag != '' && steps.signpath.outcome != 'success' && steps.pfx.outcome != 'success' }}
         shell: pwsh
         run: |
-          Write-Host "::warning title=Неподписанный релиз::SignPath не настроен (или отключён) — exe уйдёт без подписи. SmartScreen и Defender будут относиться к нему хуже."
+          Write-Host "::warning title=Неподписанный релиз::Подпись не выполнена (нет SignPath или сертификата) — exe уйдёт без подписи. SmartScreen и Defender будут относиться к нему хуже."
 
       - name: Publish release
         if: ${{ steps.tag.outputs.tag != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.publish) }}
