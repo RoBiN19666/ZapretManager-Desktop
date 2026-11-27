@@ -760,6 +760,33 @@ impl App {
         app.load_lists();
         app.load_test_groups();
         app.refresh_state(false);
+        // Запоминаем текущие быстрые настройки, чтобы они пережили установку
+        // zapret в новую папку (см. engine::prefs). Пишем только когда zapret
+        // реально найден, иначе в ini попали бы значения «по умолчанию».
+        if app.install.is_valid() {
+            if app
+                .ini
+                .get(crate::engine::prefs::KEY_GAME_FILTER, "")
+                .trim()
+                .is_empty()
+            {
+                let gf = app.state.game_filter.clone();
+                crate::engine::prefs::remember_game_filter(&mut app.ini, &gf);
+            }
+            if app.ini.get(crate::engine::prefs::KEY_IPSET, "").trim().is_empty() {
+                let mode = app.state.ipset_mode.clone();
+                crate::engine::prefs::remember_ipset(&mut app.ini, &mode);
+            }
+            if app
+                .ini
+                .get(crate::engine::prefs::KEY_CHECK_UPDATES, "")
+                .trim()
+                .is_empty()
+            {
+                let enabled = app.state.check_updates;
+                crate::engine::prefs::remember_check_updates(&mut app.ini, enabled);
+            }
+        }
         app.sync_settings();
         app.refresh_tg_state();
         app.start_update_check();
