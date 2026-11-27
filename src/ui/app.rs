@@ -664,11 +664,7 @@ impl App {
         limited: bool,
     ) -> App {
         let (tx, rx) = mpsc::channel();
-        let dark = match ini.get("Theme", "auto").as_str() {
-            "dark" => true,
-            "light" => false,
-            _ => true,
-        };
+        let dark = theme::resolve_dark(&ini.get("Theme", "auto"));
         let initial_page = shot_page
             .as_deref()
             .and_then(Page::from_key)
@@ -677,7 +673,7 @@ impl App {
         let ops = ZapretOps::new(install.clone());
         let state = ops.get_state();
         let theme_name = ini.get("Theme", "auto");
-        let scale = ini.get_int("UiScale", 100) as f32 / 100.0;
+        let scale = (ini.get_int("UiScale", 100) as i32).clamp(75, 150) as f32 / 100.0;
         let mut app = App {
             install,
             ini,
@@ -881,7 +877,15 @@ impl App {
         self.busy += 1;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            job(tx.clone());
+            // `BusyDone` обязан уйти даже при панике в задаче: иначе счётчик
+            // `busy` и флаги `working` залипают навсегда (вечный спиннер,
+            // выключенный сторож сайтов).
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                job(tx.clone());
+            }));
+            if result.is_err() {
+                log::error("Фоновая задача завершилась паникой");
+            }
             let _ = tx.send(Msg::BusyDone);
         });
     }
@@ -890,8 +894,13 @@ impl App {
         if rescan && self.install.is_valid() {
             self.install.rescan();
         }
-        self.state = self.ops.get_state();
-        self.update_tray_state();
+        // `get_state` читает ipset-файл, реестр и список процессов: на
+        // render-потоке это заметный фриз, поэтому обновляемся сообщением.
+        let ops = ZapretOps::new(self.install.clone());
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(Msg::State(ops.get_state()));
+        });
     }
 
     fn update_tray_state(&mut self) {
@@ -959,7 +968,23 @@ impl App {
         });
     }
 
+    /// Не запускать вторую операцию поверх текущей.
+    pub(crate) fn op_guard(&mut self, what: &str) -> bool {
+        if self.busy > 0 {
+            self.notify(
+                format!("{}: дождитесь завершения текущей операции.", what),
+                LogLevel::Warn,
+            );
+            false
+        } else {
+            true
+        }
+    }
+
     pub fn start_strategy(&mut self, strategy: StrategyDef) {
+        if !self.op_guard("Запуск") {
+            return;
+        }
         if !self.require_admin("Запуск") {
             return;
         }
@@ -981,6 +1006,9 @@ impl App {
     }
 
     pub fn stop_bypass(&mut self) {
+        if !self.op_guard("Остановка") {
+            return;
+        }
         if !self.require_admin("Остановка") {
             return;
         }
@@ -995,6 +1023,9 @@ impl App {
     }
 
     pub fn restart_bypass(&mut self, strategy: StrategyDef) {
+        if !self.op_guard("Перезапуск") {
+            return;
+        }
         if !self.require_admin("Перезапуск") {
             return;
         }
@@ -1104,6 +1135,9 @@ impl App {
     }
 
     pub fn install_service(&mut self, strategy: StrategyDef) {
+        if !self.op_guard("Установка службы") {
+            return;
+        }
         if !self.require_admin("Установка службы") {
             return;
         }
@@ -1125,6 +1159,9 @@ impl App {
     }
 
     pub fn remove_service(&mut self) {
+        if !self.op_guard("Удаление службы") {
+            return;
+        }
         if !self.require_admin("Удаление службы") {
             return;
         }
@@ -2020,6 +2057,10 @@ impl App {
         let Some(mut confirm) = self.confirm.take() else {
             return;
         };
+        // Esc отменяет действие, как в обычном диалоге.
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            return;
+        }
         let mut close = false;
         let mut run = false;
         let p = self.p;
@@ -2440,7 +2481,31 @@ impl eframe::App for App {
 
         // закрытие окна: свернуть в трей вместо выхода
         if ctx.input(|i| i.viewport().close_requested()) {
-            if self.shot.is_none() && !self.exit_requested && self.ini.get_bool("CloseToTray", true) {
+            let tray_ok = self.tray.as_ref().map(|t| t.is_alive()).unwrap_or(false);
+            let busy = self.busy > 0 || self.pages.test.running;
+            let unsaved = self.pages.lists.dirty;
+            if self.shot.is_none() && !self.exit_requested && (busy || unsaved) {
+                // Не теряем работу молча: сначала спрашиваем.
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                if self.confirm.is_none() {
+                    let reason = if busy {
+                        "Выполняется операция: если выйти сейчас, она может остаться незавершённой."
+                    } else {
+                        "В редакторе списков есть несохранённые изменения."
+                    };
+                    self.confirm(
+                        "Выйти из Zapret Manager?",
+                        reason,
+                        "Выйти",
+                        true,
+                        |app| app.exit_requested = true,
+                    );
+                }
+            } else if self.shot.is_none()
+                && !self.exit_requested
+                && tray_ok
+                && self.ini.get_bool("CloseToTray", true)
+            {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.window_visible = false;
             }
@@ -2570,8 +2635,12 @@ impl eframe::App for App {
         }
         if self.busy > 0 || self.pages.test.running || self.pages.sites.watching {
             ctx.request_repaint_after(Duration::from_millis(300));
-        } else {
+        } else if self.window_visible {
             ctx.request_repaint_after(Duration::from_millis(900));
+        } else {
+            // Окно скрыто в трее: частые кадры не нужны, но опрос трея и
+            // сторожа должен продолжаться.
+            ctx.request_repaint_after(Duration::from_secs(3));
         }
     }
 
@@ -2591,15 +2660,25 @@ impl eframe::App for App {
 }
 
 impl App {
-    fn show_confirm_overlay(&mut self, ctx: &egui::Context) {
-        if self.confirm.is_some() {
-            let rect = ctx.screen_rect();
-            let painter = ctx.layer_painter(egui::LayerId::new(
-                egui::Order::Middle,
-                egui::Id::new("confirm_overlay"),
-            ));
-            painter.rect_filled(rect, Rounding::ZERO, Color32::from_black_alpha(140));
+    fn show_confirm_overlay(&self, ctx: &egui::Context) {
+        if self.confirm.is_none() {
+            return;
         }
+        let rect = ctx.screen_rect();
+        // Затемнение должно ещё и поглощать клики: слой `Middle` лежит выше
+        // панелей, но ниже окна подтверждения (`Foreground`). Без интерактивного
+        // прямоугольника клик проходил сквозь затемнение в страницу под ним.
+        egui::Area::new(egui::Id::new("confirm_overlay"))
+            .order(egui::Order::Middle)
+            .fixed_pos(rect.min)
+            .show(ctx, |ui| {
+                // Интерактивный прямоугольник нужен, чтобы клик не проходил
+                // сквозь затемнение в страницу под ним.
+                let (area, _response) =
+                    ui.allocate_exact_size(rect.size(), Sense::click_and_drag());
+                ui.painter()
+                    .rect_filled(area, Rounding::ZERO, Color32::from_black_alpha(140));
+            });
     }
 }
 

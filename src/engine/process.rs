@@ -119,11 +119,6 @@ pub fn run_with_env(
     }
 }
 
-/// Запустить `cmd.exe /c <команда>` — для команд с перенаправлениями и кавычками.
-pub fn run_shell(command_line: &str, timeout: Duration) -> ProcResult {
-    run("cmd.exe", &["/c", command_line], timeout)
-}
-
 /// Запустить процесс скрыто и не ждать его (фоновый режим).
 pub fn spawn_hidden(exe: &str, args: &[&str], cwd: Option<&Path>) -> std::io::Result<Child> {
     let mut cmd = command(exe);

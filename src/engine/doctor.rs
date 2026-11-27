@@ -435,6 +435,29 @@ pub fn add_to_user_list(install: &ZapretInstall, hosts: &[String]) -> (String, u
 pub const SITES_MARKER_START: &str = "# >>> Zapret Manager: адреса сайтов";
 pub const SITES_MARKER_END: &str = "# <<< Zapret Manager";
 
+/// Домены общей инфраструктуры и CDN: пиннинг их адреса в `hosts` ломает
+/// гео-балансировку и задевает другие сайты на том же IP.
+const SHARED_INFRA: [&str; 12] = [
+    "gstatic.com",
+    "googleapis.com",
+    "googleusercontent.com",
+    "cloudflare.com",
+    "akamai.net",
+    "akamaihd.net",
+    "cloudfront.net",
+    "fastly.net",
+    "jsdelivr.net",
+    "amazonaws.com",
+    "azureedge.net",
+    "twimg.com",
+];
+
+fn is_shared_infra(host: &str) -> bool {
+    SHARED_INFRA
+        .iter()
+        .any(|d| host == *d || host.ends_with(&format!(".{}", d)))
+}
+
 /// Прописать IP-адреса связанных доменов в hosts.
 pub fn add_to_hosts(hosts: &[String]) -> (String, usize, String) {
     if !super::sys::is_admin() {
@@ -446,20 +469,39 @@ pub fn add_to_hosts(hosts: &[String]) -> (String, usize, String) {
     }
     let path = super::ops::hosts_path();
     let mut resolved: Vec<(String, String)> = Vec::new();
+    let mut skipped = 0usize;
     for raw in hosts {
+        if resolved.len() >= 8 {
+            break;
+        }
         let host = raw.trim().trim_start_matches('^').to_lowercase();
         if !lists::is_host_like(&host) {
             continue;
         }
+        if is_shared_infra(&host) {
+            super::log::info(format!("hosts: {} — общий CDN, IP не прописываю.", host));
+            skipped += 1;
+            continue;
+        }
         if let Ok(ips) = netcheck::resolve(&host, 3000) {
-            if let Some(ip) = ips.iter().find(|i| i.is_ipv4()) {
-                resolved.push((ip.to_string(), host));
+            // Ровно один IPv4 — иначе это anycast/CDN, и один адрес из набора
+            // сломает остальные.
+            let mut v4 = ips.iter().filter(|i| i.is_ipv4());
+            match (v4.next(), v4.next()) {
+                (Some(ip), None) => resolved.push((ip.to_string(), host)),
+                _ => skipped += 1,
             }
+        } else {
+            skipped += 1;
         }
     }
     if resolved.is_empty() {
         return (
-            "Не удалось определить IP-адреса для этих доменов.".to_string(),
+            if skipped > 0 {
+                "Не удалось подобрать стабильные адреса: у доменов несколько IP или это CDN.".to_string()
+            } else {
+                "Не удалось определить IP-адреса для этих доменов.".to_string()
+            },
             0,
             String::new(),
         );
@@ -467,7 +509,16 @@ pub fn add_to_hosts(hosts: &[String]) -> (String, usize, String) {
     if !path.exists() {
         return ("Файл hosts не найден.".to_string(), 0, String::new());
     }
-    let mut content = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut content = match textfile::try_read(&path) {
+        Ok(text) => text,
+        Err(e) => {
+            return (
+                format!("Не удалось прочитать hosts: {}. Файл не изменён.", e),
+                0,
+                String::new(),
+            );
+        }
+    };
     if let Some(start) = content.find(SITES_MARKER_START) {
         let cut = match content[start..].find(SITES_MARKER_END) {
             Some(rel) => {
@@ -477,7 +528,14 @@ pub fn add_to_hosts(hosts: &[String]) -> (String, usize, String) {
                     None => content.len(),
                 }
             }
-            None => content.len(),
+            None => {
+                return (
+                    "В hosts есть начало блока адресов сайтов, но нет конца. Файл не изменён."
+                        .to_string(),
+                    0,
+                    String::new(),
+                );
+            }
         };
         content = format!("{}{}", &content[..start], &content[cut..]);
     }

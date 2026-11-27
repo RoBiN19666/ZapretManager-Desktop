@@ -83,48 +83,84 @@ pub fn palette(dark: bool) -> Palette {
     }
 }
 
+/// Предпочитает ли Windows тёмное оформление.
+///
+/// `AppsUseLightTheme = 1` — светлая тема; отсутствие ключа трактуем как тёмную
+/// (историческое поведение приложения).
+pub fn system_prefers_dark() -> bool {
+    match crate::engine::sys::reg_get_dword(
+        false,
+        r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        "AppsUseLightTheme",
+    ) {
+        Some(value) => value == 0,
+        None => true,
+    }
+}
+
+/// Разрешить значение настройки `Theme` (`auto`/`dark`/`light`) в тему.
+pub fn resolve_dark(theme: &str) -> bool {
+    match theme {
+        "light" => false,
+        "dark" => true,
+        _ => system_prefers_dark(),
+    }
+}
+
 /// Загрузить системные шрифты Windows (Segoe UI, Consolas).
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
-    let mut loaded = false;
+    // `%WINDIR%\Fonts`, а не жёсткий `C:\Windows`: система может стоять
+    // на другом диске или в урезанном образе.
+    let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".to_string());
+    let fonts_dir = std::path::Path::new(&windir).join("Fonts");
     for (name, file) in [
         ("ui", "segoeui.ttf"),
         ("ui_bold", "segoeuib.ttf"),
         ("mono", "consola.ttf"),
         ("icons", "segmdl2.ttf"),
     ] {
-        let path = std::path::Path::new("C:\\Windows\\Fonts").join(file);
+        let path = fonts_dir.join(file);
         if let Ok(bytes) = std::fs::read(&path) {
             fonts
                 .font_data
                 .insert(name.to_owned(), std::sync::Arc::new(FontData::from_owned(bytes)));
-            loaded = true;
         }
     }
-    if loaded {
-        if let Some(list) = fonts.families.get_mut(&FontFamily::Proportional) {
-            list.insert(0, "ui".to_owned());
-        }
+    // Без базового шрифта оставляем штатные шрифты egui: семейство, которое
+    // ссылается на отсутствующий файл, роняет раскладку текста.
+    if !fonts.font_data.contains_key("ui") {
+        return;
+    }
+    if let Some(list) = fonts.families.get_mut(&FontFamily::Proportional) {
+        list.insert(0, "ui".to_owned());
+    }
+    if fonts.font_data.contains_key("mono") {
         if let Some(list) = fonts.families.get_mut(&FontFamily::Monospace) {
             list.insert(0, "mono".to_owned());
         }
-        let bold: FontFamily = FontFamily::Name("bold".into());
+    }
+    let bold: FontFamily = FontFamily::Name("bold".into());
+    // Отдельное жирное семейство — только если файл действительно загрузился.
+    let bold_ok = fonts.font_data.contains_key("ui_bold");
+    if bold_ok {
         fonts
             .families
             .insert(bold.clone(), vec!["ui_bold".to_owned(), "ui".to_owned()]);
-        if fonts.font_data.contains_key("icons") {
-            let icons: FontFamily = FontFamily::Name("icons".into());
-            fonts
-                .families
-                .insert(icons, vec!["icons".to_owned(), "ui".to_owned()]);
-            ICONS_LOADED.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        ctx.set_fonts(fonts);
-        let mut style = (*ctx.style()).clone();
-        style.text_styles.insert(
-            TextStyle::Heading,
-            egui::FontId::new(21.0, bold.clone()),
-        );
+    }
+    if fonts.font_data.contains_key("icons") {
+        let icons: FontFamily = FontFamily::Name("icons".into());
+        fonts
+            .families
+            .insert(icons, vec!["icons".to_owned(), "ui".to_owned()]);
+        ICONS_LOADED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    ctx.set_fonts(fonts);
+    let mut style = (*ctx.style()).clone();
+    if bold_ok {
+        style
+            .text_styles
+            .insert(TextStyle::Heading, egui::FontId::new(21.0, bold.clone()));
         style.text_styles.insert(
             TextStyle::Name("Big".into()),
             egui::FontId::new(19.0, bold.clone()),
@@ -133,24 +169,24 @@ pub fn install_fonts(ctx: &egui::Context) {
             TextStyle::Name("Bold".into()),
             egui::FontId::new(14.0, bold.clone()),
         );
-        style.text_styles.insert(
-            TextStyle::Body,
-            egui::FontId::new(14.0, FontFamily::Proportional),
-        );
-        style.text_styles.insert(
-            TextStyle::Button,
-            egui::FontId::new(13.5, FontFamily::Proportional),
-        );
-        style.text_styles.insert(
-            TextStyle::Small,
-            egui::FontId::new(12.5, FontFamily::Proportional),
-        );
-        style.text_styles.insert(
-            TextStyle::Monospace,
-            egui::FontId::new(12.5, FontFamily::Monospace),
-        );
-        ctx.set_style(style);
     }
+    style.text_styles.insert(
+        TextStyle::Body,
+        egui::FontId::new(14.0, FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        TextStyle::Button,
+        egui::FontId::new(13.5, FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        TextStyle::Small,
+        egui::FontId::new(12.5, FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        TextStyle::Monospace,
+        egui::FontId::new(12.5, FontFamily::Monospace),
+    );
+    ctx.set_style(style);
 }
 
 /// Применить палитру к стилю egui.

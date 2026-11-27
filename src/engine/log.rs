@@ -35,6 +35,10 @@ pub struct LogLine {
 
 struct Logger {
     file: Option<PathBuf>,
+    /// Открытый дескриптор журнала: не открываем файл на каждую строку.
+    handle: Option<std::fs::File>,
+    /// Сколько байт уже записано в текущий файл (для ротации без `metadata`).
+    written: u64,
     lines: VecDeque<LogLine>,
     seq: u64,
 }
@@ -45,6 +49,8 @@ fn logger() -> &'static Mutex<Logger> {
     LOGGER.get_or_init(|| {
         Mutex::new(Logger {
             file: None,
+            handle: None,
+            written: 0,
             lines: VecDeque::new(),
             seq: 0,
         })
@@ -52,9 +58,11 @@ fn logger() -> &'static Mutex<Logger> {
 }
 
 pub fn set_file(path: PathBuf) {
-    if let Ok(mut log) = logger().lock() {
-        log.file = Some(path);
-    }
+    // Отравленный мьютекс не должен навсегда отключать журнал.
+    let mut log = logger().lock().unwrap_or_else(|e| e.into_inner());
+    log.file = Some(path);
+    log.handle = None;
+    log.written = 0;
 }
 
 pub fn write(level: LogLevel, message: &str) {
@@ -65,25 +73,34 @@ pub fn write(level: LogLevel, message: &str) {
         time: now.time_string(),
         text: message.to_string(),
     };
-    if let Ok(mut log) = logger().lock() {
-        // ротация: файл больше 512 КиБ — удаляем
-        if let Some(path) = &log.file {
-            if let Ok(meta) = std::fs::metadata(path) {
-                if meta.len() > 512 * 1024 {
-                    let _ = std::fs::remove_file(path);
-                }
+    let mut log = logger().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(path) = log.file.clone() {
+        if log.handle.is_none() {
+            log.handle = OpenOptions::new().create(true).append(true).open(&path).ok();
+            log.written = 0;
+        }
+        if let Some(file) = log.handle.as_mut() {
+            let bytes = format!("{}  {}\n", now, message);
+            if file.write_all(bytes.as_bytes()).is_ok() {
+                log.written += bytes.len() as u64;
             }
-            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
-                let _ = writeln!(f, "{}  {}", now, message);
+            // ротация: файл больше 512 КиБ — сохраняем как `.1`, а не удаляем
+            if log.written > 512 * 1024 {
+                log.handle = None;
+                let mut previous = path.clone();
+                previous.set_extension("log.1");
+                let _ = std::fs::remove_file(&previous);
+                let _ = std::fs::rename(&path, &previous);
+                log.written = 0;
             }
         }
-        log.seq += 1;
-        let mut entry = line;
-        entry.seq = log.seq;
-        log.lines.push_back(entry);
-        while log.lines.len() > 3000 {
-            log.lines.pop_front();
-        }
+    }
+    log.seq += 1;
+    let mut entry = line;
+    entry.seq = log.seq;
+    log.lines.push_back(entry);
+    while log.lines.len() > 3000 {
+        log.lines.pop_front();
     }
 }
 
@@ -102,27 +119,35 @@ pub fn error(m: impl AsRef<str>) {
 
 /// Все строки, появившиеся после seq.
 pub fn since(seq: u64) -> Vec<LogLine> {
-    match logger().lock() {
-        Ok(log) => log
-            .lines
-            .iter()
-            .filter(|l| l.seq > seq)
-            .cloned()
-            .collect(),
-        Err(_) => Vec::new(),
-    }
+    logger()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .lines
+        .iter()
+        .filter(|l| l.seq > seq)
+        .cloned()
+        .collect()
 }
 
 pub fn last_seq() -> u64 {
-    logger().lock().map(|l| l.seq).unwrap_or(0)
+    logger()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .seq
 }
 
 /// Последние n строк (для стартового заполнения журнала).
 pub fn tail(n: usize) -> Vec<LogLine> {
-    match logger().lock() {
-        Ok(log) => log.lines.iter().rev().take(n).rev().cloned().collect(),
-        Err(_) => Vec::new(),
-    }
+    logger()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .lines
+        .iter()
+        .rev()
+        .take(n)
+        .rev()
+        .cloned()
+        .collect()
 }
 
 /// Форматирование строки как в C#-версии: "HH:MM:SS  текст".

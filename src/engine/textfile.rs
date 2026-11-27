@@ -66,11 +66,23 @@ pub fn decode_bytes(bytes: &[u8]) -> String {
 }
 
 /// Читает текстовый файл целиком. При ошибке — пустая строка (как в C#-версии).
+///
+/// Для кода, где «пусто» и «не прочитано» — разные вещи (списки, `hosts`,
+/// состояние фильтра), используйте [`try_read`].
 pub fn read(path: &Path) -> String {
     match fs::read(path) {
         Ok(bytes) => decode_bytes(&bytes),
         Err(_) => String::new(),
     }
+}
+
+/// Как [`read`], но ошибку ввода-вывода возвращает вызывающему.
+///
+/// Отсутствие файла — это `ErrorKind::NotFound`; его вызывающий обычно трактует
+/// как пустое содержимое, а все прочие ошибки (нет прав, файл занят, слишком
+/// длинный путь) должны приводить к отказу от записи, а не к «пустому файлу».
+pub fn try_read(path: &Path) -> std::io::Result<String> {
+    fs::read(path).map(|bytes| decode_bytes(&bytes))
 }
 
 /// Читает файл построчно, нормализуя переводы строк.
@@ -84,7 +96,15 @@ pub fn read_lines(path: &Path) -> Vec<String> {
 }
 
 /// Атомарная запись текста: временный файл в том же каталоге, затем переименование.
+///
+/// Имя временного файла содержит счётчик, поэтому два потока, пишущие один и
+/// тот же файл, не перетирают друг друга. Перед переименованием данные
+/// сбрасываются на диск (`sync_all`), чтобы обрыв питания не оставил нулевой файл.
 pub fn write_text_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
     if let Some(dir) = path.parent() {
         if !dir.as_os_str().is_empty() {
             fs::create_dir_all(dir)?;
@@ -94,12 +114,18 @@ pub fn write_text_atomic(path: &Path, text: &str) -> std::io::Result<()> {
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "file".to_string());
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = path.with_file_name(format!(
-        ".{}.tmp-{}",
+        ".{}.tmp-{}-{}",
         file_name,
-        std::process::id() as u64 ^ crate::util::unix_now()
+        std::process::id(),
+        seq
     ));
-    fs::write(&tmp, text.as_bytes())?;
+    {
+        let mut file = fs::File::create(&tmp)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+    }
     match fs::rename(&tmp, path) {
         Ok(()) => Ok(()),
         Err(e) => {

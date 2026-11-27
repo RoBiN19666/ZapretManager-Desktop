@@ -593,6 +593,16 @@ impl App {
     }
 
     pub(crate) fn apply_self_update(&mut self) {
+        if !self.op_guard("Обновление менеджера") {
+            return;
+        }
+        if self.pages.lists.dirty {
+            self.notify(
+                "В редакторе списков есть несохранённые изменения — сохраните их: после обновления менеджер перезапустится.",
+                LogLevel::Warn,
+            );
+            return;
+        }
         let Some(info) = self.self_update.clone() else {
             return;
         };

@@ -277,6 +277,44 @@ pub fn build_command_line(argv: &[String]) -> String {
     s
 }
 
+/// Квотирование аргумента для файла `.bat` (cmd.exe).
+///
+/// Внутри кавычек cmd не трогает `& | < > ( )`, но всё равно раскрывает `%`,
+/// поэтому там удваиваем только его. Вне кавычек метасимволы экранируются `^`.
+pub fn quote_for_cmd(token: &str) -> String {
+    if token.is_empty() {
+        return "\"\"".to_string();
+    }
+    if token.contains(' ') || token.contains('\t') {
+        let inner = token.replace('%', "%%").replace('"', "\"\"");
+        return format!("\"{}\"", inner);
+    }
+    let mut out = String::new();
+    for c in token.chars() {
+        match c {
+            '%' => out.push_str("%%"),
+            '^' | '&' | '|' | '<' | '>' | '(' | ')' | '!' | '"' => {
+                out.push('^');
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Командная строка для `.bat`-файла (с экранированием метасимволов cmd).
+pub fn build_cmd_line(argv: &[String]) -> String {
+    let mut s = String::new();
+    for arg in argv {
+        if !s.is_empty() {
+            s.push(' ');
+        }
+        s.push_str(&quote_for_cmd(arg));
+    }
+    s
+}
+
 /// Нормализованная строка командной строки для сопоставления стратегий.
 pub fn normalize_command_line(s: &str) -> String {
     let replaced: String = s

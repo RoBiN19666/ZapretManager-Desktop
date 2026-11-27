@@ -19,9 +19,9 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
-    DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, LoadIconW,
+    DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, LoadIconW,
     PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow,
-    SetMenuInfo, TrackPopupMenu, TranslateMessage, MENUINFO, MF_OWNERDRAW, MIM_BACKGROUND,
+    SetMenuInfo, TrackPopupMenu, TranslateMessage, HICON, MENUINFO, MF_OWNERDRAW, MIM_BACKGROUND,
     MIM_STYLE, MNS_NOCHECK, MSG, WNDCLASSW, WM_APP, WM_CLOSE, WM_DRAWITEM, WM_LBUTTONDBLCLK,
     WM_MEASUREITEM, WM_NULL, WM_RBUTTONUP,
 };
@@ -65,6 +65,12 @@ pub struct TrayHandle {
 }
 
 impl TrayHandle {
+    /// Создался ли значок. При `false` окна трея нет и иконки в панели задач
+    /// тоже не будет — сворачивать в трей в этом состоянии нельзя.
+    pub fn is_alive(&self) -> bool {
+        self.hwnd != 0
+    }
+
     pub fn close(&self) {
         if self.hwnd != 0 {
             unsafe {
@@ -98,7 +104,9 @@ fn with_context<T>(f: impl FnOnce(&TrayContext) -> T) -> Option<T> {
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    match msg {
+    // Паника не должна пересекать границу `extern "system"`: это abort всего
+    // процесса вместе с несохранёнными настройками.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match msg {
         WM_TRAY => {
             let mouse = lparam as u32;
             if mouse == WM_LBUTTONDBLCLK {
@@ -113,10 +121,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_CLOSE => {
             remove_icon(hwnd);
             DestroyWindow(hwnd);
+            // `DestroyWindow` сам по себе не завершает цикл сообщений:
+            // без WM_QUIT поток трея оставался жить с нулём окон.
+            PostQuitMessage(0);
             0
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
-    }
+    }));
+    result.unwrap_or_else(|_| {
+        log::error("Трей: паника в обработчике окна");
+        0
+    })
 }
 
 const MENU_BG_DARK: u32 = rgb(26, 22, 20);
@@ -342,7 +357,8 @@ fn show_menu(hwnd: HWND) {
     }) else {
         return;
     };
-    let light = Ini::load(&paths::config_path()).get("Theme", "auto") == "light";
+    let theme = Ini::load(&paths::config_path()).get("Theme", "auto");
+    let light = !crate::ui::theme::resolve_dark(&theme);
     set_menu_style(light);
     if let Ok(mut scale) = MENU_SCALE.lock() {
         *scale = menu_scale_for_window(hwnd);
@@ -682,21 +698,11 @@ unsafe fn run_tray(
         DispatchMessageW(&msg);
     }
     remove_icon(hwnd);
+    // Иконка создана через CreateIconFromResourceEx — её нужно уничтожить,
+    // иначе дескриптор утекает на каждый перезапуск потока трея.
+    if handle != 0 {
+        DestroyIcon(handle as HICON);
+    }
     PostQuitMessage(0);
-}
-
-/// Обновить состояние для меню (подписи «Запустить/Остановить»).
-pub fn set_state(state: &Arc<Mutex<TrayState>>) {
-    let _ = state;
-}
-
-/// Перерисовать значок (после смены темы и т.п.).
-pub fn refresh_icon() {
-    with_context(|c| {
-        if let Ok(ctx) = CONTEXT.lock() {
-            let _ = c;
-            drop(ctx);
-        }
-    });
 }
 

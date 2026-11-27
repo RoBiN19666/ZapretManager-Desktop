@@ -75,6 +75,29 @@ pub fn config_path() -> PathBuf {
     data_dir().join("manager.ini")
 }
 
+/// Лежит ли путь во временном каталоге.
+///
+/// Во `%TEMP%` может писать любой процесс пользователя, поэтому запускать
+/// оттуда исполняемые файлы с правами администратора нельзя.
+pub fn is_temp_path(path: &Path) -> bool {
+    let target = path.to_string_lossy().to_lowercase();
+    if target.is_empty() {
+        return false;
+    }
+    for dir in [std::env::temp_dir(), PathBuf::from(std::env::var("TEMP").unwrap_or_default())] {
+        let dir = dir.to_string_lossy().to_lowercase();
+        // У `PathBuf::from("")` путь пустой — пропускаем.
+        if dir.is_empty() {
+            continue;
+        }
+        let dir = dir.trim_end_matches('\\').to_string();
+        if target == dir || target.starts_with(&format!("{}\\", dir)) {
+            return true;
+        }
+    }
+    false
+}
+
 /// `manager.ini` в «другом» месте: рядом с exe, если работаем из `%APPDATA%`,
 /// или наоборот. Нужен, чтобы предупредить о настройках, которые не видны
 /// из-за переноса exe между папками с разными правами.

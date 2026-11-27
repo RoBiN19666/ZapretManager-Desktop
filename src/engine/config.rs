@@ -1,6 +1,6 @@
 //! Настройки самого менеджера: data\manager.ini (формат key=value, как в C#-версии).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::textfile;
@@ -10,6 +10,9 @@ pub struct Ini {
     pub path: PathBuf,
     /// ключ в нижнем регистре → (исходное написание, значение)
     values: BTreeMap<String, (String, String)>,
+    /// ключи, изменённые этим экземпляром: только их переносим при сохранении,
+    /// чтобы не затереть настройки, записанные параллельно другим режимом.
+    dirty: BTreeSet<String>,
 }
 
 impl Ini {
@@ -17,6 +20,7 @@ impl Ini {
         let mut ini = Ini {
             path: path.to_path_buf(),
             values: BTreeMap::new(),
+            dirty: BTreeSet::new(),
         };
         for raw in textfile::read_lines(path) {
             let line = raw.trim();
@@ -41,12 +45,24 @@ impl Ini {
     }
 
     pub fn save(&self) -> std::io::Result<()> {
-        let mut keys: Vec<&String> = self.values.keys().collect();
+        // Перечитываем файл с диска: параллельный режим (headless, TG-прокси,
+        // второй экземпляр) мог сохранить свои ключи. Переносим только то,
+        // что изменили мы, остальное берём с диска.
+        let mut merged = Ini::load(&self.path).values;
+        if merged.is_empty() {
+            merged = self.values.clone();
+        }
+        for key in &self.dirty {
+            if let Some(value) = self.values.get(key) {
+                merged.insert(key.clone(), value.clone());
+            }
+        }
+        let mut keys: Vec<&String> = merged.keys().collect();
         keys.sort();
         let mut out = String::new();
         out.push_str("# Zapret Manager — настройки. Файл можно редактировать вручную.\n");
         for lower in keys {
-            let (name, value) = &self.values[lower];
+            let (name, value) = &merged[lower];
             out.push_str(name);
             out.push('=');
             out.push_str(value);
@@ -69,6 +85,7 @@ impl Ini {
             .get(&lower)
             .map(|(n, _)| n.clone())
             .unwrap_or_else(|| key.to_string());
+        self.dirty.insert(lower.clone());
         self.values.insert(lower, (name, value.to_string()));
     }
 
@@ -100,6 +117,24 @@ impl Ini {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_does_not_drop_foreign_keys() {
+        let path =
+            std::env::temp_dir().join(format!("zapret-ini-merge-{}.ini", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut a = Ini::load(&path);
+        a.set("Root", r"C:\zapret");
+        let mut b = Ini::load(&path);
+        b.set("Theme", "dark");
+        b.save().unwrap();
+        // «a» сохраняет уже после «b»: ключ Theme не должен пропасть.
+        a.save().unwrap();
+        let after = Ini::load(&path);
+        assert_eq!(after.get("Root", ""), r"C:\zapret");
+        assert_eq!(after.get("Theme", ""), "dark");
+        let _ = std::fs::remove_file(&path);
+    }
 
     #[test]
     fn ini_roundtrip() {

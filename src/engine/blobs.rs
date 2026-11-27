@@ -131,6 +131,35 @@ fn download_candidates(name: &str) -> Vec<String> {
     ]
 }
 
+/// Свернуть `.` и `..` без обращения к файловой системе.
+fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Цель записи должна лежать внутри папки установки zapret.
+///
+/// Путь к blob-файлу берётся из аргументов стратегии (`--dpi-desync-fake-*`),
+/// то есть из `.bat` скачанного архива. Абсолютный путь или `..` вывели бы
+/// запись за пределы установки — с правами администратора.
+fn inside_install(install: &ZapretInstall, path: &Path) -> bool {
+    let root = super::paths::normalize_root(&install.root).to_lowercase();
+    if root.is_empty() {
+        return false;
+    }
+    let target = normalize_lexically(path).to_string_lossy().to_lowercase();
+    target.len() > root.len() + 1 && target.starts_with(&format!("{}\\", root))
+}
+
 /// Докачать отсутствующие blob-файлы из официальных репозиториев.
 pub fn repair(install: &ZapretInstall) -> String {
     let audit = audit(install);
@@ -141,6 +170,14 @@ pub fn repair(install: &ZapretInstall) -> String {
     let mut failed = Vec::new();
     let mut done: HashSet<String> = HashSet::new();
     for blob in &audit.missing {
+        if !inside_install(install, &blob.path) {
+            log::warn(format!(
+                "Файл ускорения вне папки zapret пропущен: {}",
+                blob.path.to_string_lossy()
+            ));
+            failed.push(blob.path.to_string_lossy().to_string());
+            continue;
+        }
         let Some(name) = blob.path.file_name().map(|n| n.to_string_lossy().to_string()) else {
             failed.push(blob.path.to_string_lossy().to_string());
             continue;

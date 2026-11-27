@@ -15,7 +15,6 @@ use std::path::{Path, PathBuf};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-use super::config::Ini;
 use super::install::ZapretInstall;
 use super::paths;
 use super::sys;
@@ -73,7 +72,11 @@ pub fn create(install: &ZapretInstall, target: &Path) -> Result<BackupInfo, Stri
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let file = File::create(target).map_err(|e| format!("Не удалось создать копию: {}", e))?;
+    // Пишем в `.zmb-tmp` и переименовываем только после успешного `finish()`:
+    // иначе сбой на середине оставляет битый архив и затирает прежнюю копию.
+    let tmp = target.with_extension("zmb-tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let file = File::create(&tmp).map_err(|e| format!("Не удалось создать копию: {}", e))?;
     let mut zip = ZipWriter::new(file);
     let mut files = Vec::new();
 
@@ -118,7 +121,27 @@ pub fn create(install: &ZapretInstall, target: &Path) -> Result<BackupInfo, Stri
             &mut files,
         )?;
     }
+    // Пометки пользователя в официальных списках живут в `data\lists`: без них
+    // после переноса копии на другую машину правки в list-general.txt и др.
+    // выглядят как «удалённые».
+    let data_lists = paths::data_dir().join("lists");
+    for name in super::lists::OFFICIAL_FILES {
+        for suffix in [".changes", ".baseline"] {
+            let file_name = format!("{}{}", name, suffix);
+            add_file(
+                &mut zip,
+                &format!("data/lists/{}", file_name),
+                &data_lists.join(&file_name),
+                &mut files,
+            )?;
+        }
+    }
     zip.finish().map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, target)
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!("Не удалось сохранить копию: {}", e)
+        })?;
     Ok(BackupInfo {
         path: target.to_path_buf(),
         files: files.len(),
@@ -184,7 +207,22 @@ fn target_for(install: &ZapretInstall, entry: &str, config: &Path) -> Option<Pat
             Some(install.utils_dir().join("check_updates.enabled"))
         }
         "zapret/utils/targets.txt" => Some(install.utils_dir().join("targets.txt")),
-        _ => None,
+        _ => {
+            // Пометки в официальных списках: только известные имена и суффиксы,
+            // никаких путей из архива.
+            let name = entry.strip_prefix("data/lists/")?;
+            if name.contains('/') || name.contains('\\') {
+                return None;
+            }
+            let known = super::lists::OFFICIAL_FILES.iter().any(|f| {
+                name == format!("{}.changes", f) || name == format!("{}.baseline", f)
+            });
+            if known {
+                Some(paths::data_dir().join("lists").join(name))
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -211,7 +249,15 @@ fn restore_impl(
                 .map_err(|e| e.to_string())?;
             let value: serde_json::Value =
                 serde_json::from_str(&text).map_err(|e| format!("manifest.json: {}", e))?;
-            manifest_ok = value.get("format").and_then(|v| v.as_str()) == Some(FORMAT);
+            let format_ok = value.get("format").and_then(|v| v.as_str()) == Some(FORMAT);
+            let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
+            if format_ok && version > VERSION as u64 {
+                return Err(format!(
+                    "Копия сделана более новой версией ({}) — обновите Zapret Manager.",
+                    version
+                ));
+            }
+            manifest_ok = format_ok;
             break;
         }
     }
@@ -242,11 +288,6 @@ fn restore_impl(
         return Err("В копии нет известных файлов.".to_string());
     }
     Ok(RestoreInfo { files: restored })
-}
-
-/// Загрузить `Root` из восстановленного manager.ini.
-pub fn restored_root() -> String {
-    Ini::load(&paths::config_path()).get("Root", "")
 }
 
 #[cfg(test)]

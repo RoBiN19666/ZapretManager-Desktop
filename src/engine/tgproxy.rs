@@ -277,7 +277,7 @@ pub fn get_state(ini: &Ini) -> TgState {
     st
 }
 
-fn find_exe_in(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn find_exe_in(dir: &Path) -> Option<PathBuf> {
     if !dir.is_dir() {
         return None;
     }
@@ -359,6 +359,17 @@ pub fn start(ini: &Ini) -> (String, bool) {
     let Some(exe) = &st.exe else {
         return ("Не удалось определить папку TG WS Proxy.".to_string(), false);
     };
+    // `TgExe` берётся из manager.ini, а ini может править непривилегированный
+    // процесс: запуск из %TEMP% от администратора запрещаем.
+    if super::paths::is_temp_path(exe) {
+        return (
+            format!(
+                "TgWsProxy лежит во временной папке ({}). Запуск от имени администратора запрещён.",
+                exe.to_string_lossy()
+            ),
+            false,
+        );
+    }
     match process::spawn_hidden(&exe.to_string_lossy(), &[], Some(&st.dir)) {
         Ok(_) => {
             let deadline = Instant::now() + Duration::from_secs(7);
@@ -485,6 +496,25 @@ pub fn install(
             "Скачанный файл не является исполняемым (возможно, страница ошибки вместо файла)."
                 .to_string(),
         );
+    }
+    log::info(format!(
+        "TG WS Proxy {}: SHA-256 {}",
+        tag,
+        crate::util::sha256_file(&temp)
+    ));
+    // Подпись у апстрима обычно отсутствует — это нормально. Недействительная
+    // подпись означает испорченный или подменённый файл: не устанавливаем.
+    match super::winverify::check(&temp) {
+        super::winverify::SignatureState::Invalid(code) => {
+            return Err(format!(
+                "TG WS Proxy: подпись недействительна (0x{:08X}) — установка отменена.",
+                code as u32
+            ))
+        }
+        super::winverify::SignatureState::Unsigned => {
+            log::warn("TG WS Proxy без Authenticode-подписи (обычное состояние апстрима)")
+        }
+        super::winverify::SignatureState::Valid => log::ok("TG WS Proxy: подпись действительна"),
     }
     progress(85, "Установка…");
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;

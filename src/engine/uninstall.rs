@@ -42,6 +42,36 @@ fn remove_file(path: &Path, label: &str, log: &mut String) {
     }
 }
 
+/// Лежит ли `child` внутри `ancestor` (сравнение без учёта регистра).
+fn is_inside(child: &Path, ancestor: &Path) -> bool {
+    let child = child.to_string_lossy().to_lowercase();
+    let ancestor = ancestor.to_string_lossy().to_lowercase();
+    if ancestor.is_empty() {
+        return false;
+    }
+    child == ancestor
+        || (child.starts_with(&ancestor)
+            && child[ancestor.len()..].starts_with('\\'))
+}
+
+/// Можно ли удалять каталог, взятый из `TgDir`.
+///
+/// `TgDir` живёт в `manager.ini`, который может быть подменён (в том числе
+/// восстановлением чужого `.zmb`), поэтому `remove_dir_all` по нему без
+/// проверок — это удаление произвольного каталога. Требуем: абсолютный путь,
+/// не корень диска, не каталог программы и не его родитель, и чтобы внутри
+/// действительно лежал `tgwsproxy*.exe`.
+fn safe_tg_dir(dir: &Path) -> bool {
+    if !dir.is_absolute() || dir.to_string_lossy().len() <= 3 {
+        return false;
+    }
+    let exe_dir = paths::exe_dir();
+    if is_inside(dir, &exe_dir) || is_inside(&exe_dir, dir) {
+        return false;
+    }
+    tgproxy::find_exe_in(dir).is_some()
+}
+
 /// Удалить сборку zapret и связанные службы/записи hosts.
 /// При `keep_lists` папка lists сохраняется в data\removed-zapret-lists.
 pub fn remove_zapret(install: &ZapretInstall, keep_lists: bool) -> Result<String, String> {
@@ -102,7 +132,13 @@ pub fn remove_tg(ini: &mut Ini) -> Result<String, String> {
     message.push_str(&tgproxy::stop_all());
     message.push(' ');
     let _ = tgsource::stop();
-    remove_dir(&dir, "папка TG WS Proxy", &mut message);
+    if safe_tg_dir(&dir) {
+        remove_dir(&dir, "папка TG WS Proxy", &mut message);
+    } else {
+        message.push_str(
+            "Папка TG WS Proxy из настроек не похожа на установку — удаление пропущено. ",
+        );
+    }
     remove_dir(&tgsource::root_dir(), "исходники TG WS Proxy", &mut message);
 
     let appdata = std::env::var("APPDATA").unwrap_or_default();
@@ -135,20 +171,43 @@ pub fn remove_tg(ini: &mut Ini) -> Result<String, String> {
     Ok(message.trim().to_string())
 }
 
+/// Путь для `.cmd`: `%` раскрывается cmd даже внутри кавычек, поэтому удваиваем.
+fn cmd_path(path: &Path) -> String {
+    path.to_string_lossy().replace('%', "%%")
+}
+
 fn write_cleanup_script(remove_exe: bool, remove_data: bool) -> Result<PathBuf, String> {
+    use std::io::Write as _;
+
     let exe = paths::exe_path();
     let data = paths::data_dir();
-    let script = paths::temp_dir().join(format!("zm-cleanup-{}.cmd", std::process::id()));
+    // Уникальное имя + create_new: `%TEMP%` доступен на запись другим процессам
+    // пользователя, а cmd.exe запускается уже с повышенными правами.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let script = paths::temp_dir().join(format!(
+        "zm-cleanup-{}-{}.cmd",
+        std::process::id(),
+        stamp
+    ));
     let mut text = String::from("@echo off\r\n");
     text.push_str("timeout /t 3 /nobreak >nul\r\n");
     if remove_data {
-        text.push_str(&format!("rmdir /s /q \"{}\"\r\n", data.to_string_lossy()));
+        text.push_str(&format!("rmdir /s /q \"{}\"\r\n", cmd_path(&data)));
     }
     if remove_exe {
-        text.push_str(&format!("del /f /q \"{}\"\r\n", exe.to_string_lossy()));
+        text.push_str(&format!("del /f /q \"{}\"\r\n", cmd_path(&exe)));
     }
     text.push_str("del /f /q \"%~f0\"\r\n");
-    std::fs::write(&script, text).map_err(|e| e.to_string())?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&script)
+        .map_err(|e| e.to_string())?;
+    file.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    drop(file);
     process::spawn_hidden(
         "cmd.exe",
         &["/c", &script.to_string_lossy()],

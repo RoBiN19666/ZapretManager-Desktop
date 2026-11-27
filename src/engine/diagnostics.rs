@@ -63,11 +63,9 @@ impl Builder {
             name: name.to_string(),
             severity,
             message,
-            hint: if severity == Severity::Ok {
-                String::new()
-            } else {
-                hint.to_string()
-            },
+            // Подсказку сохраняем и для «всё хорошо»: в ней бывают полезные
+            // советы (шифрованный DNS, кэш Discord, установка TG WS Proxy).
+            hint: hint.to_string(),
             group: group.to_string(),
             ..Default::default()
         });

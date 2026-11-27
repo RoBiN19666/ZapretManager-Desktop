@@ -32,7 +32,17 @@ pub fn enable(exe: &Path, start_minimized: bool) -> String {
         AUTOSTART_ARG.to_string()
     };
     let xml = task_xml(exe, &args);
-    let temp = super::paths::temp_dir().join("ZapretManager-task.xml");
+    // Уникальное имя: `%TEMP%` доступен на запись процессам того же
+    // пользователя, а `schtasks` запускается уже с повышенными правами.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp = super::paths::temp_dir().join(format!(
+        "task-{}-{}.xml",
+        std::process::id(),
+        stamp
+    ));
     if let Err(e) = write_utf16le(&temp, &xml) {
         return format!("Не удалось создать задачу автозапуска: {}", e);
     }
@@ -140,9 +150,18 @@ fn task_xml(exe: &Path, args: &str) -> String {
 }
 
 fn write_utf16le(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+
     let mut bytes = vec![0xFF, 0xFE];
     for unit in text.encode_utf16() {
         bytes.extend_from_slice(&unit.to_le_bytes());
     }
-    std::fs::write(path, bytes)
+    // `create_new` — чтобы не писать по уже существующему (возможно,
+    // подсунутому) файлу или ссылке с тем же именем.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(&bytes)?;
+    file.sync_all()
 }

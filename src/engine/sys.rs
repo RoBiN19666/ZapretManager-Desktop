@@ -158,8 +158,55 @@ pub fn select_in_explorer(file: &Path) {
 }
 
 /// Открыть ссылку в браузере по умолчанию.
+///
+/// Разрешаем только `http`/`https`: адрес может прийти из ответа GitHub API,
+/// и при подмене ответа `file:` или путь к локальной программе запустили бы
+/// её одним кликом.
 pub fn open_url(url: &str) {
+    let lower = url.trim().to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        crate::engine::log::warn(format!("Отклонён адрес для открытия: {}", url));
+        return;
+    }
     let _ = shell_execute("open", url, None, None);
+}
+
+/// Собрать параметры командной строки с корректным квотированием.
+///
+/// Правила `CommandLineToArgvW`: кавычки экранируются, а серия обратных слэшей
+/// перед кавычкой удваивается — иначе путь с пробелом и завершающим `\`
+/// «съедает» закрывающую кавычку и склеивает аргументы.
+fn quote_arg(arg: &str) -> String {
+    if !arg.is_empty() && !arg.contains([' ', '\t', '"']) {
+        return arg.to_string();
+    }
+    let mut out = String::with_capacity(arg.len() + 2);
+    out.push('"');
+    let mut backslashes = 0usize;
+    for c in arg.chars() {
+        match c {
+            '\\' => {
+                backslashes += 1;
+                out.push('\\');
+            }
+            '"' => {
+                for _ in 0..backslashes {
+                    out.push('\\');
+                }
+                out.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                backslashes = 0;
+                out.push(c);
+            }
+        }
+    }
+    for _ in 0..backslashes {
+        out.push('\\');
+    }
+    out.push('"');
+    out
 }
 
 /// Перезапустить текущий exe с правами администратора.
@@ -167,13 +214,7 @@ pub fn elevate_self(args: &[String]) -> bool {
     let exe = std::env::current_exe().unwrap_or_default();
     let params = args
         .iter()
-        .map(|a| {
-            if a.contains(' ') && !a.starts_with('"') {
-                format!("\"{}\"", a)
-            } else {
-                a.clone()
-            }
-        })
+        .map(|a| quote_arg(a))
         .collect::<Vec<_>>()
         .join(" ");
     let verb = wide("runas");
@@ -442,6 +483,10 @@ pub fn reg_get_string(machine: bool, path: &str, name: &str) -> Option<String> {
     RegKey::open(machine, path, false).and_then(|k| k.get_string(name))
 }
 
+pub fn reg_get_dword(machine: bool, path: &str, name: &str) -> Option<u32> {
+    RegKey::open(machine, path, false).and_then(|k| k.get_dword(name))
+}
+
 pub fn reg_set_string(machine: bool, path: &str, name: &str, value: &str) -> bool {
     RegKey::create(machine, path)
         .map(|k| k.set_string(name, value))
@@ -452,6 +497,19 @@ pub fn reg_set_dword(machine: bool, path: &str, name: &str, value: u32) -> bool 
     RegKey::create(machine, path)
         .map(|k| k.set_dword(name, value))
         .unwrap_or(false)
+}
+
+/// Вернуть стандартные значения UAC: 5 (запрос подтверждения) и 1 (защищённый
+/// рабочий стол). Нужны права администратора.
+pub fn restore_uac_defaults() -> Result<(), String> {
+    const PATH: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System";
+    let consent = reg_set_dword(true, PATH, "ConsentPromptBehaviorAdmin", 5);
+    let desktop = reg_set_dword(true, PATH, "PromptOnSecureDesktop", 1);
+    if consent && desktop {
+        Ok(())
+    } else {
+        Err("не удалось записать параметры UAC (нужны права администратора)".to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -521,19 +579,33 @@ pub fn process_command_line(pid: u32) -> Option<String> {
             &mut size,
         );
         CloseHandle(handle);
-        if status < 0 {
+        if status < 0 || buf.len() < 16 {
             return None;
         }
         // UNICODE_STRING: Length(2) MaximumLength(2) padding(4) Buffer(8)
         let length = u16::from_le_bytes([buf[0], buf[1]]) as usize;
-        let ptr = usize::from_le_bytes([
-            buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
-        ]) as *const u16;
-        if ptr.is_null() || length == 0 {
+        if length == 0 || length % 2 != 0 || length > buf.len() {
             return None;
         }
-        let units = std::slice::from_raw_parts(ptr, length / 2);
-        Some(String::from_utf16_lossy(units))
+        let ptr = usize::from_le_bytes([
+            buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
+        ]);
+        // `Buffer` — абсолютный указатель внутрь нашего же буфера. Проверяем
+        // границы, прежде чем строить срез: при нештатном ответе ядра
+        // безусловный `from_raw_parts` читал бы за пределами буфера.
+        let base = buf.as_ptr() as usize;
+        if ptr < base {
+            return None;
+        }
+        let offset = ptr - base;
+        if offset.checked_add(length).map_or(true, |end| end > buf.len()) {
+            return None;
+        }
+        let units: Vec<u16> = buf[offset..offset + length]
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        Some(String::from_utf16_lossy(&units))
     }
 }
 
@@ -634,6 +706,7 @@ pub fn acquire_single_instance(name: &str) -> bool {
             return true;
         }
         if GetLastError() == ERROR_ALREADY_EXISTS {
+            CloseHandle(handle);
             return false;
         }
         if let Ok(mut guard) = INSTANCE_MUTEX.lock() {

@@ -101,10 +101,9 @@ impl GameFilterState {
         if !file.is_file() {
             return st;
         }
-        for raw in std::fs::read_to_string(&file)
-            .unwrap_or_default()
-            .lines()
-        {
+        // `textfile::read` снимает BOM и сам определяет кодировку: Блокнот
+        // сохраняет файл в UTF-8 с BOM, и первый ключ иначе не распознавался.
+        for raw in textfile::read(&file).lines() {
             let line = raw.trim();
             let Some(eq) = line.find('=') else { continue };
             let key = line[..eq].trim().to_lowercase();

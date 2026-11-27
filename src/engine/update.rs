@@ -27,6 +27,8 @@ pub struct Asset {
     /// API-адрес ассета: нужен для скачивания из приватного репозитория.
     pub api_url: String,
     pub size: u64,
+    /// `digest` из GitHub API (`sha256:...`), если сервер его отдал.
+    pub digest: String,
 }
 
 /// Токен GitHub из окружения — позволяет работать с приватным репозиторием.
@@ -133,6 +135,11 @@ fn parse_release(value: &serde_json::Value) -> Option<Release> {
                     .unwrap_or("")
                     .to_string(),
                 size: asset.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
+                digest: asset
+                    .get("digest")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
             });
         }
     }
@@ -218,6 +225,7 @@ pub fn release_by_tag(repo: &str, tag: &str) -> Result<Release, String> {
                     ),
                     api_url: String::new(),
                     size: 0,
+                    digest: String::new(),
                 }],
                 ..Default::default()
             })
@@ -383,6 +391,66 @@ fn timestamp() -> String {
     )
 }
 
+/// Тег релиза приходит из сети — в пути файловой системы его пускать нельзя.
+///
+/// Разрешаем только `[A-Za-z0-9._-]`, схлопываем остальное в `_`, убираем точки
+/// по краям (иначе `..`), ограничиваем длину. Пустой результат → `release`.
+fn safe_file_tag(tag: &str) -> String {
+    let cleaned: String = tag
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(40)
+        .collect();
+    let cleaned = cleaned.trim_matches('.').trim_matches('_').to_string();
+    if cleaned.is_empty() {
+        "release".to_string()
+    } else {
+        cleaned
+    }
+}
+
+/// `sha256:<hex>` из GitHub API → hex.
+fn digest_sha256(digest: &str) -> Option<String> {
+    let value = digest.trim();
+    let hex = value.strip_prefix("sha256:").unwrap_or(value);
+    if hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(hex.to_lowercase())
+    } else {
+        None
+    }
+}
+
+/// Проверить Authenticode-подпись `winws.exe` из распакованного архива.
+///
+/// Подпись zapret обычно отсутствует — это нормально. Недействительная подпись
+/// означает испорченный или подменённый файл, и установку нужно остановить.
+fn check_winws_signature(payload: &Path) -> Result<(), String> {
+    let exe = payload.join("bin").join("winws.exe");
+    if !exe.is_file() {
+        return Ok(());
+    }
+    match winverify::check(&exe) {
+        SignatureState::Valid => {
+            log::ok("winws.exe: подпись действительна");
+            Ok(())
+        }
+        SignatureState::Unsigned => {
+            log::warn("winws.exe без Authenticode-подписи (для zapret это обычное состояние)");
+            Ok(())
+        }
+        SignatureState::Invalid(code) => Err(format!(
+            "winws.exe: подпись недействительна (0x{:08X}) — установка отменена",
+            code as u32
+        )),
+    }
+}
+
 fn copy_tree(src: &Path, dst: &Path, filter: &dyn Fn(&Path) -> bool) -> Result<usize, String> {
     let mut copied = 0usize;
     let entries = std::fs::read_dir(src).map_err(|e| e.to_string())?;
@@ -410,10 +478,22 @@ fn copy_tree(src: &Path, dst: &Path, filter: &dyn Fn(&Path) -> bool) -> Result<u
     Ok(copied)
 }
 
+/// Пределы распаковки: защита от zip-bomb и переполнения диска.
+const MAX_ZIP_ENTRIES: usize = 20_000;
+const MAX_ZIP_ENTRY: u64 = 256 * 1024 * 1024;
+const MAX_ZIP_TOTAL: u64 = 1024 * 1024 * 1024;
+
 pub(crate) fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
     let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Не удалось открыть архив: {}", e))?;
+    if archive.len() > MAX_ZIP_ENTRIES {
+        return Err(format!(
+            "В архиве слишком много файлов ({}), распаковка отменена.",
+            archive.len()
+        ));
+    }
     std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    let mut total: u64 = 0;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
         let Some(name) = entry.enclosed_name() else {
@@ -424,11 +504,37 @@ pub(crate) fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
             std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
             continue;
         }
+        // Размер из каталога архива может быть подделан, поэтому ограничиваем
+        // само чтение, а не доверяем заголовку.
+        if entry.size() > MAX_ZIP_ENTRY {
+            return Err(format!(
+                "Файл {} слишком большой ({} байт).",
+                entry.name(),
+                entry.size()
+            ));
+        }
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let mut data = Vec::new();
-        entry.read_to_end(&mut data).map_err(|e| e.to_string())?;
+        {
+            let mut limited = entry.by_ref().take(MAX_ZIP_ENTRY + 1);
+            limited
+                .read_to_end(&mut data)
+                .map_err(|e| e.to_string())?;
+        }
+        if data.len() as u64 > MAX_ZIP_ENTRY {
+            return Err(format!(
+                "Файл {} больше допустимого размера.",
+                out.to_string_lossy()
+            ));
+        }
+        total += data.len() as u64;
+        if total > MAX_ZIP_TOTAL {
+            return Err(
+                "Архив распаковывается более чем в 1 ГиБ — распаковка остановлена.".to_string(),
+            );
+        }
         std::fs::write(&out, data).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -518,7 +624,7 @@ pub fn update_now(
         .ok_or_else(|| "В релизе нет zip-архива.".to_string())?;
     http::trusted_github_url(&url)?;
 
-    let work = super::paths::temp_dir().join(format!("update-{}", release.tag));
+    let work = super::paths::temp_dir().join(format!("update-{}", safe_file_tag(&release.tag)));
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
     let zip_path = work.join("update.zip");
@@ -533,12 +639,35 @@ pub fn update_now(
         progress(mapped, &format!("Скачивание архива: {}%", percent));
     })?;
 
+    // Сверяем `digest` из GitHub API, если сервер его отдал, и всегда пишем
+    // SHA-256 в журнал: без этого нечем проверить архив постфактум.
+    let archive_hash = sha256_file(&zip_path);
+    log::info(format!(
+        "Обновление zapret {}: SHA-256 архива {}",
+        release.tag, archive_hash
+    ));
+    if let Some(expected) = release
+        .assets
+        .iter()
+        .find(|a| a.name.to_lowercase().ends_with(".zip"))
+        .and_then(|a| digest_sha256(&a.digest))
+    {
+        if !archive_hash.eq_ignore_ascii_case(&expected) {
+            return Err(
+                "Контрольная сумма архива не совпала с данными GitHub — обновление отменено."
+                    .to_string(),
+            );
+        }
+        log::ok("Архив zapret: SHA-256 совпал с digest GitHub.");
+    }
+
     progress(38, "Распаковка архива…");
     let extract = work.join("extract");
     extract_zip(&zip_path, &extract)?;
     let payload = find_payload(&extract).ok_or_else(|| {
         "В архиве не найдена папка zapret (service.bat + bin\\winws.exe).".to_string()
     })?;
+    check_winws_signature(&payload)?;
 
     let ops = ZapretOps::new(install.clone());
     let before = ops.get_state();
@@ -571,7 +700,7 @@ pub fn update_now(
         let backup_path = parent.join(format!(
             "{}_backup_{}_{}",
             name,
-            release.tag,
+            safe_file_tag(&release.tag),
             timestamp()
         ));
         let filter = |p: &Path| {
@@ -580,6 +709,11 @@ pub fn update_now(
         };
         copy_tree(root, &backup_path, &filter)?;
         backup = Some(backup_path);
+    }
+
+    progress(56, "Сохранение ваших правок в списках…");
+    for message in super::lists::capture_blocks_before_update(root, &super::paths::data_dir()) {
+        log::info(message);
     }
 
     progress(58, "Установка файлов…");
@@ -689,7 +823,7 @@ pub fn install_fresh(
         .zip_url()
         .ok_or_else(|| "В релизе нет zip-архива.".to_string())?;
     http::trusted_github_url(&url)?;
-    let work = super::paths::temp_dir().join(format!("install-{}", release.tag));
+    let work = super::paths::temp_dir().join(format!("install-{}", safe_file_tag(&release.tag)));
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
     let zip_path = work.join("update.zip");
@@ -702,6 +836,7 @@ pub fn install_fresh(
     let extract = work.join("extract");
     extract_zip(&zip_path, &extract)?;
     let payload = find_payload(&extract).ok_or_else(|| "В архиве нет папки zapret.".to_string())?;
+    check_winws_signature(&payload)?;
     let folder = payload
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -816,7 +951,7 @@ pub fn self_apply(info: &SelfUpdateInfo) -> Result<String, String> {
     }
     let dir = update_temp_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let target = dir.join(format!("ZapretManager-{}.exe", info.remote));
+    let target = dir.join(format!("ZapretManager-{}.exe", safe_file_tag(&info.remote)));
     let mut candidate = info.asset_url.clone();
     let mut last_error = String::new();
     if candidate.is_empty() {
@@ -941,39 +1076,40 @@ fn download_verify(url: &str, target: &Path, checksums_url: &str) -> Result<(), 
     if head != Some(true) {
         return Err("файл не является программой".to_string());
     }
-    let checksums = {
-        let mut h: Vec<(&str, &str)> = vec![("Accept", "application/octet-stream")];
-        if let Some(auth) = &auth {
-            h.push(("Authorization", auth));
-        }
-        http::request(checksums_url, "GET", &h, None, 20000)
-            .ok()
-            .map(|r| r.text())
-    };
-    if let Some(text) = checksums {
-        if let Some(expected) = parse_checksum(&text) {
-            let actual = sha256_file(target);
-            if !actual.eq_ignore_ascii_case(&expected) {
-                return Err(format!(
-                    "не совпала контрольная сумма (ждём {}…, получили {}…)",
-                    &expected[..12.min(expected.len())],
-                    &actual[..12.min(actual.len())]
-                ));
-            }
-            log::info("Самообновление: контрольная сумма совпала.");
-        }
-    } else {
-        log::warn("в релизе нет checksums.txt, проверяю размер и подпись файла.");
+    // Контрольная сумма обязательна: без неё обновление не ставим. Раньше
+    // ошибка скачивания checksums.txt молча отключала проверку целиком.
+    let mut h: Vec<(&str, &str)> = vec![("Accept", "application/octet-stream")];
+    if let Some(auth) = &auth {
+        h.push(("Authorization", auth));
     }
+    let resp = http::request(checksums_url, "GET", &h, None, 20000)
+        .map_err(|e| format!("не удалось получить checksums.txt ({}) — обновление отменено", e))?;
+    if !(200..300).contains(&resp.status) {
+        return Err(format!(
+            "checksums.txt недоступен (HTTP {}) — обновление отменено",
+            resp.status
+        ));
+    }
+    let expected = parse_checksum(&resp.text())
+        .ok_or_else(|| "в checksums.txt нет SHA-256 — обновление отменено".to_string())?;
+    let actual = sha256_file(target);
+    if !actual.eq_ignore_ascii_case(&expected) {
+        return Err(format!(
+            "не совпала контрольная сумма (ждём {}…, получили {}…)",
+            &expected[..12.min(expected.len())],
+            &actual[..12.min(actual.len())]
+        ));
+    }
+    log::info("Самообновление: контрольная сумма совпала.");
     check_signature(target)?;
     Ok(())
 }
 
 /// Проверить Authenticode-подпись скачанного обновления.
 ///
-/// Неподписанный файл не отбраковываем: пока релизы не подписаны, доверяем
-/// контрольной сумме. А вот недействительную подпись (битый файл, чужой
-/// сертификат, отозванный сертификат) — отбраковываем всегда.
+/// Недействительную подпись отбраковываем всегда. Неподписанный файл
+/// допускаем только пока и текущая установленная версия не подписана:
+/// иначе подмена подписанного канала на неподписанный проходила бы молча.
 fn check_signature(target: &Path) -> Result<(), String> {
     match winverify::check(target) {
         SignatureState::Valid => {
@@ -981,15 +1117,16 @@ fn check_signature(target: &Path) -> Result<(), String> {
             Ok(())
         }
         SignatureState::Unsigned => {
-            log::warn("Самообновление: файл без Authenticode-подписи, доверяем контрольной сумме.");
             let current = std::env::current_exe()
                 .map(|path| winverify::check(&path))
                 .unwrap_or(SignatureState::Unsigned);
             if current.is_valid() {
-                log::warn(
-                    "Текущая версия подписана, а обновление — нет: проверьте источник релиза.",
+                return Err(
+                    "обновление без Authenticode-подписи, а установленная версия подписана — обновление отменено"
+                        .to_string(),
                 );
             }
+            log::warn("Самообновление: файл без подписи, но контрольная сумма совпала.");
             Ok(())
         }
         SignatureState::Invalid(code) => Err(format!(
@@ -999,16 +1136,56 @@ fn check_signature(target: &Path) -> Result<(), String> {
     }
 }
 
+/// Достать SHA-256 из `checksums.txt`.
+///
+/// Предпочитаем строку, где упомянут `ZapretManager.exe`; иначе берём первый
+/// 64-символьный hex-токен (формат `sha256sum`: `<hash>  <file>`).
 fn parse_checksum(text: &str) -> Option<String> {
+    let mut fallback = None;
     for line in text.lines() {
         let line = line.trim();
-        if let Some(token) = line.split_whitespace().next() {
-            if token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit()) {
-                return Some(token.to_lowercase());
-            }
+        let Some(token) = line.split_whitespace().next() else {
+            continue;
+        };
+        if token.len() != 64 || !token.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
+        let lower = line.to_ascii_lowercase();
+        if lower.contains("zapretmanager.exe") {
+            return Some(token.to_lowercase());
+        }
+        if fallback.is_none() {
+            fallback = Some(token.to_lowercase());
         }
     }
-    None
+    fallback
+}
+
+/// `--apply-update` обрабатывается до UAC и до журнала, а путь берёт из
+/// окружения. Разрешаем заменять только файл вида `ZapretManager*.exe`,
+/// лежащий вне системных каталогов.
+fn is_plausible_update_target(path: &Path) -> bool {
+    if !path.is_absolute() {
+        return false;
+    }
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if !name.starts_with("zapretmanager") || !name.ends_with(".exe") {
+        return false;
+    }
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    if !parent.is_dir() {
+        return false;
+    }
+    let parent_l = parent.to_string_lossy().to_lowercase();
+    let windir = std::env::var("SystemRoot")
+        .unwrap_or_else(|_| r"C:\Windows".to_string())
+        .to_lowercase();
+    !parent_l.starts_with(&windir)
 }
 
 /// Режим --apply-update: дождаться выхода старого процесса и заменить exe.
@@ -1025,6 +1202,14 @@ pub fn apply_update_mode() {
         return;
     }
     let target_path = PathBuf::from(&target);
+    if !is_plausible_update_target(&target_path) {
+        log::warn(format!(
+            "--apply-update: отклонена цель {}",
+            target_path.to_string_lossy()
+        ));
+        let _ = std::fs::write(&result_file, "bad target");
+        return;
+    }
     if old_pid > 0 {
         let deadline = Instant::now() + Duration::from_secs(120);
         while Instant::now() < deadline {

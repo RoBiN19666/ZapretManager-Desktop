@@ -3,7 +3,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use windows_sys::Win32::Foundation::{GetLastError, ERROR_SUCCESS};
+use windows_sys::Win32::Foundation::GetLastError;
 use windows_sys::Win32::Networking::WinHttp::{
     WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryDataAvailable,
     WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetOption,
@@ -16,6 +16,9 @@ use windows_sys::Win32::Networking::WinHttp::{
 use super::sys::{error_text, wide};
 
 pub const USER_AGENT: &str = "ZapretManager/2.0 (+https://github.com/RoBiN19666/ZapretManager-Desktop)";
+
+/// Потолок для одного скачивания: защита от «бесконечного» ответа сервера.
+pub const MAX_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone, Default)]
 pub struct HttpResponse {
@@ -138,10 +141,10 @@ pub fn request(
         }
         handles.0.push(request);
 
-        // Редиректы и современный TLS. Ошибки этих настроек не критичны.
-        // WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS = 2 (0 — это NEVER, из-за чего
-        // GitHub отдавал 302 на ссылках релизов и ничего не скачивалось).
-        let redirect = 2u32;
+        // Редиректы: следуем, но запрещаем понижение https → http
+        // (WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP = 1).
+        // Политика ALWAYS (2) разрешала скачать архив по открытому каналу.
+        let redirect = 1u32;
         WinHttpSetOption(
             request,
             WINHTTP_OPTION_REDIRECT_POLICY,
@@ -305,7 +308,8 @@ pub fn download_with_headers(
     if let Some(dir) = target.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let mut file = std::fs::File::create(target).map_err(|e| e.to_string())?;
+    // Файл создаём только после успешного ответа: иначе на любой 404/500
+    // остаётся пустой или частичный файл (а старый уже усечён).
 
     let agent = wide(USER_AGENT);
     unsafe {
@@ -343,9 +347,9 @@ pub fn download_with_headers(
             return Err("WinHTTP: не удалось создать запрос".to_string());
         }
         handles.0.push(request);
-        // ALWAYS (2), иначе GitHub-редирект на objects.githubusercontent.com
-        // возвращается как HTTP 302 и скачивание обрывается.
-        let redirect = 2u32;
+        // ALWAYS (2) разрешала и понижение до http://; нам нужен только
+        // кросс-хостовый https-редирект GitHub → objects.githubusercontent.com.
+        let redirect = 1u32;
         WinHttpSetOption(
             request,
             WINHTTP_OPTION_REDIRECT_POLICY,
@@ -375,7 +379,7 @@ pub fn download_with_headers(
         }
         let mut status: u32 = 0;
         let mut size = 4u32;
-        WinHttpQueryHeaders(
+        let status_ok = WinHttpQueryHeaders(
             request,
             WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
             std::ptr::null(),
@@ -383,9 +387,12 @@ pub fn download_with_headers(
             &mut size,
             std::ptr::null_mut(),
         );
-        if status != ERROR_SUCCESS && !(200..300).contains(&status) {
+        // status == 0 здесь означал бы «код не прочитан», а не успех
+        // (раньше сравнение с ERROR_SUCCESS пропускало такой ответ).
+        if status_ok == 0 || !(200..300).contains(&status) {
             return Err(format!("Сервер вернул HTTP {}", status));
         }
+        let mut file = std::fs::File::create(target).map_err(|e| e.to_string())?;
 
         // Content-Length
         let mut total: u64 = 0;
@@ -424,6 +431,13 @@ pub fn download_with_headers(
             }
         }
 
+        if total > MAX_DOWNLOAD_BYTES {
+            return Err(format!(
+                "сервер обещает файл больше {} — загрузка отменена",
+                crate::util::format_size(MAX_DOWNLOAD_BYTES)
+            ));
+        }
+
         let mut written: u64 = 0;
         let mut last_percent = u64::MAX;
         loop {
@@ -445,6 +459,12 @@ pub fn download_with_headers(
             }
             file.write_all(&buf[..read as usize]).map_err(|e| e.to_string())?;
             written += read as u64;
+            if written > MAX_DOWNLOAD_BYTES {
+                return Err(format!(
+                    "загрузка превысила {} — прервано",
+                    crate::util::format_size(MAX_DOWNLOAD_BYTES)
+                ));
+            }
             let percent = if total > 0 { written * 100 / total } else { 0 };
             if percent != last_percent {
                 last_percent = percent;
@@ -459,17 +479,15 @@ pub fn download_with_headers(
 /// Проверить, что адрес архива ведёт на GitHub по HTTPS.
 pub fn trusted_github_url(url: &str) -> Result<(), String> {
     let lower = url.to_ascii_lowercase();
-    if !lower.starts_with("https://") {
+    let Some(rest) = lower.strip_prefix("https://") else {
+        return Err(format!("Недоверенный адрес архива: {}", url));
+    };
+    let host_port = rest.split(['/', '?', '#']).next().unwrap_or("");
+    // `user@host` в URL — приём обхода проверки хоста; такие адреса не нужны.
+    if host_port.contains('@') {
         return Err(format!("Недоверенный адрес архива: {}", url));
     }
-    let host = lower
-        .trim_start_matches("https://")
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .split(':')
-        .next()
-        .unwrap_or("");
+    let host = host_port.split(':').next().unwrap_or("");
     let ok = host == "github.com"
         || host.ends_with(".github.com")
         || host == "objects.githubusercontent.com"

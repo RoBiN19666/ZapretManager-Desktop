@@ -247,6 +247,30 @@ impl App {
             let install_tg = wizard.install_tg && !tgproxy::get_state(&self.ini).installed;
             let zapret_dir = wizard.zapret_dir.clone();
             let tg_dir = wizard.tg_dir.clone();
+            if install_zapret {
+                // Проверяем путь до скачивания: иначе ошибку («нет прав»,
+                // «папки нет») пользователь увидит только после загрузки архива.
+                let path = std::path::PathBuf::from(zapret_dir.trim());
+                if zapret_dir.trim().is_empty() || !path.is_absolute() {
+                    wizard.error =
+                        "Укажите полный путь к папке, например C:\\zapret.".to_string();
+                    return;
+                }
+                if !path.is_dir() {
+                    wizard.error = format!("Папка не найдена: {}", zapret_dir);
+                    return;
+                }
+                let probe = path.join(".zapret-write-test");
+                match std::fs::write(&probe, b"ok") {
+                    Ok(()) => {
+                        let _ = std::fs::remove_file(&probe);
+                    }
+                    Err(e) => {
+                        wizard.error = format!("Нет прав на запись в {}: {}", zapret_dir, e);
+                        return;
+                    }
+                }
+            }
             self.spawn_bg(move |tx| {
                 let mut errors = Vec::new();
                 if install_zapret {

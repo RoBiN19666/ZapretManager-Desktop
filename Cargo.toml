@@ -2,7 +2,7 @@
 name = "zapret-manager"
 version = "2.9.6"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.88"
 description = "Zapret Manager — ускорение соединения для Discord и YouTube (Rust)"
 license = "MIT"
 authors = ["RoBiN19666"]

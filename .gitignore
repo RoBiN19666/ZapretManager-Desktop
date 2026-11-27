@@ -26,3 +26,13 @@ tools/*.png
 tools/*.log
 tools/*.txt
 _safety-backup/
+
+# Ключи и сертификаты подписи не должны попадать в репозиторий
+*.pfx
+*.p12
+*.snk
+*.cer
+*.crt
+*.key
+.env
+.env.*

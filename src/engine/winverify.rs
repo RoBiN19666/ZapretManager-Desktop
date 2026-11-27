@@ -53,7 +53,7 @@ fn verify_raw(path: &Path) -> i32 {
 
     use windows_sys::Win32::Security::WinTrust::{
         WinVerifyTrust, WINTRUST_ACTION_GENERIC_VERIFY_V2, WINTRUST_DATA, WINTRUST_FILE_INFO,
-        WTD_CACHE_ONLY_URL_RETRIEVAL, WTD_CHOICE_FILE, WTD_REVOKE_NONE, WTD_STATEACTION_CLOSE,
+        WTD_CACHE_ONLY_URL_RETRIEVAL, WTD_CHOICE_FILE, WTD_REVOKE_WHOLECHAIN, WTD_STATEACTION_CLOSE,
         WTD_STATEACTION_VERIFY, WTD_UI_NONE,
     };
 
@@ -74,7 +74,10 @@ fn verify_raw(path: &Path) -> i32 {
         let mut data: WINTRUST_DATA = std::mem::zeroed();
         data.cbStruct = std::mem::size_of::<WINTRUST_DATA>() as u32;
         data.dwUIChoice = WTD_UI_NONE;
-        data.fdwRevocationChecks = WTD_REVOKE_NONE;
+        // Отзыв проверяем по всей цепочке. `WTD_CACHE_ONLY_URL_RETRIEVAL` ниже
+        // оставляет проверку офлайновой: используются только уже закэшированные
+        // CRL/OCSP, без зависания на недоступных серверах.
+        data.fdwRevocationChecks = WTD_REVOKE_WHOLECHAIN;
         data.dwUnionChoice = WTD_CHOICE_FILE;
         data.Anonymous.pFile = &mut file_info;
         data.dwStateAction = WTD_STATEACTION_VERIFY;

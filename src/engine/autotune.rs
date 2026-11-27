@@ -546,7 +546,9 @@ pub fn build_plan(
 }
 
 fn write_bat(path: &Path, argv: &[String]) -> Result<(), String> {
-    let cmd = bat::build_command_line(argv);
+    // `build_cmd_line` экранирует `%`, `&`, `|`, `^` и прочие метасимволы cmd:
+    // иначе путь вида `C:\a&b\zapret` превращался бы в разделитель команд.
+    let cmd = bat::build_cmd_line(argv);
     let content = format!(
         "@echo off\r\ncd /d \"%~dp0\"\r\n\"%~dp0bin\\winws.exe\" {}\r\n",
         cmd
@@ -680,6 +682,7 @@ pub fn apply_and_verify(
     install: &ZapretInstall,
     file: &Path,
     best_passed: usize,
+    best_total: usize,
     selected_groups: &[String],
     options: &TesterOptions,
     previous: Option<StrategyDef>,
@@ -721,7 +724,21 @@ pub fn apply_and_verify(
     let row = tester::verify_current(install, selected_groups, options);
     let passed = row.passed();
     let total = row.total();
-    let acceptable = total > 0 && passed > 0 && passed + 2 >= best_passed;
+    // Автоподбор считает только цели, не прошедшие baseline, а проверка после
+    // применения — все цели выбранных групп. Сравнивать абсолютные числа
+    // поэтому нельзя: сравниваем доли с допуском в одну цель.
+    let search_ratio = if best_total > 0 {
+        best_passed as f64 / best_total as f64
+    } else {
+        0.0
+    };
+    let verify_ratio = if total > 0 {
+        passed as f64 / total as f64
+    } else {
+        0.0
+    };
+    let tolerance = if total > 0 { 1.0 / total as f64 } else { 0.0 };
+    let acceptable = total > 0 && passed > 0 && verify_ratio + tolerance >= search_ratio;
     if acceptable {
         let mut ini = Ini::load(&paths::config_path());
         ini.set("LastStrategy", &name);
@@ -736,7 +753,7 @@ pub fn apply_and_verify(
             message,
             row,
             best_passed,
-            best_total: total,
+            best_total,
         });
     }
 
@@ -745,7 +762,7 @@ pub fn apply_and_verify(
         passed,
         total,
         best_passed,
-        row.total()
+        best_total
     );
     if !row.error.is_empty() {
         msg.push_str(&format!(" Ошибка: {}", row.error));
@@ -759,7 +776,7 @@ pub fn apply_and_verify(
         message: msg,
         row,
         best_passed,
-        best_total: total,
+        best_total,
     })
 }
 

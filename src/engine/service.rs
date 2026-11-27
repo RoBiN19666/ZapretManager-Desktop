@@ -151,8 +151,13 @@ pub fn stop(name: &str) -> Result<(), String> {
     let svc = open_service(&scm, name, SERVICE_STOP | SERVICE_QUERY_STATUS)
         .map_err(|e| error_text(e))?;
     let mut status: windows_sys::Win32::System::Services::SERVICE_STATUS = unsafe { std::mem::zeroed() };
-    unsafe {
-        ControlService(svc.0, SERVICE_CONTROL_STOP, &mut status);
+    let ok = unsafe { ControlService(svc.0, SERVICE_CONTROL_STOP, &mut status) };
+    if ok == 0 {
+        let err = unsafe { GetLastError() };
+        // 1062 (ERROR_SERVICE_NOT_ACTIVE) — служба уже остановлена, это не ошибка.
+        if err != 1062 {
+            return Err(error_text(err));
+        }
     }
     Ok(())
 }

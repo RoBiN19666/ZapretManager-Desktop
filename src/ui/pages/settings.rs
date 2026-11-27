@@ -22,7 +22,9 @@ impl App {
             "light" => 2,
             _ => 0,
         };
-        self.pages.settings.scale = self.ini.get_int("UiScale", 100) as i32;
+        // Ручная правка manager.ini (например, 300) не должна делать окно
+        // неиспользуемым: держим масштаб в разумных пределах.
+        self.pages.settings.scale = (self.ini.get_int("UiScale", 100) as i32).clamp(75, 150);
         self.pages.settings.ipset_info = format!(
             "Текущий режим: {}. Строк в рабочем файле: {}, в резервном: {}.",
             crate::engine::ops::ipset_mode_text(&self.state.ipset_mode),
@@ -567,11 +569,7 @@ impl App {
             2 => "light",
             _ => "auto",
         };
-        self.dark = match mode {
-            "dark" => true,
-            "light" => false,
-            _ => true,
-        };
+        self.dark = crate::ui::theme::resolve_dark(mode);
         self.theme_name = mode.to_string();
         self.ini.set("Theme", mode);
         let _ = self.ini.save();
@@ -581,7 +579,13 @@ impl App {
                 match index {
                     1 => "тёмная",
                     2 => "светлая",
-                    _ => "как в Windows (тёмная)",
+                    _ => {
+                        if self.dark {
+                            "как в Windows (тёмная)"
+                        } else {
+                            "как в Windows (светлая)"
+                        }
+                    }
                 }
             ),
             LogLevel::Ok,

@@ -261,7 +261,9 @@ fn check_http(url: &str, timeout_ms: u32, deep: bool) -> (bool, u64, String) {
     match http::request(url, "GET", &headers, None, timeout_ms) {
         Ok(resp) => {
             let ms = start.elapsed().as_millis() as u64;
-            if resp.status >= 500 || resp.status == 0 {
+            // Успех — только 2xx/3xx. Раньше 403/451 и редирект на заглушку
+            // оператора проходили как «стратегия работает» и завышали оценку.
+            if !(200..400).contains(&resp.status) {
                 return (false, ms, format!("HTTP {}", resp.status));
             }
             if deep && resp.body.len() < 16000 {
@@ -846,11 +848,16 @@ pub fn run_official_test(install: &ZapretInstall) -> Result<(), String> {
     if !script.is_file() {
         return Err("Не найден файл utils\\test zapret.ps1".to_string());
     }
+    if !crate::engine::sys::is_admin() {
+        return Err("Официальный тест требует прав администратора.".to_string());
+    }
     let mut cmd = std::process::Command::new("powershell.exe");
+    // `-NoExit` должен идти ДО `-File`, иначе он уедет в аргументы скрипта.
     cmd.args([
         "-NoProfile",
+        "-NoExit",
         "-ExecutionPolicy",
-        "Ускорение",
+        "Bypass",
         "-File",
         &script.to_string_lossy(),
     ])
@@ -859,9 +866,21 @@ pub fn run_official_test(install: &ZapretInstall) -> Result<(), String> {
 }
 
 /// Стратегия по имени из отчёта (с .bat или без).
+///
+/// В официальном отчёте имена приходят с нумерацией («1. general.bat»,
+/// «2) general.bat») и иногда с префиксом каталога — срезаем это, иначе
+/// кнопка «запустить из отчёта» не находит стратегию.
 pub fn find_strategy<'a>(install: &'a ZapretInstall, name: &str) -> Option<&'a StrategyDef> {
-    let trimmed = name.trim().trim_end_matches(".bat");
-    install.find_strategy(trimmed)
+    let mut s = name.trim();
+    // Срезаем нумерацию «1.», «2)» только если перед точкой/скобкой стоят
+    // одни цифры: имя самой стратегии при этом не страдает.
+    if let Some(pos) = s.find(['.', ')']) {
+        if pos > 0 && s[..pos].chars().all(|c| c.is_ascii_digit()) {
+            s = s[pos + 1..].trim_start();
+        }
+    }
+    let s = s.trim_end_matches(".bat").trim();
+    install.find_strategy(s)
 }
 
 /// Путь к файлу стратегии для показа в проводнике.

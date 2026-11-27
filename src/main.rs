@@ -51,6 +51,7 @@ fn main() {
     let headless = has_flag(&args, "--diag")
         || has_flag(&args, "--blobs-repair")
         || has_flag(&args, "--cleanup")
+        || has_flag(&args, "--restore-uac")
         || has_flag(&args, "--check-self")
         || has_flag(&args, "--self-update")
         || has_flag(&args, "--app-watch")
@@ -96,6 +97,13 @@ fn main() {
     }
     if has_flag(&args, "--cleanup") {
         log::info(zapret_manager::engine::ops::cleanup_report());
+        return;
+    }
+    if has_flag(&args, "--restore-uac") {
+        match sys::restore_uac_defaults() {
+            Ok(()) => log::ok("Параметры UAC возвращены к стандартным (5/1)."),
+            Err(e) => log::error(format!("--restore-uac: {}", e)),
+        }
         return;
     }
     if let Some(value) = arg_value(&args, "--app-watch") {

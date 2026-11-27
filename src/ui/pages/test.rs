@@ -589,6 +589,13 @@ impl App {
             .as_ref()
             .map(|r| r.passed())
             .unwrap_or(0);
+        let best_total = self
+            .pages
+            .test
+            .auto_best
+            .as_ref()
+            .map(|r| r.total())
+            .unwrap_or(0);
         self.pages.test.auto_apply_running = true;
         self.pages.test.auto_apply_stage.clear();
         self.spawn_bg(move |tx| {
@@ -596,6 +603,7 @@ impl App {
                 &install,
                 &file,
                 best_passed,
+                best_total,
                 &groups,
                 &options,
                 previous,

@@ -12,7 +12,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [string]$Path
+    [string]$Path,
+
+    # В релизной ветке подпись обязательна: без неё скрипт падает.
+    [switch]$RequireSignature
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,6 +64,10 @@ if ($upx) {
 # 5. Подпись и хэш
 $sig = Get-AuthenticodeSignature -LiteralPath $item.FullName
 $hash = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash
+
+if ($RequireSignature -and $sig.Status -ne 'Valid') {
+    $problems.Add("Authenticode signature is required but status is '$($sig.Status)'")
+}
 
 Write-Host ''
 Write-Host ("File:      {0}" -f $item.FullName)

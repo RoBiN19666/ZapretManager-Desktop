@@ -322,6 +322,8 @@ pub struct ListChanges {
     pub added: Vec<String>,
     pub removed: Vec<String>,
     pub baseline: Vec<String>,
+    /// Файл существует, но не прочитался: редактировать и сохранять его нельзя.
+    pub read_error: Option<String>,
     pub current: Vec<String>,
     pub news: Vec<String>,
     pub has_baseline: bool,
@@ -452,7 +454,24 @@ impl ListChanges {
             data_dir: data_dir.to_path_buf(),
             ..Default::default()
         };
-        let lines: Vec<String> = textfile::read(file_path)
+        // Файл существует, но не читается (занят winws/антивирусом, нет прав,
+        // слишком длинный путь): нельзя считать его пустым — иначе baseline
+        // перезапишется пустым, а следующее сохранение «удалит» все строки.
+        let text = match textfile::try_read(file_path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                super::log::error(format!(
+                    "Список {} не читается: {}. Файл не изменён.",
+                    file_path.to_string_lossy(),
+                    e
+                ));
+                lc.has_baseline = true;
+                lc.read_error = Some(e.to_string());
+                return lc;
+            }
+        };
+        let lines: Vec<String> = text
             .replace("\r\n", "\n")
             .replace('\r', "\n")
             .split('\n')
@@ -523,6 +542,14 @@ impl ListChanges {
     }
 
     pub fn save_from_editor(&mut self, editor_text: &str) -> Option<String> {
+        // Если файл не прочитался при открытии, сохранять из редактора нельзя:
+        // baseline пуст и любое сохранение «удалит» все строки списка.
+        if let Some(error) = &self.read_error {
+            return Some(format!(
+                "Файл не был прочитан ({}). Закройте список и попробуйте снова.",
+                error
+            ));
+        }
         let lines: Vec<String> = editor_text
             .replace("\r\n", "\n")
             .replace('\r', "\n")
@@ -674,6 +701,50 @@ impl ListChanges {
         let _ = self.save_changes_file();
         to_write.len() as i32
     }
+}
+
+/// Перед перезаписью официальных списков перенести блок «мои добавления» из
+/// файла в `.changes`.
+///
+/// Иначе правки, сделанные вручную (Блокнотом, старой или C#-версией, при
+/// «переехавшем» каталоге данных), при обновлении zapret исчезают молча:
+/// `apply_after_update` работает уже с новым файлом и блока в нём не видит.
+pub fn capture_blocks_before_update(install_root: &Path, data_dir: &Path) -> Vec<String> {
+    let mut messages = Vec::new();
+    let lists_dir = install_root.join("lists");
+    for name in OFFICIAL_FILES {
+        let file = lists_dir.join(name);
+        if !file.is_file() {
+            continue;
+        }
+        let lines = textfile::read_lines(&file);
+        let (_official, block) = split_block(&lines);
+        if block.is_empty() {
+            continue;
+        }
+        let (mut added, removed) = read_changes(data_dir, name);
+        let before = added.len();
+        for entry in &block {
+            add_unique(&mut added, entry);
+        }
+        if added.len() == before {
+            continue;
+        }
+        let lc = ListChanges {
+            file_name: name.to_string(),
+            data_dir: data_dir.to_path_buf(),
+            added,
+            removed,
+            ..Default::default()
+        };
+        if lc.save_changes_file().is_ok() {
+            messages.push(format!(
+                "{}: блок ваших добавлений сохранён перед обновлением.",
+                name
+            ));
+        }
+    }
+    messages
 }
 
 /// Применить сохранённые изменения пользователя к новым официальным спискам.

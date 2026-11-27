@@ -67,8 +67,31 @@ static WINWS: OnceLock<Mutex<Option<WinwsHandle>>> = OnceLock::new();
 static WINWS_OUTPUT: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 static MATCH_CACHE: OnceLock<Mutex<(String, String)>> = OnceLock::new();
 
+/// Все операции с процессом и службой выполняются по одной.
+///
+/// Иначе «Стоп» может дождаться остановки службы (до 15 с) уже после того,
+/// как параллельный «Запуск» поднял новый winws.exe, и убить его.
+static OP_LOCK: Mutex<()> = Mutex::new(());
+
+fn op_lock() -> std::sync::MutexGuard<'static, ()> {
+    OP_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn winws_slot() -> &'static Mutex<Option<WinwsHandle>> {
     WINWS.get_or_init(|| Mutex::new(None))
+}
+
+/// Закрыть собственный дочерний winws.exe, если он ещё за нами.
+/// Возвращает 1, если процесс был закрыт.
+fn close_own_child() -> i32 {
+    if let Ok(mut slot) = winws_slot().lock() {
+        if let Some(mut handle) = slot.take() {
+            let _ = handle.child.kill();
+            let _ = handle.child.wait();
+            return 1;
+        }
+    }
+    0
 }
 
 fn output_slot() -> &'static Mutex<Vec<String>> {
@@ -78,8 +101,10 @@ fn output_slot() -> &'static Mutex<Vec<String>> {
 fn push_output(line: String) {
     if let Ok(mut out) = output_slot().lock() {
         out.push(line);
-        while out.len() > 500 {
-            out.remove(0);
+        // Обрезаем пачками: `remove(0)` на каждой строке — O(n²) на болтливом winws.
+        if out.len() > 600 {
+            let extra = out.len() - 500;
+            out.drain(0..extra);
         }
     }
 }
@@ -217,17 +242,17 @@ impl ZapretOps {
     // ------------------------------------------------------------------
 
     /// Завершает только winws.exe, запущенный из папки этой установки.
+    ///
+    /// Возвращает число реально завершённых процессов. Если чьи это процессы —
+    /// непонятно (командная строка недоступна), чужие не убиваются.
     pub fn kill_winws(&self) -> i32 {
         let procs = list_winws();
         if procs.is_empty() {
-            return 0;
+            return close_own_child();
         }
         let any_cmd = procs.iter().any(|(_, cmd)| !cmd.is_empty());
         if !any_cmd {
-            for (pid, _) in &procs {
-                sys::kill_process(*pid);
-            }
-            return -1;
+            return close_own_child();
         }
         let root = if self.install.root.ends_with('\\') {
             self.install.root.clone()
@@ -235,28 +260,48 @@ impl ZapretOps {
             format!("{}\\", self.install.root)
         }
         .to_lowercase();
+        let winws = self.install.winws_exe();
+        let winws_text = winws.to_string_lossy();
         let mut killed = 0;
         for (pid, cmd) in procs {
             if !cmd.to_lowercase().contains(&root) {
                 continue;
             }
+            // PID мог быть переиспользован с момента снимка Toolhelp:
+            // сверяем путь к exe, прежде чем завершать процесс.
+            if let Some(exe) = sys::process_exe_path(pid) {
+                if !exe.to_string_lossy().eq_ignore_ascii_case(&winws_text) {
+                    continue;
+                }
+            }
             if sys::kill_process(pid) {
                 killed += 1;
             }
         }
-        if let Ok(mut slot) = winws_slot().lock() {
-            if let Some(mut handle) = slot.take() {
-                let _ = handle.child.kill();
-                let _ = handle.child.wait();
-            }
-        }
-        killed
+        killed + close_own_child()
     }
 
     pub fn start(&self, strategy: &StrategyDef) -> StartResult {
+        let _guard = op_lock();
+        self.start_locked(strategy)
+    }
+
+    fn start_locked(&self, strategy: &StrategyDef) -> StartResult {
         let mut res = StartResult::default();
         if !sys::is_admin() {
             res.message = "Запуск требует прав администратора.".to_string();
+            return res;
+        }
+        // `Root` приходит из manager.ini, который может править непривилегированный
+        // процесс. Запуск exe из %TEMP% от администратора запрещаем: это типовое
+        // место для подброшенного payload.
+        let winws = self.install.winws_exe();
+        if super::paths::is_temp_path(&winws) {
+            res.message = format!(
+                "winws.exe лежит во временной папке ({}). Запуск от имени администратора запрещён — перенесите zapret в постоянную папку.",
+                winws.to_string_lossy()
+            );
+            log::warn(&res.message);
             return res;
         }
         self.install.ensure_user_lists();
@@ -387,6 +432,11 @@ impl ZapretOps {
     }
 
     pub fn stop(&self) -> String {
+        let _guard = op_lock();
+        self.stop_locked()
+    }
+
+    fn stop_locked(&self) -> String {
         let mut msg = String::new();
         let snap = service::query("zapret");
         if snap.installed && snap.status == "работает" {
@@ -415,9 +465,10 @@ impl ZapretOps {
     }
 
     pub fn restart(&self, strategy: &StrategyDef) -> String {
-        self.stop();
+        let _guard = op_lock();
+        self.stop_locked();
         std::thread::sleep(Duration::from_millis(500));
-        self.start(strategy).message
+        self.start_locked(strategy).message
     }
 
     // ------------------------------------------------------------------
@@ -503,11 +554,23 @@ impl ZapretOps {
     }
 
     pub fn install_service(&self, strategy: &StrategyDef) -> Result<String, String> {
+        let _guard = op_lock();
+        self.install_service_locked(strategy)
+    }
+
+    fn install_service_locked(&self, strategy: &StrategyDef) -> Result<String, String> {
         if !sys::is_admin() {
             return Err("Установка службы требует прав администратора.".to_string());
         }
         if !self.install.winws_exe().is_file() {
             return Err("Файл bin\\winws.exe не найден.".to_string());
+        }
+        // Служба запускается от LocalSystem: exe из временной папки — не наш случай.
+        if super::paths::is_temp_path(&self.install.winws_exe()) {
+            return Err(
+                "winws.exe лежит во временной папке — устанавливать службу из неё запрещено."
+                    .to_string(),
+            );
         }
         self.install.ensure_user_lists();
         let gf = GameFilterState::load(&self.install.root);
@@ -547,11 +610,24 @@ impl ZapretOps {
                 strategy.name, snap.status
             ))
         } else {
-            Err(format!("Служба создана, но не запустилась (статус: {}).", snap.status))
+            // Откат: иначе служба останется в автозапуске, будет пытаться
+            // стартовать при каждой загрузке и блокировать ручной запуск.
+            let _ = service::stop("zapret");
+            let _ = service::delete("zapret");
+            let _ = wait_service_gone("zapret", Duration::from_secs(10));
+            Err(format!(
+                "Служба создана, но не запустилась (статус: {}). Служба удалена — попробуйте другую стратегию.",
+                snap.status
+            ))
         }
     }
 
     pub fn remove_service(&self) -> String {
+        let _guard = op_lock();
+        self.remove_service_locked()
+    }
+
+    fn remove_service_locked(&self) -> String {
         if !sys::is_admin() {
             return "Удаление службы требует прав администратора.".to_string();
         }
@@ -573,11 +649,29 @@ impl ZapretOps {
         }
         self.kill_winws();
         for name in ["WinDivert", "WinDivert14"] {
-            if service::exists(name) {
-                let _ = service::stop(name);
-                let _ = service::delete(name);
-                msg.push_str(&format!("Драйвер {} остановлен и удалён. ", name));
+            if !service::exists(name) {
+                continue;
             }
+            // Драйвером WinDivert пользуются и другие программы (GoodbyeDPI,
+            // сторонние ускорители): удаляем, только если он загружен из этой
+            // папки zapret.
+            let image = sys::reg_get_string(
+                true,
+                &format!(r"System\CurrentControlSet\Services\{}", name),
+                "ImagePath",
+            )
+            .unwrap_or_default()
+            .to_lowercase();
+            if !image.is_empty() && !image.contains(&self.install.root.to_lowercase()) {
+                msg.push_str(&format!(
+                    "Драйвер {} принадлежит другой программе — не тронут. ",
+                    name
+                ));
+                continue;
+            }
+            let _ = service::stop(name);
+            let _ = service::delete(name);
+            msg.push_str(&format!("Драйвер {} остановлен и удалён. ", name));
         }
         if msg.is_empty() {
             msg = "Служба не была установлена.".to_string();
@@ -772,7 +866,15 @@ impl ZapretOps {
             return "Файл hosts уже содержит все записи из репозитория.".to_string();
         }
         let path = hosts_path();
-        let mut content = std::fs::read_to_string(&path).unwrap_or_default();
+        // `hosts` на русской Windows часто в CP1251: читаем с автоопределением
+        // кодировки, а ошибку доступа/занятости отличаем от пустого файла.
+        let mut content = match textfile::try_read(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                return format!("Не удалось прочитать hosts: {}. Файл не изменён.", e);
+            }
+        };
         if let Some(start) = content.find(HOSTS_MARKER_START) {
             let cut = match content[start..].find(HOSTS_MARKER_END) {
                 Some(rel) => {
@@ -782,7 +884,9 @@ impl ZapretOps {
                         None => content.len(),
                     }
                 }
-                None => content.len(),
+                None => {
+                    return "В hosts есть начало блока zapret-manager, но нет конца. Файл не изменён — удалите блок вручную.".to_string();
+                }
             };
             content = format!("{}{}", &content[..start], &content[cut..]);
         }
@@ -905,7 +1009,14 @@ fn read_hosts_entries(file: &Path) -> Vec<String> {
 }
 
 pub fn discord_cache_dirs() -> Vec<PathBuf> {
-    let appdata = std::env::var("APPDATA").unwrap_or_default();
+    // Без APPDATA путь `discord` стал бы относительным (CWD), и очистка кэша
+    // удалила бы чужой каталог. В таком окружении просто ничего не находим.
+    let Ok(appdata) = std::env::var("APPDATA") else {
+        return Vec::new();
+    };
+    if appdata.trim().is_empty() {
+        return Vec::new();
+    }
     let mut dirs = Vec::new();
     for name in ["discord", "discordptb", "discordcanary", "discorddevelopment"] {
         let dir = Path::new(&appdata).join(name);
