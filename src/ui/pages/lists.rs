@@ -132,48 +132,62 @@ impl App {
         let files = self.pages.lists.files.clone();
         let selected = self.pages.lists.selected;
         let file = files.get(selected).cloned();
+        // Высота редактора считается от окна: длинные списки (ipset-all.txt —
+        // десятки тысяч строк) прокручиваются внутри рамки, а не растягивают
+        // страницу на мегапиксели.
+        let tracked_card = file.as_ref().map(|f| f.tracked).unwrap_or(false);
+        let chrome = if tracked_card { 470.0 } else { 270.0 };
+        let editor_h = (self.content_h - chrome).max(180.0);
 
         w::card(ui, &p, "Файлы списков", |ui| {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(230.0);
-                    egui::Frame::none()
-                        .fill(p.editor)
-                        .stroke(egui::Stroke::new(1.0, p.border))
-                        .rounding(egui::Rounding::same(6))
-                        .inner_margin(egui::Margin::same(4))
+                    // Список файлов тоже не должен вылезать за окно.
+                    egui::ScrollArea::vertical()
+                        .id_salt("lists-files")
+                        .min_scrolled_height(editor_h + 120.0)
+                        .max_height(editor_h + 120.0)
+                        .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            for (i, f) in files.iter().enumerate() {
-                                let is_sel = i == selected;
-                                let resp = ui.add(
-                                    egui::Button::new(
-                                        RichText::new(format!(
-                                            "{}\n{}",
-                                            f.label,
-                                            if f.official { "официальный" } else { "мой список" }
-                                        ))
-                                        .size(12.0)
-                                        .color(if is_sel { p.text } else { p.text_dim }),
-                                    )
-                                    .fill(if is_sel { p.selection } else { egui::Color32::TRANSPARENT })
-                                    .min_size(egui::vec2(214.0, 42.0))
-                                    .wrap(),
-                                );
-                                if resp.clicked() && !is_sel {
-                                    if self.pages.lists.dirty {
-                                        let target = i;
-                                        self.confirm(
-                                            "Несохранённые изменения",
-                                            "В текущем файле есть несохранённые изменения. Переключиться и потерять их?",
-                                            "Не сохранять",
-                                            true,
-                                            move |app| app.select_list(target),
+                            egui::Frame::none()
+                                .fill(p.editor)
+                                .stroke(egui::Stroke::new(1.0, p.border))
+                                .rounding(egui::Rounding::same(6))
+                                .inner_margin(egui::Margin::same(4))
+                                .show(ui, |ui| {
+                                    for (i, f) in files.iter().enumerate() {
+                                        let is_sel = i == selected;
+                                        let resp = ui.add(
+                                            egui::Button::new(
+                                                RichText::new(format!(
+                                                    "{}\n{}",
+                                                    f.label,
+                                                    if f.official { "официальный" } else { "мой список" }
+                                                ))
+                                                .size(12.0)
+                                                .color(if is_sel { p.text } else { p.text_dim }),
+                                            )
+                                            .fill(if is_sel { p.selection } else { egui::Color32::TRANSPARENT })
+                                            .min_size(egui::vec2(214.0, 42.0))
+                                            .wrap(),
                                         );
-                                    } else {
-                                        self.select_list(i);
+                                        if resp.clicked() && !is_sel {
+                                            if self.pages.lists.dirty {
+                                                let target = i;
+                                                self.confirm(
+                                                    "Несохранённые изменения",
+                                                    "В текущем файле есть несохранённые изменения. Переключиться и потерять их?",
+                                                    "Не сохранять",
+                                                    true,
+                                                    move |app| app.select_list(target),
+                                                );
+                                            } else {
+                                                self.select_list(i);
+                                            }
+                                        }
                                     }
-                                }
-                            }
+                                });
                         });
                 });
                 ui.add_space(10.0);
@@ -198,18 +212,29 @@ impl App {
                             .inner_margin(egui::Margin::same(6))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                let resp = ui.add(
-                                    egui::TextEdit::multiline(&mut self.pages.lists.editor)
-                                        .font(egui::FontId::new(12.0, egui::FontFamily::Monospace))
-                                        .desired_rows(16)
-                                        .desired_width(f32::INFINITY)
-                                        .code_editor(),
-                                );
-                                if resp.changed() && !self.pages.lists.loading {
-                                    self.pages.lists.dirty = true;
-                                    self.pages.lists.notes = lists::analyze(&self.pages.lists.editor);
-                                    self.pages.lists.info = self.lists_info();
-                                }
+                                egui::ScrollArea::vertical()
+                                    .id_salt("list-editor")
+                                    .min_scrolled_height(editor_h)
+                                    .max_height(editor_h)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        let resp = ui.add(
+                                            egui::TextEdit::multiline(&mut self.pages.lists.editor)
+                                                .font(egui::FontId::new(
+                                                    12.0,
+                                                    egui::FontFamily::Monospace,
+                                                ))
+                                                .desired_rows(12)
+                                                .desired_width(f32::INFINITY)
+                                                .code_editor(),
+                                        );
+                                        if resp.changed() && !self.pages.lists.loading {
+                                            self.pages.lists.dirty = true;
+                                            self.pages.lists.notes =
+                                                lists::analyze(&self.pages.lists.editor);
+                                            self.pages.lists.info = self.lists_info();
+                                        }
+                                    });
                             });
                         ui.add_space(6.0);
                         let issue_color = {

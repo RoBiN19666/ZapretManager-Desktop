@@ -604,6 +604,9 @@ pub struct App {
     pub tx: Sender<Msg>,
     rx: Receiver<Msg>,
     pub busy: usize,
+    /// Высота области содержимого (без шапки и статусбара) — страницы берут
+    /// её, чтобы редакторы не растягивали окно, а прокручивались внутри.
+    pub content_h: f32,
     pub status_hint: String,
     pub log_lines: Vec<LogLine>,
     pub log_seq: u64,
@@ -689,6 +692,7 @@ impl App {
             tx,
             rx,
             busy: 0,
+            content_h: 600.0,
             status_hint: String::new(),
             log_lines: Vec::new(),
             log_seq: 0,
@@ -2527,6 +2531,7 @@ impl eframe::App for App {
             )
             .show(ctx, |ui| {
                 self.header(ui);
+                self.content_h = ui.available_height();
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
