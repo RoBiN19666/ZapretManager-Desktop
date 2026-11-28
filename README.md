@@ -4,13 +4,16 @@
 
 Графическая оболочка для **[zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)** —
 сборки [zapret](https://github.com/bol-van/zapret) (автор **bol-van**) для ускорения соединения
-Discord и YouTube.
+Discord и YouTube, — и для **[TG WS Proxy](https://github.com/Flowseal/tg-ws-proxy)** (прокси
+Telegram через WebSocket).
 
-Приложение полностью написано на **Rust**: один нативный `.exe` без .NET, WinForms и внешних
-зависимостей (GUI на `egui`/`eframe`, системный WinHTTP, Win32 API). C#-версия больше не
-поддерживается; актуальная ветка — **`main`**.
+Приложение написано на **Rust**: один нативный `ZapretManager.exe` без внешних зависимостей
+(GUI на `egui`/`eframe`, системный WinHTTP, Win32 API). Сам менеджер трафик не изменяет:
+он находит установку zapret, запускает и останавливает её стратегии, ведёт списки доменов,
+проверяет доступность сайтов, следит за обновлениями и держит прокси Telegram.
 
-История версий — в [CHANGELOG.md](CHANGELOG.md).
+История версий — в [CHANGELOG.md](CHANGELOG.md). Руководство пользователя — в
+[docs/guide.md](docs/guide.md).
 
 ![Обзор](docs/rust/screenshots/overview.png)
 
@@ -33,7 +36,24 @@ Discord и YouTube.
 Скриншоты: [Стратегии](docs/rust/screenshots/strategies.png) ·
 [Тест](docs/rust/screenshots/test.png) · [Списки](docs/rust/screenshots/lists.png) ·
 [Настройки](docs/rust/screenshots/settings.png) · [TG-прокси](docs/rust/screenshots/tgproxy.png) ·
-[О программе](docs/rust/screenshots/about.png)
+[Диагностика](docs/rust/screenshots/diagnostics.png) · [О программе](docs/rust/screenshots/about.png)
+
+## Какое ядро zapret поддерживается
+
+Менеджер работает с **zapret 1.x**: `bin\winws.exe` и стратегии `general*.bat` с
+параметрами `--dpi-desync…`.
+
+Flowseal выпускает **zapret 2.x** — это фактически другой продукт: `bin\winws2.exe`,
+каталог `lua\` и правила `--lua-desync`. Такую установку менеджер **распознаёт**, но:
+
+- показывает предупреждение «другое ядро» на всех страницах;
+- не запускает её стратегии, не ставит службу, не прогоняет тест и автоподбор;
+- **не предлагает обновление** на 2.x и на тестовые сборки (prerelease) — ни в
+  «Проверить обновления», ни в списке версий, ни при установке с нуля.
+
+Управлять такой установкой нужно её собственным `service.bat`. Если нужно
+вернуться на поддерживаемую ветку, поставьте любую версию 1.x на странице
+«Обновление» → «Версия zapret».
 
 ## Сборка
 
@@ -72,8 +92,9 @@ ZapretManager.exe --root=<папка>  — указать папку zapret вр
 ZapretManager.exe --diag          — прогнать диагностику в журнал и выйти
 ZapretManager.exe --selftest      — внутренняя самопроверка (11 проверок) и выход с кодом 0/1
 ZapretManager.exe --check-site=<домен> — проверить сайт из командной строки
-ZapretManager.exe --app-watch=<PID>    — наблюдение за приложением 20 с и добавление найденного
+ZapretManager.exe --app-watch=<PID>    — наблюдение за приложением и добавление найденного
 ZapretManager.exe --guard-once    — один проход фонового сторожа
+ZapretManager.exe --blobs-repair  — проверить и докачать fake-файлы
 ZapretManager.exe --cleanup       — убрать старые резервные копии и временные файлы
 ZapretManager.exe --restore-uac   — вернуть стандартные значения UAC (5/1)
 ZapretManager.exe --tg-prepare    — скачать исходники TG WS Proxy и портативный Python
@@ -82,22 +103,24 @@ ZapretManager.exe --tg-stop       — остановить TG WS Proxy
 ZapretManager.exe --check-self    — проверить обновление менеджера
 ZapretManager.exe --self-update   — обновиться без интерфейса
 ZapretManager.exe --apply-update  — служебный режим замены exe (вызывается автоматически)
+ZapretManager.exe --limited       — работать без прав администратора
+ZapretManager.exe --shot=<файл> --shot-page=<страница> — снимок окна для документации
 ```
 
 Журнал и настройки — в `data\` рядом с exe (если папка недоступна для записи —
-`%APPDATA%\ZapretManager`). Формат `manager.ini` совместим с C#-версией.
+`%APPDATA%\ZapretManager`). Формат `manager.ini` — `key=value`, его можно править вручную.
 
 ## Как это устроено
 
 ```
 src/
   main.rs            — точка входа, CLI-режимы, UAC, один экземпляр
-  lib.rs             — библиотека (движок + интерфейс)
-  build.rs           — встраивание иконки и версии в exe (windres/rc.exe)
+  lib.rs             — библиотека (движок + интерфейс), версия приложения
+  build.rs           — встраивание иконки, манифеста и версии в exe (windres/rc.exe)
   util.rs            — версии, натуральная сортировка, SHA-256, время, валидация
   engine/            — вся логика без UI
-    install.rs       — поиск установки zapret, разбор стратегий и версии
-    bat.rs           — превращение .bat-стратегии в аргументы winws.exe
+    install.rs       — поиск установки zapret, ядро (1.x/2.x), разбор стратегий и версии
+    bat.rs           — превращение .bat-стратегии в аргументы winws.exe и обратно
     ops.rs           — запуск/остановка winws, служба, IPSet, фейки, hosts, кэш Discord
     service.rs       — Service Control Manager (без sc.exe)
     process.rs, sys.rs — Win32: процессы, реестр, UAC, окна, значок в трее
@@ -108,11 +131,14 @@ src/
     appprobe.rs      — проверка приложения
     lists.rs         — пометка изменений официальных списков, чистка, вставка
     tester.rs        — тест стратегий и разбор официальных отчётов
+    autotune.rs      — автоподбор desync-параметров
     diagnostics.rs   — проверки и исправления
-    update.rs        — GitHub Releases, установка zapret и самообновление
+    blobs.rs         — аудит и докачивание fake-файлов
+    update.rs        — GitHub Releases, установка zapret, самообновление
     tgproxy.rs       — TG WS Proxy (exe с треем и тихий режим)
     tgsource.rs      — тихий режим: исходники Flowseal + портативный Python
-    autostart.rs     — задача планировщика (XML, без проблем с кавычками)
+    prefs.rs, config.rs, paths.rs, textfile.rs, log.rs, backup.rs, uninstall.rs,
+    autostart.rs, gamefilter.rs, winverify.rs, selftest.rs
   ui/                — egui/eframe
     app.rs           — окно, сайдбар, статусбар, фоновые задачи, уведомления
     theme.rs         — тёмная/светлая палитра, системные шрифты Segoe UI/Consolas
@@ -123,20 +149,19 @@ src/
 
 Внешние крейты: `eframe`/`egui` (GUI), `windows-sys` (Win32), `native-tls` (TLS-проверка с SNI),
 `zip` (распаковка обновлений), `serde_json` (GitHub API), `png` (иконки), `rfd` (диалоги файлов).
+Подробнее о внутреннем устройстве — [docs/rust/README.md](docs/rust/README.md).
 
-## Отличия от C#-версии
+**Решения, которые стоит знать:**
 
-- Нет .NET и WinForms: один exe, интерфейс рисуется `egui`, шрифты берутся из Windows.
 - Служба создаётся через SCM API, а не `sc.exe`; автозапуск — через XML-задачу планировщика.
-- HTTP — WinHTTP с системным TLS 1.2/1.3 вместо `HttpWebRequest`.
-- Журнал DNS читается через `wevtutil` (XML), а не `EventLogReader`.
-- Список процессов и командные строки — Toolhelp + `NtQueryInformationProcess` вместо WMI.
-- **Тихий режим TG WS Proxy** перенесён: страница «TG-прокси» скачивает официальные
-  исходники Flowseal и портативный Python, запускает прокси через `pythonw.exe` — без окна
-  и без иконки в трее. Системный Python не нужен.
-- Самообновление менеджера рассчитано на публичные GitHub Releases; при отсутствии релизов
-  кнопка показывает ошибку и не мешает обновлять zapret.
-- Скриншот-режим (`--shot=<файл> --shot-page=<страница>`) встроен для документации и тестов.
+- HTTP — WinHTTP с системным TLS 1.2/1.3; тело ответа ограничено, `https → http` запрещён.
+- Журнал DNS читается через `wevtutil` (XML), а не через API журналов.
+- Список процессов и командные строки — Toolhelp + `NtQueryInformationProcess`, без WMI.
+- **Тихий режим TG WS Proxy**: страница «TG-прокси» скачивает официальные исходники
+  Flowseal и портативный Python, запускает прокси через `pythonw.exe` — без окна и без
+  иконки в трее. Системный Python не нужен.
+- Самообновление менеджера рассчитано на публичные GitHub Releases: обязательный
+  `checksums.txt`, проверка подписи и размера, безопасная замена exe.
 - Иконки разделов — из системного шрифта Segoe MDL2 Assets (Windows 10/11), с запасными символами.
 - Окно запоминает размер и состояние «развёрнуто»; заголовок окрашивается под тему.
 - Для приватного репозитория самообновление можно включить переменной `ZAPRET_GITHUB_TOKEN`
@@ -145,9 +170,13 @@ src/
 ## Проверки
 
 ```powershell
-cargo test      # 46 тестов: .bat-парсер, списки, версии, SHA-256, время, сеть
+cargo test      # 51 тест + 1 сетевой (--ignored): .bat-парсер, списки, версии, ядра, SHA-256, время
+cargo test -- --ignored   # сетевой тест: реальный GitHub API пропускает zapret 2.x
 cargo clippy    # по желанию
 ```
+
+Дополнительно: `ZapretManager.exe --selftest` (11 проверок без сети и изменений системы)
+и `ZapretManager.exe --diag` (около 30 проверок окружения в журнал).
 
 ## Антивирус и ложные срабатывания
 
@@ -171,9 +200,39 @@ Free code signing provided by [SignPath.io](https://about.signpath.io), certific
 сеть используется только для обновлений и проверок по действию пользователя.
 Подробнее: [SECURITY.md](SECURITY.md).
 
+## Благодарности
+
+Проект существует только потому, что есть люди, которые сделали и продолжают делать
+сам обход блокировок:
+
+- **[bol-van/zapret](https://github.com/bol-van/zapret)** (bol-van) — ядро обхода DPI,
+  на котором всё держится. Спасибо за `winws` и подробную документацию.
+- **[Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)**
+  (Flowseal и контрибьюторы) — сборка zapret под Discord/YouTube, стратегии `general*.bat`,
+  `service.bat`, списки и фейк-пакеты, `utils/targets.txt` и официальный тест стратегий.
+- **[Flowseal/tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy)** (Flowseal) —
+  MTProto-прокси Telegram через WebSocket, включая тихий режим из исходников.
+- **[basil00/WinDivert](https://github.com/basil00/WinDivert)** — драйвер перехвата пакетов,
+  без которого zapret не работает.
+- Сообществу проекта zapret — за обсуждения стратегий, отчёты и тесты на живых провайдерах.
+
+Отдельная благодарность авторам библиотек, на которых собран менеджер:
+[egui/eframe](https://github.com/emilk/egui) (emilk и участники), `windows-sys`,
+[native-tls](https://github.com/sfackler/rust-native-tls), [zip-rs](https://github.com/zip-rs/zip2),
+[serde_json](https://github.com/serde-rs/json), [rfd](https://github.com/PolyMeilex/rfd).
+
+Zapret Manager — неофициальная оболочка: она не связана с bol-van, Flowseal и Microsoft.
+Все права на zapret, WinDivert и TG WS Proxy принадлежат их авторам и распространяются
+по их лицензиям.
+
 ## Лицензия
 
 MIT — см. [LICENSE](LICENSE). Copyright (c) 2026 RoBiN19666.
 
 Проект не содержит код zapret, zapret-discord-youtube, TG WS Proxy и WinDivert: они скачиваются
 с официальных источников и распространяются по своим лицензиям.
+
+---
+
+Проект сделан с помощью инструмента **[DeepSeek Harness](https://deepseek.com)** — агентной среды
+разработки: код, документация и проверки писались и ревьюились в ней.

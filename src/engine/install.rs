@@ -29,6 +29,46 @@ impl StrategyKind {
     }
 }
 
+/// Ядро zapret: 1.x (`winws.exe` + `--dpi-desync`) или 2.x (`winws2.exe` + Lua-правила).
+///
+/// Менеджер умеет управлять только 1.x. Второе ядро — это фактически другой
+/// продукт: другой exe, другой синтаксис стратегий, другой каталог `lua\`.
+/// Поэтому установку 2.x нужно распознавать отдельно, а не считать «сломанной»,
+/// и никогда не предлагать её как обновление.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Core {
+    #[default]
+    V1,
+    V2,
+}
+
+impl Core {
+    pub fn label(self) -> &'static str {
+        match self {
+            Core::V1 => "zapret 1.x",
+            Core::V2 => "zapret 2.x",
+        }
+    }
+
+    /// Ядро по номеру версии: 2.x — это zapret2, всё остальное (и неизвестное) — 1.x.
+    pub fn from_version(version: &str) -> Core {
+        match crate::util::parse_version(version)
+            .numbers
+            .first()
+            .copied()
+            .unwrap_or(0)
+        {
+            0 | 1 => Core::V1,
+            _ => Core::V2,
+        }
+    }
+
+    /// Поддерживает ли менеджер это ядро.
+    pub fn is_supported(self) -> bool {
+        matches!(self, Core::V1)
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct StrategyDef {
     pub file: PathBuf,
@@ -52,6 +92,8 @@ pub struct ZapretInstall {
     pub version: String,
     pub version_source: String,
     pub strategies: Vec<StrategyDef>,
+    /// Ядро установки: 1.x (поддерживается) или 2.x (менеджер его не ведёт).
+    pub core: Core,
 }
 
 impl ZapretInstall {
@@ -79,6 +121,13 @@ impl ZapretInstall {
     pub fn winws_exe(&self) -> PathBuf {
         self.bin_dir().join("winws.exe")
     }
+    /// Движок zapret2 (2.x). Менеджер его не запускает, но обязан узнавать.
+    pub fn winws2_exe(&self) -> PathBuf {
+        self.bin_dir().join("winws2.exe")
+    }
+    pub fn lua_dir(&self) -> PathBuf {
+        Path::new(&self.root).join("lua")
+    }
     pub fn game_filter_file(&self) -> PathBuf {
         self.utils_dir().join("game_filter.enabled")
     }
@@ -92,12 +141,55 @@ impl ZapretInstall {
         self.lists_dir().join("ipset-all.txt.backup")
     }
 
+    /// Установка распознана — любой поддерживаемый ядер.
+    ///
+    /// Для 2.x возвращает `true`: папка настоящая, просто менеджер её не ведёт.
+    /// Проверяйте [`ZapretInstall::is_supported`] там, где нужен запуск.
     pub fn is_valid(&self) -> bool {
-        !self.root.is_empty() && self.service_bat().is_file() && self.winws_exe().is_file()
+        !self.root.is_empty() && self.service_bat().is_file() && Self::looks_valid(Path::new(&self.root))
+    }
+
+    /// Менеджер умеет управлять этой установкой (ядро 1.x).
+    pub fn is_supported(&self) -> bool {
+        self.is_valid() && self.core.is_supported()
+    }
+
+    pub fn is_zapret2(&self) -> bool {
+        self.is_valid() && self.core == Core::V2
+    }
+
+    /// Почему установка не поддерживается (для интерфейса и журнала).
+    pub fn unsupported_note(&self) -> Option<String> {
+        if !self.is_zapret2() {
+            return None;
+        }
+        Some(format!(
+            "В папке {} лежит {} (bin\\winws2.exe, правила Lua). Это другое ядро — менеджер работает только с zapret 1.x и не запускает его стратегии. Обновления на 2.x не предлагаются.",
+            self.root,
+            if self.version.is_empty() {
+                "zapret 2.x".to_string()
+            } else {
+                format!("zapret {}", self.version)
+            }
+        ))
     }
 
     pub fn looks_valid(dir: &Path) -> bool {
-        dir.join("service.bat").is_file() && dir.join("bin").join("winws.exe").is_file()
+        dir.join("service.bat").is_file()
+            && (dir.join("bin").join("winws.exe").is_file()
+                || dir.join("bin").join("winws2.exe").is_file())
+    }
+
+    /// Ядро по содержимому папки: winws.exe → 1.x, winws2.exe → 2.x.
+    fn detect_core(&self) -> Core {
+        if self.winws_exe().is_file() {
+            Core::V1
+        } else if self.winws2_exe().is_file() {
+            Core::V2
+        } else {
+            // Файлов движка нет (папка-заготовка): доверяем версии.
+            Core::from_version(&self.version)
+        }
     }
 
     /// Принять саму папку zapret или её родителя с единственной установкой внутри.
@@ -176,8 +268,16 @@ impl ZapretInstall {
     /// Ищет установку: указанная папка, папка службы, папка exe, подпапки, родитель, C:\zapret.
     pub fn detect(preferred: &str) -> ZapretInstall {
         let mut candidates: Vec<String> = Vec::new();
-        if !preferred.trim().is_empty() {
-            candidates.push(paths::normalize_root(preferred));
+        let explicit = !preferred.trim().is_empty();
+        if explicit {
+            // Явно выбранная папка (`--root`, `Root` из manager.ini) важнее
+            // автопоиска — даже если в ней zapret 2.x: пользователь должен
+            // увидеть объяснение про именно эту папку, а не молча другую.
+            let path = paths::normalize_root(preferred);
+            if Self::looks_valid(Path::new(&path)) {
+                return ZapretInstall::new(&path);
+            }
+            candidates.push(path);
         }
         if let Some(service) = Self::service_root_from_registry() {
             candidates.push(service);
@@ -205,9 +305,19 @@ impl ZapretInstall {
         candidates.push(r"C:\zapret".to_string());
         candidates.push(r"C:\Zapret".to_string());
 
-        for candidate in candidates {
-            if Self::looks_valid(Path::new(&candidate)) {
-                return ZapretInstall::new(&candidate);
+        // Сначала — только 1.x: если рядом лежат обе версии, нельзя «терять»
+        // рабочую установку из-за найденной папки zapret 2.x.
+        for candidate in &candidates {
+            let path = Path::new(candidate);
+            if Self::looks_valid(path) && !Self::looks_like_v2(path) {
+                return ZapretInstall::new(candidate);
+            }
+        }
+        // 1.x нет — берём любую распознанную установку (2.x), чтобы показать
+        // объяснение вместо «папка не найдена».
+        for candidate in &candidates {
+            if Self::looks_valid(Path::new(candidate)) {
+                return ZapretInstall::new(candidate);
             }
         }
         ZapretInstall {
@@ -216,9 +326,38 @@ impl ZapretInstall {
         }
     }
 
+    /// Папка на ядре zapret 2.x (winws2.exe вместо winws.exe).
+    fn looks_like_v2(dir: &Path) -> bool {
+        !dir.join("bin").join("winws.exe").is_file()
+            && dir.join("bin").join("winws2.exe").is_file()
+    }
+
     pub fn rescan(&mut self) {
         self.strategies.clear();
         self.version = self.read_version();
+        self.version_source = if self.version.is_empty() {
+            String::new()
+        } else {
+            "service.bat".to_string()
+        };
+        self.core = self.detect_core();
+        if self.core == Core::V2 {
+            // В 2.0.0-rc `service.bat` всё ещё объявляет `LOCAL_VERSION=1.10.4`.
+            // Для 2.x версию берём из имени папки, иначе интерфейс пишет
+            // «версия 1.10.4, ядро zapret 2.x» и путает пользователя.
+            if Core::from_version(&self.version) != Core::V2 {
+                if let Some(folder_version) = version_from_folder(&self.root) {
+                    if Core::from_version(&folder_version) == Core::V2 {
+                        self.version = folder_version;
+                        self.version_source = "папка".to_string();
+                    }
+                }
+            }
+            // Стратегии 2.x — не «bat-команды winws.exe», а Lua-профили для
+            // winws2.exe: разбирать их старым парсером нельзя. Оставляем список
+            // пустым, чтобы интерфейс не предлагал запуск.
+            return;
+        }
         let entries = match std::fs::read_dir(&self.root) {
             Ok(e) => e,
             Err(_) => return,
@@ -334,16 +473,8 @@ impl ZapretInstall {
                 return v;
             }
         }
-        if let Some(idx) = self.root.to_lowercase().find("zapret-discord-youtube-") {
-            let rest = &self.root[idx + "zapret-discord-youtube-".len()..];
-            let token: String = rest
-                .chars()
-                .take_while(|c| c.is_ascii_digit() || *c == '.' || c.is_ascii_alphabetic())
-                .collect();
-            let token = token.trim_end_matches('.').to_string();
-            if !token.is_empty() {
-                return token;
-            }
+        if let Some(token) = version_from_folder(&self.root) {
+            return token;
         }
         String::new()
     }
@@ -361,6 +492,25 @@ impl ZapretInstall {
     pub fn default_strategy(&self) -> Option<&StrategyDef> {
         self.find_strategy("general")
             .or_else(|| self.strategies.first())
+    }
+}
+
+/// Версия из имени папки: `...\zapret-discord-youtube-2.0.0-rc` → `2.0.0-rc`.
+fn version_from_folder(root: &str) -> Option<String> {
+    let lower = root.to_lowercase();
+    let idx = lower.find("zapret-discord-youtube-")?;
+    let rest = &root[idx + "zapret-discord-youtube-".len()..];
+    let token: String = rest
+        .chars()
+        .take_while(|c| {
+            c.is_ascii_digit() || matches!(c, '.' | '-' | '+') || c.is_ascii_alphabetic()
+        })
+        .collect();
+    let token = token.trim_end_matches(['.', '-', '+']).to_string();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token)
     }
 }
 
@@ -448,6 +598,63 @@ mod tests {
     #[test]
     fn version_token() {
         assert_eq!(extract_version_token("v1.9.9d\n").as_deref(), Some("1.9.9d"));
+    }
+
+    #[test]
+    fn version_from_folder_name() {
+        assert_eq!(
+            version_from_folder(r"C:\Zapret\zapret-discord-youtube-2.0.0-rc").as_deref(),
+            Some("2.0.0-rc")
+        );
+        assert_eq!(
+            version_from_folder(r"C:\Zapret\zapret-discord-youtube-1.10.4").as_deref(),
+            Some("1.10.4")
+        );
+        assert_eq!(version_from_folder(r"C:\Zapret\zapret"), None);
+    }
+
+    #[test]
+    fn core_from_version() {
+        assert_eq!(Core::from_version("1.10.4"), Core::V1);
+        assert_eq!(Core::from_version("v1.10.4"), Core::V1);
+        assert_eq!(Core::from_version("2.0.0"), Core::V2);
+        assert_eq!(Core::from_version("2.0.0-rc"), Core::V2);
+        // Неизвестная версия не должна объявлять установку zapret2.
+        assert_eq!(Core::from_version(""), Core::V1);
+        assert_eq!(Core::from_version("?"), Core::V1);
+        assert!(Core::V1.is_supported());
+        assert!(!Core::V2.is_supported());
+    }
+
+    #[test]
+    fn detects_zapret2_install() {
+        let root = std::env::temp_dir().join(format!(
+            "zapret-core-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::create_dir_all(root.join("lists")).unwrap();
+        std::fs::create_dir_all(root.join("lua")).unwrap();
+        std::fs::write(root.join("service.bat"), "set \"LOCAL_VERSION=2.0.0-rc\"\r\n").unwrap();
+        std::fs::write(root.join("bin").join("winws2.exe"), b"MZ").unwrap();
+        std::fs::write(root.join("general.bat"), "@echo off\r\n").unwrap();
+
+        let install = ZapretInstall::new(&root.to_string_lossy());
+        assert!(install.is_valid(), "папка zapret2 должна распознаваться");
+        assert!(install.is_zapret2());
+        assert!(!install.is_supported());
+        assert_eq!(install.core, Core::V2);
+        assert!(install.strategies.is_empty(), "стратегии 2.x не разбираются");
+        assert!(install.unsupported_note().is_some());
+
+        // Тот же каталог, но с winws.exe — обычный zapret 1.x.
+        std::fs::write(root.join("bin").join("winws.exe"), b"MZ").unwrap();
+        let v1 = ZapretInstall::new(&root.to_string_lossy());
+        assert!(v1.is_supported());
+        assert_eq!(v1.core, Core::V1);
+        assert_eq!(v1.strategies.len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

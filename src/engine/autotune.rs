@@ -464,27 +464,42 @@ pub fn build_plan(
         }
     };
 
-    // Одиночные замены во всех секциях.
-    for (si, section) in sections.iter().enumerate() {
-        for (label, changes) in section_candidates(section, &pools) {
+    // Одиночные замены во всех секциях — по кругу, а не «первые N по файлу».
+    //
+    // Порядок секций в .bat не случаен: сначала идут UDP/443 и Discord, а TCP
+    // 80/443 (YouTube/Google) — дальше. При глубине 40–120 обход «с начала»
+    // до них не доходил, и подбор бил мимо главных целей.
+    let per_section: Vec<Vec<(String, Vec<(String, String)>)>> = sections
+        .iter()
+        .map(|section| section_candidates(section, &pools))
+        .collect();
+    let mut round = 0usize;
+    'outer: loop {
+        let mut progressed = false;
+        for (si, candidates) in per_section.iter().enumerate() {
+            let Some((label, changes)) = candidates.get(round) else {
+                continue;
+            };
+            progressed = true;
             if variants.len() + 1 >= limit {
-                break;
+                break 'outer;
             }
             let mut next = sections.clone();
             let mut ok = true;
-            for (key, value) in &changes {
+            for (key, value) in changes {
                 if !replace_key(&mut next[si], key, value) {
                     ok = false;
                     break;
                 }
             }
             if ok {
-                push(label, next, &mut variants);
+                push(label.clone(), next, &mut variants);
             }
         }
-        if variants.len() + 1 >= limit {
+        if !progressed {
             break;
         }
+        round += 1;
     }
 
     // Если одиночных не хватило — комбинируем изменения из разных секций
@@ -623,24 +638,21 @@ pub fn run_search(
 }
 
 /// Сохранить лучший вариант в корень zapret как обычную стратегию.
+///
+/// Всегда пишем в `general (AUTO).bat` и перезаписываем прошлый результат:
+/// иначе после каждого прогона в папке появлялся новый `general (AUTO N).bat`,
+/// и штатный тест потом прогонял их все как обычные стратегии.
 pub fn save_best(install: &ZapretInstall, file: &Path) -> Result<PathBuf, String> {
     if !file.is_file() {
         return Err("Файл лучшего варианта не найден.".to_string());
     }
     let root = Path::new(&install.root);
-    for i in 1..100 {
-        let name = if i == 1 {
-            "general (AUTO).bat".to_string()
-        } else {
-            format!("general (AUTO {}).bat", i)
-        };
-        let target = root.join(name);
-        if !target.exists() {
-            std::fs::copy(file, &target).map_err(|e| e.to_string())?;
-            return Ok(target);
-        }
+    let target = root.join("general (AUTO).bat");
+    if target.exists() {
+        log::info("Автоподбор: перезаписываю прошлый general (AUTO).bat новым результатом.");
     }
-    Err("Не удалось подобрать имя для auto-стратегии.".to_string())
+    std::fs::copy(file, &target).map_err(|e| e.to_string())?;
+    Ok(target)
 }
 
 #[derive(Debug, Clone)]

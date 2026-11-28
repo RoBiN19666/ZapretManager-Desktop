@@ -161,6 +161,12 @@ impl App {
                     );
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if self.install.is_zapret2() {
+                        // Для 2.x кнопки запуска бессмысленны: стратегии не
+                        // разбираются, а службой управляет сам zapret.
+                        w::muted(ui, &p2, "Запуск и остановка — через service.bat zapret 2.x");
+                        return;
+                    }
                     let main_text = if running { "Остановить" } else { "Запустить" };
                     let resp = if running {
                         w::danger(ui, &p2, main_text)
@@ -394,10 +400,10 @@ impl App {
                 let drain = self.log_lines.len() - 1500;
                 self.log_lines.drain(0..drain);
             }
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(p2.editor)
-                .stroke(egui::Stroke::new(1.0, p2.border))
-                .rounding(egui::Rounding::same(6))
+                .stroke(egui::Stroke::new(1.0_f32, p2.border))
+                .corner_radius(egui::CornerRadius::same(6))
                 .inner_margin(egui::Margin::same(8))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());

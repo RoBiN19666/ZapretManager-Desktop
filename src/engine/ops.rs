@@ -32,6 +32,8 @@ pub struct RuntimeState {
     pub ipset_mode: String,
     pub ipset_lines: u64,
     pub check_updates: bool,
+    /// TCP timestamps (RFC 1323): считается в фоне, чтобы не звать `netsh` в UI.
+    pub tcp_timestamps: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -59,13 +61,23 @@ pub struct HostsStatus {
 
 struct WinwsHandle {
     child: Child,
-    pid: u32,
-    started_unix: u64,
 }
 
 static WINWS: OnceLock<Mutex<Option<WinwsHandle>>> = OnceLock::new();
 static WINWS_OUTPUT: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 static MATCH_CACHE: OnceLock<Mutex<(String, String)>> = OnceLock::new();
+static TCP_TS_CACHE: OnceLock<Mutex<Option<(Instant, Option<bool>)>>> = OnceLock::new();
+
+fn tcp_ts_cache() -> &'static Mutex<Option<(Instant, Option<bool>)>> {
+    TCP_TS_CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// Сбросить кэш состояния TCP timestamps (после `netsh`).
+fn tcp_ts_forget() {
+    if let Ok(mut cache) = tcp_ts_cache().lock() {
+        *cache = None;
+    }
+}
 
 /// Все операции с процессом и службой выполняются по одной.
 ///
@@ -166,6 +178,9 @@ impl ZapretOps {
         if st.winws_running {
             st.winws_started_unix = sys::process_start_unix(st.winws_pid);
         }
+        // `tcp_timestamps` здесь не заполняем: `netsh` занимает сотни
+        // миллисекунд, а `get_state` зовут и синхронно при создании окна.
+        // Вызывающий добавляет значение в своём фоновом потоке.
         st
     }
 
@@ -288,6 +303,12 @@ impl ZapretOps {
 
     fn start_locked(&self, strategy: &StrategyDef) -> StartResult {
         let mut res = StartResult::default();
+        if self.install.is_zapret2() {
+            res.message = self.install.unsupported_note().unwrap_or_else(|| {
+                "Это установка zapret 2.x — менеджер запускает только zapret 1.x.".to_string()
+            });
+            return res;
+        }
         if !sys::is_admin() {
             res.message = "Запуск требует прав администратора.".to_string();
             return res;
@@ -333,7 +354,8 @@ impl ZapretOps {
             }
         };
         let cmd = bat::build_command_line(&argv);
-        // Сначала фиксируем исходное состояние, потом включаем (как в C#-версии).
+        // Сначала фиксируем исходное состояние, потом включаем: иначе в
+        // сообщении о результате будет уже новое значение.
         let tcp_was_off = self.tcp_timestamps_enabled() == Some(false);
         if tcp_was_off {
             self.enable_tcp_timestamps();
@@ -376,13 +398,8 @@ impl ZapretOps {
             });
         }
 
-        let started_unix = crate::util::unix_now();
         if let Ok(mut slot) = winws_slot().lock() {
-            *slot = Some(WinwsHandle {
-                child,
-                pid,
-                started_unix,
-            });
+            *slot = Some(WinwsHandle { child });
         }
 
         std::thread::sleep(Duration::from_millis(1200));
@@ -486,8 +503,10 @@ impl ZapretOps {
         );
         if r.exit_code != 0 {
             log::warn(format!("netsh timestamps=enabled: {}", r.all()));
+            tcp_ts_forget();
             return Some(false);
         }
+        tcp_ts_forget();
         self.tcp_timestamps_enabled()
     }
 
@@ -502,15 +521,39 @@ impl ZapretOps {
         );
         if r.exit_code != 0 {
             log::warn(format!("netsh timestamps=disabled: {}", r.all()));
+            tcp_ts_forget();
             return self.tcp_timestamps_enabled();
         }
+        tcp_ts_forget();
         self.tcp_timestamps_enabled()
     }
 
+    /// Запускает `netsh` (~100–300 мс), поэтому результат кэшируется.
+    ///
+    /// Читать состояние напрямую из реестра нельзя: при значении по умолчанию
+    /// (`Enabled`) ключ `EnableTCPTimestamps` отсутствует, и «нет ключа» значило
+    /// бы «выключено», что неверно. Интерфейс должен брать значение из
+    /// [`RuntimeState::tcp_timestamps`] (считается в фоновом потоке), а не звать
+    /// этот метод на каждом кадре.
     pub fn tcp_timestamps_enabled(&self) -> Option<bool> {
+        if let Ok(cache) = tcp_ts_cache().lock() {
+            if let Some((at, value)) = *cache {
+                if at.elapsed() < Duration::from_secs(20) {
+                    return value;
+                }
+            }
+        }
+        let value = self.query_tcp_timestamps();
+        if let Ok(mut cache) = tcp_ts_cache().lock() {
+            *cache = Some((Instant::now(), value));
+        }
+        value
+    }
+
+    fn query_tcp_timestamps(&self) -> Option<bool> {
         let r = process::run(
-            "cmd.exe",
-            &["/c", "chcp 437 >nul & netsh interface tcp show global"],
+            "netsh.exe",
+            &["interface", "tcp", "show", "global"],
             Duration::from_secs(10),
         );
         let text = r.all().to_lowercase();
@@ -559,6 +602,11 @@ impl ZapretOps {
     }
 
     fn install_service_locked(&self, strategy: &StrategyDef) -> Result<String, String> {
+        if self.install.is_zapret2() {
+            return Err(self.install.unsupported_note().unwrap_or_else(|| {
+                "Это установка zapret 2.x — службой управляет только сам zapret.".to_string()
+            }));
+        }
         if !sys::is_admin() {
             return Err("Установка службы требует прав администратора.".to_string());
         }
@@ -685,8 +733,20 @@ impl ZapretOps {
 
     pub fn get_ipset_mode(&self) -> String {
         let file = self.install.ipset_file();
-        let Ok(text) = std::fs::read_to_string(&file) else {
-            return "none".to_string();
+        // Не строгий UTF-8: пользователь мог сохранить файл в UTF-16/CP1251
+        // (Блокнот, русские комментарии). Иначе непустой список выглядел бы
+        // как «none», и следующий `set_ipset_mode("any")` его бы затёр.
+        let text = match textfile::try_read(&file) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return "none".to_string(),
+            Err(e) => {
+                log::warn(format!(
+                    "IP-лист {} не прочитан ({}): режим IPSet не определён.",
+                    file.to_string_lossy(),
+                    e
+                ));
+                return "не прочитан".to_string();
+            }
         };
         if text.trim().is_empty() {
             return "any".to_string();
@@ -705,11 +765,26 @@ impl ZapretOps {
         let backup = self.install.ipset_backup();
         let current = self.get_ipset_mode();
         let exists = file.is_file();
+        if current == "не прочитан" {
+            return "IP-лист не читается (файл занят или повреждён) — режим IPSet не изменён.".to_string();
+        }
         if current == mode && exists {
             return format!("Режим уже установлен: {}", ipset_mode_text(mode));
         }
         if current == "loaded" && exists {
-            let _ = std::fs::copy(&file, &backup);
+            // Без резервной копии переходить нельзя: следующий шаг затрёт
+            // полный IP-список (самая дорогая часть установки).
+            if let Err(e) = std::fs::copy(&file, &backup) {
+                log::error(format!(
+                    "IPSet: не удалось сохранить копию {}: {}",
+                    backup.to_string_lossy(),
+                    e
+                ));
+                return format!(
+                    "Не удалось сохранить резервную копию IP-листа ({}). Режим не изменён.",
+                    e
+                );
+            }
         }
         let result = match mode {
             "loaded" => {
@@ -927,8 +1002,15 @@ impl ZapretOps {
             return "Изменение hosts требует прав администратора.".to_string();
         }
         let path = hosts_path();
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            return "Файл hosts не найден.".to_string();
+        let content = match textfile::try_read(&path) {
+            Ok(content) => content,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return "Файл hosts не найден.".to_string();
+            }
+            Err(e) => {
+                log::error(format!("hosts не прочитан: {}", e));
+                return format!("Файл hosts не прочитан ({}). Ничего не изменено.", e);
+            }
         };
         let Some(start) = content.find(HOSTS_MARKER_START) else {
             return "Блок zapret-manager в hosts не найден.".to_string();
@@ -1246,14 +1328,71 @@ pub fn cleanup_report() -> String {
     let total: u64 = copies.iter().map(|p| dir_size(p)).sum();
     let (freed, removed) = prune_backups(&install.root, 1);
     let temp = clean_temp(1);
+    let (exes, exe_bytes) = prune_old_manager_exes();
     format!(
-        "Уборка: копий {}, занято {}. Удалено копий: {}, освобождено {} + {} временных файлов.",
+        "Уборка: копий {}, занято {}. Удалено копий: {}, освобождено {} + {} временных файлов. Старых версий менеджера: {} ({}).",
         copies.len(),
         format_size(total),
         removed,
         format_size(freed),
-        format_size(temp)
+        format_size(temp),
+        exes,
+        format_size(exe_bytes)
     )
+}
+
+/// Удалить остатки самообновления (`ZapretManager*.old.exe`) рядом с exe.
+///
+/// При обновлении работающий exe переименовывается в `*.old.exe` и после
+/// перезапуска остаётся навсегда: рядом с программой копятся десятки мегабайт.
+/// Файлы свежее часа не трогаем — вдруг это идущее обновление, и удалить
+/// замапленный образ всё равно не получится.
+pub fn prune_old_manager_exes() -> (usize, u64) {
+    let dir = super::paths::exe_dir();
+    let current = super::paths::exe_path();
+    let mut removed = 0usize;
+    let mut freed = 0u64;
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return (0, 0);
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if !name.starts_with("zapretmanager") || !name.ends_with(".old.exe") {
+            continue;
+        }
+        if path == current {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        if let Ok(modified) = meta.modified() {
+            if modified
+                .elapsed()
+                .map(|age| age.as_secs() < 3600)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+        }
+        let size = meta.len();
+        if std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+            freed += size;
+        }
+    }
+    if removed > 0 {
+        log::info(format!(
+            "Удалено старых версий менеджера: {} (освобождено {})",
+            removed,
+            format_size(freed)
+        ));
+    }
+    (removed, freed)
 }
 
 /// Запуск внешней команды и возврат вывода (для отладки и CLI).

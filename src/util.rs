@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 // Сортировка «как в проводнике»: ALT2 < ALT10
 // ---------------------------------------------------------------------------
 
-/// Ключ натуральной сортировки — повторяет NaturalKey из C#-версии.
+/// Ключ натуральной сортировки: числа внутри сравниваются как числа.
 fn natural_key(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     let mut chars = s.chars().peekable();
@@ -104,9 +104,61 @@ pub fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
             std::cmp::Ordering::Greater
         };
     }
-    va.suffix
-        .to_ascii_lowercase()
-        .cmp(&vb.suffix.to_ascii_lowercase())
+    // Суффиксы сравниваем по кускам: `beta9` < `beta10`, а не побайтово.
+    cmp_version_suffix(&va.suffix, &vb.suffix)
+}
+
+/// Сравнение суффиксов версий с учётом чисел внутри.
+///
+/// `beta2` < `beta10`, `rc1` < `rc2`; при равенстве чисел — побайтовое
+/// сравнение текстовых кусков. Цифровые куски считаются меньше буквенных
+/// (так `1.0.0-1` < `1.0.0-beta`), что совпадает с ожиданиями semver.
+fn cmp_version_suffix(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    fn chunks(s: &str) -> Vec<(bool, &str)> {
+        let mut out = Vec::new();
+        let bytes = s.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            let digit = bytes[i].is_ascii_digit();
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() == digit {
+                i += 1;
+            }
+            // Границы всегда на ASCII-байтах, поэтому срез по UTF-8 корректен.
+            out.push((digit, &s[start..i]));
+        }
+        out
+    }
+
+    fn num_cmp(x: &str, y: &str) -> Ordering {
+        let x = x.trim_start_matches('0');
+        let y = y.trim_start_matches('0');
+        x.len().cmp(&y.len()).then_with(|| x.cmp(y))
+    }
+
+    let ca = chunks(a);
+    let cb = chunks(b);
+    for i in 0..ca.len().max(cb.len()) {
+        match (ca.get(i).copied(), cb.get(i).copied()) {
+            (Some((da, sa)), Some((db, sb))) => {
+                let ord = match (da, db) {
+                    (true, true) => num_cmp(sa, sb),
+                    (false, false) => sa.cmp(sb),
+                    (true, false) => Ordering::Less,
+                    (false, true) => Ordering::Greater,
+                };
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+            (Some(_), None) => return Ordering::Greater,
+            (None, Some(_)) => return Ordering::Less,
+            (None, None) => break,
+        }
+    }
+    Ordering::Equal
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +218,27 @@ pub fn unix_now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
         .as_secs()
+}
+
+/// Смещение локального часового пояса от UTC в секундах.
+///
+/// Считается по текущему моменту: сравниваем локальные компоненты с UTC.
+/// Учитывает действующее сейчас смещение (включая летнее время), но не
+/// исторические переходы — для меток времени файлов этого достаточно.
+pub fn local_offset_secs() -> i64 {
+    let now = unix_now() as i64;
+    let utc = datetime_from_secs(now);
+    let local = crate::engine::sys::local_now();
+    let utc_days = days_from_civil(utc.year as i64, utc.month as i64, utc.day as i64);
+    let local_days = days_from_civil(local.year as i64, local.month as i64, local.day as i64);
+    let utc_clock = utc.hour as i64 * 3600 + utc.minute as i64 * 60 + utc.second as i64;
+    let local_clock = local.hour as i64 * 3600 + local.minute as i64 * 60 + local.second as i64;
+    (local_days - utc_days) * 86400 + (local_clock - utc_clock)
+}
+
+/// Локальное время из unix-секунд (например, время изменения файла).
+pub fn datetime_local_from_secs(secs: i64) -> LocalDateTime {
+    datetime_from_secs(secs + local_offset_secs())
 }
 
 /// Дни от 1970-01-01 до гражданской даты (алгоритм Хауарда Хиннанта).
@@ -389,7 +462,7 @@ pub fn hex_lower(bytes: &[u8]) -> String {
     s
 }
 
-/// SHA-256 файла (пустая строка при ошибке — как в C#-версии).
+/// SHA-256 файла (пустая строка при ошибке).
 pub fn sha256_file(path: &std::path::Path) -> String {
     use std::io::Read;
     let mut f = match std::fs::File::open(path) {
@@ -517,6 +590,14 @@ mod tests {
         assert_eq!(version_cmp("1.4.0-pre1", "1.4.0"), std::cmp::Ordering::Less);
         assert_eq!(version_cmp("v1.9.9d", "1.9.9"), std::cmp::Ordering::Greater);
         assert_eq!(version_cmp("1.4.0", "1.4.0.0"), std::cmp::Ordering::Equal);
+        // Суффиксы с числами сравниваются как числа, а не побайтово.
+        assert_eq!(
+            version_cmp("1.4.0-beta9", "1.4.0-beta10"),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(version_cmp("2.0.0-rc1", "2.0.0-rc2"), std::cmp::Ordering::Less);
+        assert_eq!(version_cmp("2.0.0-rc", "2.0.0-rc1"), std::cmp::Ordering::Less);
+        assert_eq!(version_cmp("2.0.0-beta", "2.0.0-rc"), std::cmp::Ordering::Less);
     }
 
     #[test]

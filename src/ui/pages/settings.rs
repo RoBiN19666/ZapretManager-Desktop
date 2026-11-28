@@ -8,7 +8,7 @@ use crate::engine::ops::ZapretOps;
 use crate::engine::{autostart, sys};
 use crate::util::is_port_range_valid;
 
-use crate::ui::app::{App, Page};
+use crate::ui::app::{App, Msg, Page};
 use crate::ui::widgets as w;
 
 impl App {
@@ -32,6 +32,8 @@ impl App {
             crate::engine::ops::count_list_lines(&self.install.ipset_backup())
         );
         self.reload_fakes();
+        // `schtasks /Query` — сотни миллисекунд, а на медленной машине до
+        // нескольких секунд: спрашиваем в фоне, а не в кадре.
         if self
             .pages
             .settings
@@ -39,8 +41,12 @@ impl App {
             .map(|t| t.elapsed() > std::time::Duration::from_secs(30))
             .unwrap_or(true)
         {
-            self.pages.settings.autostart_enabled = autostart::is_enabled();
             self.pages.settings.autostart_checked = Some(std::time::Instant::now());
+            let tx = self.tx.clone();
+            std::thread::spawn(move || {
+                let enabled = autostart::is_enabled();
+                let _ = tx.send(Msg::Autostart(enabled));
+            });
         }
     }
 
@@ -385,18 +391,9 @@ impl App {
                 );
             }
             ui.add_space(8.0);
-            if self
-                .pages
-                .settings
-                .tcp_ts_checked
-                .map(|t| t.elapsed() > std::time::Duration::from_secs(10))
-                .unwrap_or(true)
-            {
-                self.pages.settings.tcp_ts =
-                    ZapretOps::new(self.install.clone()).tcp_timestamps_enabled();
-                self.pages.settings.tcp_ts_checked = Some(std::time::Instant::now());
-            }
-            let tcp_on = self.pages.settings.tcp_ts == Some(true);
+            // Значение приходит из фонового опроса состояния: `netsh` в кадре
+            // подвешивал окно на секунды (а на медленной машине — до таймаута).
+            let tcp_on = self.state.tcp_timestamps == Some(true);
             ui.horizontal(|ui| {
                 let label = if tcp_on {
                     "Выключить TCP timestamps"
@@ -406,8 +403,6 @@ impl App {
                 if w::secondary(ui, &p2, label).clicked() {
                     if self.require_admin("TCP timestamps") {
                         let enable = !tcp_on;
-                        self.pages.settings.tcp_ts = Some(enable);
-                        self.pages.settings.tcp_ts_checked = Some(std::time::Instant::now());
                         let ops = ZapretOps::new(self.install.clone());
                         self.spawn_bg(move |tx| {
                             let ok = if enable {

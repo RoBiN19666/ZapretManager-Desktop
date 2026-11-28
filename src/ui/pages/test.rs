@@ -16,6 +16,18 @@ use crate::ui::widgets as w;
 impl App {
     pub(crate) fn page_test(&mut self, ui: &mut Ui) {
         let p = self.p;
+        if let Some(note) = self.install.unsupported_note() {
+            w::card(ui, &p, "Тест стратегий zapret 2.x", |ui| {
+                w::small(ui, &p, &note);
+                ui.add_space(6.0);
+                w::muted(
+                    ui,
+                    &p,
+                    "Тест запускает winws.exe из стратегий 1.x, поэтому для zapret2 он недоступен.",
+                );
+            });
+            return;
+        }
         if !self.install.is_valid() {
             w::card(ui, &p, "Тест стратегий", |ui| {
                 w::small(ui, &p, "Папка zapret не найдена. Укажите её в «Настройки» → «Папка zapret».");
@@ -311,9 +323,9 @@ impl App {
                     egui::Sense::click(),
                 );
                 if selected {
-                    ui.painter().rect_filled(rect, egui::Rounding::same(4), p.selection);
+                    ui.painter().rect_filled(rect, egui::CornerRadius::same(4), p.selection);
                 } else if resp.hovered() {
-                    ui.painter().rect_filled(rect, egui::Rounding::same(4), p.hover);
+                    ui.painter().rect_filled(rect, egui::CornerRadius::same(4), p.hover);
                 }
                 let is_best = best_score
                     .map(|score| row.best_candidate() && row.score() == score)

@@ -69,13 +69,13 @@ pub fn run(install: &ZapretInstall) -> Vec<Check> {
     // Игровой фильтр
     let dir = temp_dir("gf");
     let gf_path = dir.join("utils").join("game_filter.enabled");
-    let mut gf = GameFilterState {
+    let gf = GameFilterState {
         mode: GameFilterMode::Tcp,
         tcp_range: "1024-2048,3000-4000".to_string(),
         udp_range: "5000-6000".to_string(),
     };
     let saved = gf.save(&dir.to_string_lossy()).is_ok();
-    let mut loaded = GameFilterState::load(&dir.to_string_lossy());
+    let loaded = GameFilterState::load(&dir.to_string_lossy());
     let gf_ok = saved
         && loaded.mode == GameFilterMode::Tcp
         && loaded.tcp_range == "1024-2048,3000-4000"
@@ -91,33 +91,44 @@ pub fn run(install: &ZapretInstall) -> Vec<Check> {
 
     // Стратегии и .bat-парсер
     if install.is_valid() {
-        let mut total = 0usize;
-        let mut failed = Vec::new();
-        let gf = GameFilterState::load(&install.root);
-        for strategy in &install.strategies {
-            total += 1;
-            match bat::get_argv(install, strategy, &gf) {
-                Ok(argv) if !argv.is_empty() => {}
-                Ok(_) => failed.push(format!("{}: пустые аргументы", strategy.name)),
-                Err(e) => failed.push(format!("{}: {}", strategy.name, e)),
+        if install.is_zapret2() {
+            // Ядро 2.x не поддерживается: парсер .bat к нему неприменим,
+            // и это не ошибка самопроверки.
+            add(
+                "Стратегии (.bat → argv)",
+                true,
+                "ядро zapret 2.x — разбор стратегий не требуется".to_string(),
+            );
+        } else {
+            let mut total = 0usize;
+            let mut failed = Vec::new();
+            let gf = GameFilterState::load(&install.root);
+            for strategy in &install.strategies {
+                total += 1;
+                match bat::get_argv(install, strategy, &gf) {
+                    Ok(argv) if !argv.is_empty() => {}
+                    Ok(_) => failed.push(format!("{}: пустые аргументы", strategy.name)),
+                    Err(e) => failed.push(format!("{}: {}", strategy.name, e)),
+                }
             }
+            add(
+                "Стратегии (.bat → argv)",
+                total > 0 && failed.is_empty(),
+                if failed.is_empty() {
+                    format!("разобрано {}/{}", total, total)
+                } else {
+                    failed.join("; ")
+                },
+            );
         }
-        add(
-            "Стратегии (.bat → argv)",
-            total > 0 && failed.is_empty(),
-            if failed.is_empty() {
-                format!("разобрано {}/{}", total, total)
-            } else {
-                failed.join("; ")
-            },
-        );
         add(
             "Установка zapret",
             true,
             format!(
-                "{} (версия {})",
+                "{} (версия {}, ядро {})",
                 install.root,
-                if install.version.is_empty() { "?" } else { &install.version }
+                if install.version.is_empty() { "?" } else { &install.version },
+                install.core.label()
             ),
         );
     } else {
@@ -131,8 +142,10 @@ pub fn run(install: &ZapretInstall) -> Vec<Check> {
     // Списки: baseline + сохранение из редактора
     let dir = temp_dir("lists");
     let data = dir.join("data");
-    let file = dir.join("list-general.txt");
+    let lists_dir = dir.join("lists");
     let _ = std::fs::create_dir_all(&data);
+    let _ = std::fs::create_dir_all(&lists_dir);
+    let file = lists_dir.join("list-general.txt");
     let _ = textfile::write_text(
         &file,
         "# official\na.com\nb.com\n",
@@ -162,13 +175,23 @@ pub fn run(install: &ZapretInstall) -> Vec<Check> {
         ),
     );
 
-    // Официальные списки: применение после обновления
+    // Официальные списки: применение после обновления.
+    // Симулируем обновление: файл приходит заново (только официальные строки),
+    // и apply_after_update должен вернуть на место блок «мои добавления».
+    let _ = textfile::write_text(&file, "# official\na.com\nb.com\nc.com\n");
     let changed = lists::apply_after_update(&dir, &data);
-    let reloaded = lists::ListChanges::load(&file, &data);
+    let after = textfile::read(&file);
+    let transfer_ok = after.contains("my.example")
+        && after.contains(lists::BLOCK_START)
+        && after.contains("c.com");
     add(
         "Списки: перенос после обновления",
-        reloaded.added.iter().any(|e| e.eq_ignore_ascii_case("my.example")),
-        format!("сообщений {}", changed.len()),
+        transfer_ok,
+        format!(
+            "сообщений {}, в файле {} строк",
+            changed.len(),
+            after.lines().count()
+        ),
     );
     let _ = std::fs::remove_dir_all(&dir);
 

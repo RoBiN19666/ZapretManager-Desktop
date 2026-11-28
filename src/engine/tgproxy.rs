@@ -40,9 +40,13 @@ impl TgState {
         if self.secret.is_empty() {
             return String::new();
         }
+        // Секрет — base64 от ключа и может содержать `+`, `/`, `=`.
+        // Без кодирования Telegram откроет ссылку с обрезанным секретом.
         format!(
             "tg://proxy?server={}&port={}&secret={}",
-            self.host, self.port, self.secret
+            encode_component(&self.host),
+            self.port,
+            encode_component(&self.secret)
         )
     }
 
@@ -57,6 +61,19 @@ impl TgState {
             "остановлен".to_string()
         }
     }
+}
+
+/// Процентное кодирование компонента URL (RFC 3986, unreserved).
+fn encode_component(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{:02X}", byte));
+        }
+    }
+    out
 }
 
 pub fn default_dir() -> PathBuf {
@@ -328,7 +345,7 @@ pub fn start(ini: &Ini) -> (String, bool) {
         }
         return match tgsource::start(st.port, &st.secret) {
             Ok((_pid, message)) => {
-                // Даём прокси время открыть порт, как в C#-версии.
+                // Даём прокси время открыть порт.
                 let deadline = Instant::now() + Duration::from_secs(6);
                 while Instant::now() < deadline {
                     if is_port_listening(st.port) {

@@ -258,6 +258,17 @@ pub fn parse_events(xml: &str) -> Vec<DnsEvent> {
         if host.ends_with(".local") || host.ends_with(".lan") || host.ends_with(".arpa") {
             continue;
         }
+        // Зарезервированные для документации/заглушек зоны (RFC 2606/6761).
+        // `disabled.invalid` и подобные приходят от системных «заглушек» и
+        // тратить на них сетевые пробы бессмысленно.
+        if [
+            ".invalid", ".test", ".example", ".localhost", ".localdomain", ".home.arpa",
+        ]
+        .iter()
+        .any(|zone| host.ends_with(zone))
+        {
+            continue;
+        }
         if host.starts_with("wpad") || host.starts_with("localhost") {
             continue;
         }

@@ -224,7 +224,8 @@ fn unescape_caret(text: &str) -> String {
     out
 }
 
-/// Токенизация с сохранением кавычек в токенах (как в C#-версии).
+/// Токенизация с сохранением кавычек в токенах: пути с пробелами должны
+/// доехать до winws.exe одним аргументом.
 fn tokenize(cmd: &str) -> Vec<String> {
     let mut list = Vec::new();
     let mut cur = String::new();

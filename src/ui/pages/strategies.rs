@@ -38,6 +38,18 @@ impl App {
 
     pub(crate) fn page_strategies(&mut self, ui: &mut Ui) {
         let p = self.p;
+        if let Some(note) = self.install.unsupported_note() {
+            w::card(ui, &p, "Стратегии zapret 2.x", |ui| {
+                w::small(ui, &p, &note);
+                ui.add_space(6.0);
+                w::muted(
+                    ui,
+                    &p,
+                    "Управляйте такой установкой через её собственный service.bat. Менеджер видит папку, но не запускает и не обновляет её.",
+                );
+            });
+            return;
+        }
         if !self.install.is_valid() {
             w::card(ui, &p, "Стратегии не найдены", |ui| {
                 w::small(
@@ -118,10 +130,10 @@ impl App {
             );
             ui.add_space(6.0);
             let mut toggle_fav: Option<String> = None;
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(p.editor)
-                .stroke(egui::Stroke::new(1.0, p.border))
-                .rounding(egui::Rounding::same(7))
+                .stroke(egui::Stroke::new(1.0_f32, p.border))
+                .corner_radius(egui::CornerRadius::same(7))
                 .inner_margin(egui::Margin::same(4))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
@@ -150,9 +162,9 @@ impl App {
                                     egui::Sense::click(),
                                 );
                                 if is_selected {
-                                    ui.painter().rect_filled(rect, egui::Rounding::same(6), p.selection);
+                                    ui.painter().rect_filled(rect, egui::CornerRadius::same(6), p.selection);
                                 } else if resp.hovered() {
-                                    ui.painter().rect_filled(rect, egui::Rounding::same(6), p.hover);
+                                    ui.painter().rect_filled(rect, egui::CornerRadius::same(6), p.hover);
                                 }
                                 let is_active = !active.is_empty() && s.name.eq_ignore_ascii_case(&active);
                                 ui.painter().text(
@@ -189,7 +201,7 @@ impl App {
                                     egui::pos2(rect.right() - bw - 36.0, rect.center().y - 9.0),
                                     egui::vec2(bw, 18.0),
                                 );
-                                ui.painter().rect_filled(brect, egui::Rounding::same(9), p.surface_alt);
+                                ui.painter().rect_filled(brect, egui::CornerRadius::same(9), p.surface_alt);
                                 ui.painter().galley(brect.min + egui::vec2(6.0, 2.0), galley, badge_color);
                                 if is_active {
                                     ui.painter().circle_filled(

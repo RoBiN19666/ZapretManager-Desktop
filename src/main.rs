@@ -26,6 +26,9 @@ fn main() {
     ));
 
     let root_arg = arg_value(&args, "--root").unwrap_or_default();
+    if !root_arg.is_empty() {
+        log::info(format!("Заданная папка zapret (--root): {}", root_arg));
+    }
     let shot = arg_value(&args, "--shot");
     let shot_page = arg_value(&args, "--shot-page");
     let limited = has_flag(&args, "--limited");
@@ -308,6 +311,14 @@ fn main() {
         "Права администратора: {}",
         if sys::is_admin() { "да" } else { "нет" }
     ));
+    if let Some(note) = install.unsupported_note() {
+        log::warn(note);
+    }
+    // Остатки самообновления (`*.old.exe`) убираем в фоне: их удаление не
+    // должно задерживать первый кадр.
+    std::thread::spawn(|| {
+        zapret_manager::engine::ops::prune_old_manager_exes();
+    });
 
     if let Some(ref page) = shot_page {
         log::info(format!("Снимок окна: страница {}", page));

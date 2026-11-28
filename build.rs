@@ -79,6 +79,10 @@ FILETYPE 0x1L
 
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
     if target_env == "gnu" {
+        // GNU-ld для GUI-приложения добавляет собственный `default-manifest`,
+        // поэтому при линковке бывает предупреждение «multiple non-default
+        // manifests». Это косметика: ресурс RT_MANIFEST с ID 1 — наш
+        // (`asInvoker`, `dpiAwareness`, `longPathAware`), Windows читает именно его.
         let Some(windres) = find_windres() else {
             println!("cargo:warning=windres не найден — exe останется без иконки и манифеста");
             return;

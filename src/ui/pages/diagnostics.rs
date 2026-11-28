@@ -84,10 +84,10 @@ impl App {
                     Severity::Warn => p.warn,
                     Severity::Ok => p.success,
                 };
-                egui::Frame::none()
+                egui::Frame::NONE
                     .fill(p.editor)
-                    .stroke(egui::Stroke::new(1.0, p.border))
-                    .rounding(egui::Rounding::same(7))
+                    .stroke(egui::Stroke::new(1.0_f32, p.border))
+                    .corner_radius(egui::CornerRadius::same(7))
                     .inner_margin(egui::Margin::symmetric(12, 8))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());

@@ -761,7 +761,8 @@ pub fn parse_official_report(path: &Path) -> OfficialReport {
     if let Ok(meta) = std::fs::metadata(path) {
         if let Ok(modified) = meta.modified() {
             if let Ok(secs) = modified.duration_since(std::time::UNIX_EPOCH) {
-                let dt = crate::util::datetime_from_secs(secs.as_secs() as i64);
+                // mtime приходит в UTC, а показывать нужно местное время.
+                let dt = crate::util::datetime_local_from_secs(secs.as_secs() as i64);
                 report.created = format!(
                     "{:02}.{:02}.{:04} {:02}:{:02}",
                     dt.day, dt.month, dt.year, dt.hour, dt.minute

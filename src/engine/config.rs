@@ -1,4 +1,4 @@
-//! Настройки самого менеджера: data\manager.ini (формат key=value, как в C#-версии).
+//! Настройки самого менеджера: data\manager.ini (формат key=value).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

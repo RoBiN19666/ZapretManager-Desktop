@@ -1,6 +1,6 @@
 //! Тихий режим TG WS Proxy: официальные исходники Flowseal + портативный Python.
 //!
-//! Порт C#-класса `TgSource`: скачивает архив исходников и embeddable-сборку
+//! Скачивает архив исходников и embeddable-сборку
 //! Python с python.org, ставит зависимости (httpx, certifi, cryptography) и
 //! запускает `proxy\tg_ws_proxy.py` через `pythonw.exe` без окна и без иконки
 //! в трее. Пользователю не нужен установленный Python.

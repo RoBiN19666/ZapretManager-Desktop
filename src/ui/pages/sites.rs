@@ -48,10 +48,10 @@ impl App {
             ui.label(RichText::new(&self.pages.sites.verdict).size(12.5).color(color));
             ui.add_space(6.0);
             if !self.pages.sites.steps.is_empty() {
-                egui::Frame::none()
+                egui::Frame::NONE
                     .fill(p.editor)
-                    .stroke(egui::Stroke::new(1.0, p.border))
-                    .rounding(egui::Rounding::same(6))
+                    .stroke(egui::Stroke::new(1.0_f32, p.border))
+                    .corner_radius(egui::CornerRadius::same(6))
                     .inner_margin(egui::Margin::same(10))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -125,10 +125,10 @@ impl App {
                 "Здесь появляются домены сайта и связанные с ним адреса. Список можно править руками: одна строка — один домен. Поддомены указывать не обязательно, zapret сам учитывает их.",
             );
             ui.add_space(6.0);
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(p.editor)
-                .stroke(egui::Stroke::new(1.0, p.border))
-                .rounding(egui::Rounding::same(6))
+                .stroke(egui::Stroke::new(1.0_f32, p.border))
+                .corner_radius(egui::CornerRadius::same(6))
                 .inner_margin(egui::Margin::same(6))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
@@ -253,10 +253,10 @@ impl App {
                     .size(12.0)
                     .color(p.text_dim),
                 );
-                egui::Frame::none()
+                egui::Frame::NONE
                     .fill(p.editor)
-                    .stroke(egui::Stroke::new(1.0, p.border))
-                    .rounding(egui::Rounding::same(7))
+                    .stroke(egui::Stroke::new(1.0_f32, p.border))
+                    .corner_radius(egui::CornerRadius::same(7))
                     .inner_margin(egui::Margin::same(8))
                     .show(ui, |ui| {
                         egui::ScrollArea::vertical()
@@ -295,23 +295,25 @@ impl App {
                     if !self.pages.sites.guard_blocked.is_empty()
                         && w::primary(ui, &p, "Добавить найденные").clicked()
                     {
+                        // Сетевые пробы идут до 6,5 с на домен — в кадре их
+                        // держать нельзя, окно замирало.
                         let install = self.install.clone();
                         let blocked = self.pages.sites.guard_blocked.clone();
-                        let found = guard::process_hosts(&install, &blocked, true, |message| {
-                            crate::engine::log::warn(format!("Сторож сайтов: {}", message));
+                        let seen = self.pages.sites.guard_seen.clone();
+                        self.pages.sites.guard_status =
+                            "Сторож: проверяю и добавляю домены…".to_string();
+                        self.spawn_bg(move |tx| {
+                            let found = guard::process_hosts(&install, &blocked, true, |message| {
+                                crate::engine::log::warn(format!("Сторож сайтов: {}", message));
+                            });
+                            let left: Vec<String> = blocked
+                                .iter()
+                                .filter(|h| !found.iter().any(|f| f.eq_ignore_ascii_case(h)))
+                                .cloned()
+                                .collect();
+                            let _ = tx.send(Msg::GuardHosts(seen, left));
+                            let _ = tx.send(Msg::GuardAdded(found));
                         });
-                        if !found.is_empty() {
-                            self.pages.sites.guard_blocked.clear();
-                            self.pages.sites.guard_status = format!(
-                                "Сторож: добавлено доменов {}.",
-                                found.len()
-                            );
-                            self.notify(
-                                format!("Сторож: добавлено доменов {}.", found.len()),
-                                LogLevel::Ok,
-                            );
-                            self.restart_after_change("Домены добавлены");
-                        }
                     }
                     if w::ghost(ui, &p, "Очистить список").clicked() {
                         self.pages.sites.guard_seen.clear();

@@ -1,16 +1,16 @@
 //! Виджеты интерфейса: карточки, кнопки, переключатели, статусы.
 
 use eframe::egui::{
-    self, Color32, FontId, Response, RichText, Rounding, Sense, Stroke, Ui, Vec2,
+    self, Color32, FontId, Response, RichText, CornerRadius, Sense, Stroke, Ui, Vec2,
 };
 
 use super::theme::Palette;
 
 pub fn card(ui: &mut Ui, p: &Palette, title: &str, add_contents: impl FnOnce(&mut Ui)) {
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(p.surface)
-        .stroke(Stroke::new(1.0, p.border))
-        .rounding(Rounding::same(10))
+        .stroke(Stroke::new(1.0_f32, p.border))
+        .corner_radius(CornerRadius::same(10))
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -40,7 +40,7 @@ pub fn ghost(ui: &mut Ui, p: &Palette, text: &str) -> Response {
         ui.add(
             egui::Button::new(RichText::new(text).color(p.text_dim))
                 .stroke(Stroke::NONE)
-                .rounding(Rounding::same(6))
+                .corner_radius(CornerRadius::same(6))
                 .min_size(Vec2::new(0.0, 30.0)),
         )
     })
@@ -92,11 +92,11 @@ fn button(
         ui.add(
             egui::Button::new(RichText::new(text).color(fg).strong())
                 .stroke(if stroke_width > 0.0 {
-                    Stroke::new(1.0, p.border_strong)
+                    Stroke::new(1.0_f32, p.border_strong)
                 } else {
                     Stroke::NONE
                 })
-                .rounding(Rounding::same(7))
+                .corner_radius(CornerRadius::same(7))
                 .min_size(Vec2::new(0.0, 32.0)),
         )
     })
@@ -115,7 +115,7 @@ pub fn toggle(ui: &mut Ui, p: &Palette, value: &mut bool) -> Response {
         resp.mark_changed();
     }
     let bg = if *value { p.accent } else { p.surface_alt };
-    ui.painter().rect_filled(rect, Rounding::same(12), bg);
+    ui.painter().rect_filled(rect, CornerRadius::same(12), bg);
     let knob_x = if *value {
         rect.right() - 12.0
     } else {
@@ -135,7 +135,7 @@ pub fn status_dot(ui: &mut Ui, color: Color32, filled: bool) {
         ui.painter().circle_filled(rect.center(), 4.5, color);
     } else {
         ui.painter()
-            .circle_stroke(rect.center(), 4.0, Stroke::new(1.2, color));
+            .circle_stroke(rect.center(), 4.0, Stroke::new(1.2_f32, color));
     }
 }
 
@@ -149,7 +149,7 @@ pub fn badge(ui: &mut Ui, p: &Palette, text: &str, color: Color32) {
     let size = Vec2::new(galley.rect.width() + 12.0, 18.0);
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     ui.painter()
-        .rect_filled(rect, Rounding::same(9), p.surface_alt);
+        .rect_filled(rect, CornerRadius::same(9), p.surface_alt);
     ui.painter()
         .galley(rect.min + Vec2::new(6.0, 2.0), galley, color);
 }
@@ -181,7 +181,7 @@ pub fn kv_row(ui: &mut Ui, p: &Palette, key: &str, value: &str) {
 pub fn separator(ui: &mut Ui, p: &Palette) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
     ui.painter()
-        .line_segment([rect.left_center(), rect.right_center()], Stroke::new(1.0, p.border));
+        .line_segment([rect.left_center(), rect.right_center()], Stroke::new(1.0_f32, p.border));
     ui.add_space(4.0);
 }
 
@@ -217,7 +217,7 @@ pub fn mode_button(ui: &mut Ui, p: &Palette, text: &str, selected: bool) -> Resp
         ui.add(
             egui::Button::new(RichText::new(text).color(p.on_accent).strong())
                 .fill(p.accent)
-                .rounding(Rounding::same(7))
+                .corner_radius(CornerRadius::same(7))
                 .min_size(Vec2::new(0.0, 30.0)),
         )
     } else {
@@ -228,19 +228,19 @@ pub fn mode_button(ui: &mut Ui, p: &Palette, text: &str, selected: bool) -> Resp
 pub fn progress_bar(ui: &mut Ui, p: &Palette, ratio: f32) {
     let desired = Vec2::new(ui.available_width(), 8.0);
     let (rect, _) = ui.allocate_exact_size(desired, Sense::hover());
-    ui.painter().rect_filled(rect, Rounding::same(4), p.surface_alt);
+    ui.painter().rect_filled(rect, CornerRadius::same(4), p.surface_alt);
     let filled = egui::Rect::from_min_size(
         rect.min,
         Vec2::new(rect.width() * ratio.clamp(0.0, 1.0), rect.height()),
     );
-    ui.painter().rect_filled(filled, Rounding::same(4), p.accent);
+    ui.painter().rect_filled(filled, CornerRadius::same(4), p.accent);
 }
 
 pub fn code_block(ui: &mut Ui, p: &Palette, text: &str) {
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(p.editor)
-        .stroke(Stroke::new(1.0, p.border))
-        .rounding(Rounding::same(6))
+        .stroke(Stroke::new(1.0_f32, p.border))
+        .corner_radius(CornerRadius::same(6))
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());

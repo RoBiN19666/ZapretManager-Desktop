@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use crate::util::{sha256_file, version_cmp};
 
 use super::http;
-use super::install::ZapretInstall;
+use super::install::{Core, ZapretInstall};
 use super::log;
 use super::ops::{self, ZapretOps};
 use super::process;
@@ -47,9 +47,38 @@ pub struct Release {
     pub html_url: String,
     pub published: String,
     pub assets: Vec<Asset>,
+    /// GitHub помечает так тестовые сборки (`2.0.0-rc` и т.п.).
+    pub prerelease: bool,
 }
 
 impl Release {
+    /// Ядро, на котором выпущен релиз (по номеру версии в теге).
+    pub fn core(&self) -> Core {
+        Core::from_version(&self.tag)
+    }
+
+    /// Можно ли предлагать и ставить этот релиз этого менеджера.
+    pub fn is_supported(&self) -> bool {
+        !self.prerelease && self.core().is_supported()
+    }
+
+    /// Человеческое объяснение, почему релиз не предлагается.
+    pub fn unsupported_reason(&self) -> Option<String> {
+        if !self.core().is_supported() {
+            return Some(format!(
+                "{} — это zapret 2.x на новом ядре (winws2.exe + правила Lua). Менеджер работает с zapret 1.x и такую версию не устанавливает.",
+                self.tag
+            ));
+        }
+        if self.prerelease {
+            return Some(format!(
+                "{} — тестовая сборка (prerelease). Менеджер предлагает только стабильные релизы.",
+                self.tag
+            ));
+        }
+        None
+    }
+
     pub fn download_url_for(&self, name: &str) -> Option<String> {
         self.assets
             .iter()
@@ -113,6 +142,10 @@ fn parse_release(value: &serde_json::Value) -> Option<Release> {
         name: value.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         body: value.get("body").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         html_url: value.get("html_url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        prerelease: value
+            .get("prerelease")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         published: value
             .get("published_at")
             .and_then(|v| v.as_str())
@@ -199,6 +232,56 @@ pub fn list_releases(repo: &str, count: usize) -> Result<Vec<Release>, String> {
     Ok(out)
 }
 
+/// Список релизов для выбора версии: только те, что менеджер умеет ставить.
+///
+/// Отброшенные теги возвращаются отдельно — чтобы интерфейс мог сказать
+/// «есть более новые, но это zapret 2.x / тестовая сборка».
+pub fn list_supported_zapret(count: usize) -> Result<(Vec<Release>, Vec<String>), String> {
+    let mut kept = Vec::new();
+    let mut skipped = Vec::new();
+    for release in list_releases(ZAPRET_REPO, count)? {
+        if release.is_supported() {
+            kept.push(release);
+        } else {
+            skipped.push(release.tag);
+        }
+    }
+    if kept.is_empty() {
+        return Err(
+            "Среди релизов zapret нет ни одного на поддерживаемом ядре 1.x.".to_string(),
+        );
+    }
+    Ok((kept, skipped))
+}
+
+/// Последний стабильный релиз репозитория — тестовые сборки пропускаются.
+pub fn latest_stable(repo: &str) -> Result<Release, String> {
+    list_releases(repo, 10)?
+        .into_iter()
+        .find(|r| !r.prerelease)
+        .ok_or_else(|| "В репозитории нет стабильных релизов (только тестовые).".to_string())
+}
+
+/// Последний релиз zapret, который менеджер умеет ставить.
+///
+/// GitHub отдаёт релизы в порядке публикации, включая prerelease и zapret2.
+/// Берём первый поддерживаемый, а отброшенные возвращаем отдельно — чтобы
+/// интерфейс мог честно объяснить, почему «2.0.0-rc» не предлагается.
+pub fn latest_supported_zapret() -> Result<(Release, Vec<String>), String> {
+    let mut skipped: Vec<String> = Vec::new();
+    for release in list_releases(ZAPRET_REPO, 15)? {
+        if release.is_supported() {
+            return Ok((release, skipped));
+        }
+        skipped.push(release.tag.clone());
+    }
+    Err(
+        "Среди свежих релизов zapret нет ни одного на поддерживаемом ядре 1.x \
+         (все новые — zapret 2.x или тестовые сборки)."
+            .to_string(),
+    )
+}
+
 pub fn release_by_tag(repo: &str, tag: &str) -> Result<Release, String> {
     let url = format!(
         "https://api.github.com/repos/{}/releases/tags/{}",
@@ -280,6 +363,8 @@ pub struct UpdateCheckResult {
     pub source: String,
     pub local_unknown: bool,
     pub checked_at: Option<Instant>,
+    /// Более новые релизы, которые не предлагаются (zapret 2.x, prerelease).
+    pub skipped: Vec<String>,
 }
 
 static CHECK_CACHE: Mutex<Option<UpdateCheckResult>> = Mutex::new(None);
@@ -304,20 +389,30 @@ pub fn check_update(local_version: &str, force: bool) -> UpdateCheckResult {
         checked_at: Some(Instant::now()),
         ..Default::default()
     };
-    let mut release = match get_latest_release(ZAPRET_REPO) {
-        Ok(r) => {
+    // Важно: «последний» релиз zapret — не то же самое, что «последний,
+    // который мы умеем ставить». Flowseal выпускает prerelease и уже перешёл
+    // на zapret2 (winws2.exe + Lua) — такие релизы отбрасываем и показываем
+    // пользователю как «пропущенные».
+    let mut release = match latest_supported_zapret() {
+        Ok((r, skipped)) => {
             res.source = "api".to_string();
+            if !skipped.is_empty() {
+                log::info(format!(
+                    "Обновления zapret: пропущены неподдерживаемые релизы {}",
+                    skipped.join(", ")
+                ));
+            }
+            res.skipped = skipped;
             Some(r)
         }
         Err(api_error) => {
             log::warn(format!(
-                "GitHub API недоступен ({}), версия получена через version.txt.",
+                "GitHub API недоступен или нет подходящих релизов ({}), версия получена через version.txt.",
                 api_error
             ));
             match latest_version_fallback() {
                 Ok(tag) => {
-                    res.source = "version.txt".to_string();
-                    Some(Release {
+                    let candidate = Release {
                         tag: tag.clone(),
                         name: format!("zapret-discord-youtube {}", tag),
                         body: format!(
@@ -326,7 +421,22 @@ pub fn check_update(local_version: &str, force: bool) -> UpdateCheckResult {
                         ),
                         html_url: format!("https://github.com/{}/releases", ZAPRET_REPO),
                         ..Default::default()
-                    })
+                    };
+                    if candidate.is_supported() {
+                        res.source = "version.txt".to_string();
+                        Some(candidate)
+                    } else {
+                        // version.txt тоже может указывать на 2.x — не предлагаем.
+                        res.error = candidate
+                            .unsupported_reason()
+                            .unwrap_or_else(|| api_error.clone());
+                        res.skipped = vec![candidate.tag];
+                        res.ok = false;
+                        if let Ok(mut cache) = CHECK_CACHE.lock() {
+                            *cache = Some(res.clone());
+                        }
+                        return res;
+                    }
                 }
                 Err(fallback_error) => {
                     res.ok = false;
@@ -540,29 +650,57 @@ pub(crate) fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn find_payload(extract: &Path) -> Option<PathBuf> {
+fn find_payload(extract: &Path) -> Result<PathBuf, String> {
     if ZapretInstall::looks_valid(extract) {
-        return Some(extract.to_path_buf());
+        return Ok(extract.to_path_buf());
     }
-    let entries = std::fs::read_dir(extract).ok()?;
+    let entries = std::fs::read_dir(extract).map_err(|e| e.to_string())?;
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() && ZapretInstall::looks_valid(&path) {
-            return Some(path);
+            return Ok(path);
         }
     }
     // на случай вложенных папок
-    for entry in std::fs::read_dir(extract).ok()?.flatten() {
+    for entry in std::fs::read_dir(extract).map_err(|e| e.to_string())?.flatten() {
         if !entry.path().is_dir() {
             continue;
         }
-        for inner in std::fs::read_dir(entry.path()).ok()?.flatten() {
-            if inner.path().is_dir() && ZapretInstall::looks_valid(&inner.path()) {
-                return Some(inner.path());
+        if let Ok(inner) = std::fs::read_dir(entry.path()) {
+            for inner in inner.flatten() {
+                if inner.path().is_dir() && ZapretInstall::looks_valid(&inner.path()) {
+                    return Ok(inner.path());
+                }
             }
         }
     }
-    None
+    Err(if looks_like_zapret2(extract) {
+        "В архиве zapret 2.x (bin\\winws2.exe, правила Lua) — это другое ядро, менеджер его не устанавливает. \
+         Обновление отменено, текущая установка не тронута."
+            .to_string()
+    } else {
+        "В архиве не найдена папка zapret (service.bat + bin\\winws.exe).".to_string()
+    })
+}
+
+/// Похож ли распакованный архив на zapret 2.x (winws2.exe и/или каталог lua).
+fn looks_like_zapret2(dir: &Path) -> bool {
+    fn hit(path: &Path) -> bool {
+        path.join("bin").join("winws2.exe").is_file() || path.join("lua").is_dir()
+    }
+    if hit(dir) {
+        return true;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() && hit(&path) {
+            return true;
+        }
+    }
+    false
 }
 
 fn relative(root: &Path, path: &Path) -> String {
@@ -616,6 +754,11 @@ pub fn update_now(
     if release.tag.is_empty() {
         return Err("Нет данных о релизе.".to_string());
     }
+    // Защита в глубину: даже если релиз пришёл не из `check_update`
+    // (ручной тег, старая ссылка), zapret 2.x и prerelease не ставим.
+    if let Some(reason) = release.unsupported_reason() {
+        return Err(format!("Установка отменена: {}", reason));
+    }
     if !install.is_valid() {
         return Err("Папка zapret не найдена или повреждена.".to_string());
     }
@@ -664,9 +807,7 @@ pub fn update_now(
     progress(38, "Распаковка архива…");
     let extract = work.join("extract");
     extract_zip(&zip_path, &extract)?;
-    let payload = find_payload(&extract).ok_or_else(|| {
-        "В архиве не найдена папка zapret (service.bat + bin\\winws.exe).".to_string()
-    })?;
+    let payload = find_payload(&extract)?;
     check_winws_signature(&payload)?;
 
     let ops = ZapretOps::new(install.clone());
@@ -819,6 +960,9 @@ pub fn install_fresh(
     parent_dir: &Path,
     mut progress: impl FnMut(u32, &str),
 ) -> Result<ZapretInstall, String> {
+    if let Some(reason) = release.unsupported_reason() {
+        return Err(format!("Установка отменена: {}", reason));
+    }
     let url = release
         .zip_url()
         .ok_or_else(|| "В релизе нет zip-архива.".to_string())?;
@@ -835,7 +979,7 @@ pub fn install_fresh(
     progress(75, "Распаковка…");
     let extract = work.join("extract");
     extract_zip(&zip_path, &extract)?;
-    let payload = find_payload(&extract).ok_or_else(|| "В архиве нет папки zapret.".to_string())?;
+    let payload = find_payload(&extract)?;
     check_winws_signature(&payload)?;
     let folder = payload
         .file_name()
@@ -888,7 +1032,7 @@ pub fn self_check(force: bool) -> SelfUpdateInfo {
         local: crate::APP_VERSION.to_string(),
         ..Default::default()
     };
-    match get_latest_release(SELF_REPO) {
+    match latest_stable(SELF_REPO) {
         Ok(release) => {
             info.remote = release.tag.clone();
             info.available = version_cmp(&release.tag, crate::APP_VERSION).is_gt();
@@ -1247,4 +1391,93 @@ pub fn apply_update_mode() {
         &[],
         target_path.parent(),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn release_json(tag: &str, prerelease: bool) -> serde_json::Value {
+        serde_json::json!({
+            "tag_name": tag,
+            "name": tag,
+            "body": "",
+            "html_url": "",
+            "published_at": "2026-11-27T17:37:59Z",
+            "prerelease": prerelease,
+            "assets": [{
+                "name": "zapret-discord-youtube-x.zip",
+                "browser_download_url": "https://github.com/Flowseal/zapret-discord-youtube/releases/download/x/x.zip",
+                "url": "",
+                "size": 1,
+                "digest": ""
+            }]
+        })
+    }
+
+    #[test]
+    fn prerelease_and_zapret2_are_not_offered() {
+        let rc = parse_release(&release_json("2.0.0-rc", true)).unwrap();
+        assert_eq!(rc.core(), Core::V2);
+        assert!(!rc.is_supported());
+        assert!(rc.unsupported_reason().unwrap().contains("2.x"));
+
+        // Даже финальный 2.0.0 — другое ядро, его тоже не предлагаем.
+        let stable_v2 = parse_release(&release_json("2.0.0", false)).unwrap();
+        assert!(!stable_v2.is_supported());
+        assert!(stable_v2.unsupported_reason().is_some());
+
+        // Тестовая сборка 1.x — тоже не для пользователя.
+        let test_v1 = parse_release(&release_json("1.10.5-beta1", true)).unwrap();
+        assert!(!test_v1.is_supported());
+        assert!(test_v1.unsupported_reason().unwrap().contains("тестовая"));
+
+        let stable_v1 = parse_release(&release_json("1.10.4", false)).unwrap();
+        assert!(stable_v1.is_supported());
+        assert!(stable_v1.unsupported_reason().is_none());
+        assert!(stable_v1.zip_url().is_some());
+    }
+
+    /// Установка zapret 2.x отклоняется до скачивания — даже если релиз
+    /// пришёл «ручным» путём (тег, старая ссылка).
+    #[test]
+    fn update_and_fresh_install_reject_zapret2() {
+        let install = ZapretInstall::default();
+        let release = Release {
+            tag: "2.0.0-rc".to_string(),
+            prerelease: true,
+            ..Default::default()
+        };
+        let err = update_now(&install, &release, &UpdateOptions::default(), |_, _| {})
+            .expect_err("2.x не должен устанавливаться");
+        assert!(err.contains("2.x"), "неожиданная ошибка: {}", err);
+
+        let dir = std::env::temp_dir().join(format!("zm-fresh-test-{}", std::process::id()));
+        let err = install_fresh(&release, &dir, |_, _| {}).expect_err("2.x не должен ставиться");
+        assert!(err.contains("2.x"), "неожиданная ошибка: {}", err);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Сетевой тест: реальный GitHub API сейчас отдаёт `2.0.0-rc` первым,
+    /// и он обязан быть пропущен. Запускается вручную:
+    /// `cargo test -- --ignored live_api`.
+    #[test]
+    #[ignore = "требует доступа к api.github.com"]
+    fn live_api_skips_zapret2_and_prerelease() {
+        let (release, skipped) = latest_supported_zapret().expect("GitHub API недоступен");
+        assert_eq!(release.core(), Core::V1);
+        assert!(!release.prerelease);
+        assert!(
+            skipped.iter().any(|tag| tag.starts_with("2.")),
+            "ожидали пропущенный 2.x, получили {:?}",
+            skipped
+        );
+        for tag in &skipped {
+            assert!(
+                Core::from_version(tag) == Core::V2 || tag.contains('-'),
+                "пропущенный релиз {} должен быть 2.x или тестовым",
+                tag
+            );
+        }
+    }
 }

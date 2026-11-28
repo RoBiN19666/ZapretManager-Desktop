@@ -127,6 +127,15 @@ pub fn run(
 
     step("Установка zapret…");
     let valid = install.is_valid();
+    if let Some(note) = install.unsupported_note() {
+        b.add(
+            "Система",
+            "Ядро zapret",
+            Severity::Warn,
+            note,
+            "Это не ошибка установки: zapret 2.x работает сам через свой service.bat. Менеджер не запускает его стратегии и не предлагает обновления на 2.x.",
+        );
+    }
     if valid {
         let version = if install.version.is_empty() {
             "неизвестной версии".to_string()
@@ -301,8 +310,13 @@ pub fn run(
                     ops.service_install_root().unwrap_or_default()
                 ),
                 &format!(
-                    "Менеджер управляет папкой {}. Переустановите службу из нужной папки (страница «Обзор»).",
-                    install.root
+                    "Менеджер управляет папкой {}. {}",
+                    install.root,
+                    if install.is_zapret2() {
+                        "Службой zapret 2.x управляет его собственный service.bat — менеджер её не переустанавливает."
+                    } else {
+                        "Переустановите службу из нужной папки (страница «Обзор»)."
+                    }
                 ),
             );
         } else if ops.service_path_missing() {

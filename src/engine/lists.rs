@@ -706,7 +706,7 @@ impl ListChanges {
 /// Перед перезаписью официальных списков перенести блок «мои добавления» из
 /// файла в `.changes`.
 ///
-/// Иначе правки, сделанные вручную (Блокнотом, старой или C#-версией, при
+/// Иначе правки, сделанные вручную (Блокнотом или другой оболочкой, при
 /// «переехавшем» каталоге данных), при обновлении zapret исчезают молча:
 /// `apply_after_update` работает уже с новым файлом и блока в нём не видит.
 pub fn capture_blocks_before_update(install_root: &Path, data_dir: &Path) -> Vec<String> {
@@ -790,12 +790,23 @@ pub fn apply_after_update(install_root: &Path, data_dir: &Path) -> Vec<String> {
             }
         }
         let text = compose_text(&kept, &valid_added);
-        let _ = textfile::write_text_atomic(&file, &text);
+        // Ошибку записи нельзя глотать: иначе пользователь уверен, что
+        // правки перенесены, а файл остался как был.
+        if let Err(e) = textfile::write_text_atomic(&file, &text) {
+            super::log::error(format!("{}: не удалось записать список: {}", name, e));
+            messages.push(format!(
+                "{}: не удалось записать список ({}). Ваши правки сохранены в .changes и будут перенесены при следующем обновлении.",
+                name, e
+            ));
+            continue;
+        }
 
         let baseline_text = format!("{}\r\n", new_official.join("\r\n"));
-        let _ = textfile::write_text_atomic(&baseline_path(data_dir, name), &baseline_text);
+        if let Err(e) = textfile::write_text_atomic(&baseline_path(data_dir, name), &baseline_text) {
+            super::log::warn(format!("{}: baseline не записан: {}", name, e));
+        }
 
-        let mut lc = ListChanges {
+        let lc = ListChanges {
             file_name: name.to_string(),
             data_dir: data_dir.to_path_buf(),
             added: valid_added.clone(),

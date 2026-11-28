@@ -229,7 +229,23 @@ impl App {
             .as_ref()
             .map(|s| s.ok && (s.update_available || s.local_unknown))
             .unwrap_or(false);
+        let skipped = self
+            .update_state
+            .as_ref()
+            .map(|s| s.skipped.clone())
+            .unwrap_or_default();
         w::card(ui, &p, "Доступное обновление", |ui| {
+            if !skipped.is_empty() {
+                w::muted(
+                    ui,
+                    &p,
+                    &format!(
+                        "Новее есть {}, но это не предлагается: zapret 2.x работает на другом ядре (winws2.exe + Lua), а тестовые сборки менеджер не ставит. Вы остаётесь на поддерживаемой ветке 1.x.",
+                        skipped.join(", ")
+                    ),
+                );
+                ui.add_space(6.0);
+            }
             if let Some(rel) = &release {
                 let title = if rel.name.is_empty() {
                     rel.tag.clone()
@@ -257,10 +273,10 @@ impl App {
                 } else {
                     notes
                 };
-                egui::Frame::none()
+                egui::Frame::NONE
                     .fill(p.editor)
-                    .stroke(egui::Stroke::new(1.0, p.border))
-                    .rounding(egui::Rounding::same(6))
+                    .stroke(egui::Stroke::new(1.0_f32, p.border))
+                    .corner_radius(egui::CornerRadius::same(6))
                     .inner_margin(egui::Margin::same(8))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -342,7 +358,7 @@ impl App {
             w::small(
                 ui,
                 &p,
-                "Можно поставить не только последнюю, но и любую другую версию — например, откатиться назад, если в новой что-то сломалось. Списки и настройки сохраняются.",
+                "Можно поставить не только последнюю, но и любую другую версию — например, откатиться назад, если в новой что-то сломалось. Списки и настройки сохраняются. В списке только сборки на ядре zapret 1.x: 2.x (winws2 + Lua) и тестовые сборки менеджер не устанавливает.",
             );
             ui.add_space(8.0);
             let names: Vec<String> = self
@@ -384,7 +400,15 @@ impl App {
                     });
                 if w::secondary(ui, &p, "Загрузить список").clicked() {
                     self.spawn_bg(move |tx| {
-                        let result = update::list_releases(update::ZAPRET_REPO, 20);
+                        let result = update::list_supported_zapret(20).map(|(kept, skipped)| {
+                            if !skipped.is_empty() {
+                                crate::engine::log::info(format!(
+                                    "Список версий: не показываю неподдерживаемые релизы {}",
+                                    skipped.join(", ")
+                                ));
+                            }
+                            kept
+                        });
                         let _ = tx.send(Msg::Releases(result));
                     });
                 }
@@ -533,6 +557,15 @@ impl App {
 
     fn install_by_tag(&mut self, tag: String) {
         let current = self.install.version.clone();
+        // Ручной тег тоже проверяем: 2.x и prerelease не ставим.
+        let probe = update::Release {
+            tag: tag.clone(),
+            ..Default::default()
+        };
+        if let Some(reason) = probe.unsupported_reason() {
+            self.notify(format!("Не устанавливаю: {}", reason), LogLevel::Warn);
+            return;
+        }
         let older = !current.is_empty()
             && crate::util::version_cmp(&tag, &current) == std::cmp::Ordering::Less;
         self.confirm(
@@ -576,7 +609,7 @@ impl App {
         self.pages.update.stage = "Получение информации о релизе…".to_string();
         self.spawn_bg(move |tx| {
             let tx2 = tx.clone();
-            let result = update::get_latest_release(update::ZAPRET_REPO).and_then(|release| {
+            let result = update::latest_supported_zapret().and_then(|(release, _skipped)| {
                 update::install_fresh(&release, &parent, |percent, stage| {
                     let _ = tx2.send(Msg::Progress("update", percent, stage.to_string()));
                 })
@@ -634,10 +667,10 @@ fn version_row(
     enabled: bool,
 ) -> bool {
     let mut clicked = false;
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(p.editor)
-        .stroke(egui::Stroke::new(1.0, p.border))
-        .rounding(egui::Rounding::same(7))
+        .stroke(egui::Stroke::new(1.0_f32, p.border))
+        .corner_radius(egui::CornerRadius::same(7))
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {

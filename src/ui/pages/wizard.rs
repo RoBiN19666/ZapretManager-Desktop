@@ -49,7 +49,7 @@ impl App {
             .frame(
                 egui::Frame::window(&ctx.style())
                     .fill(p.surface)
-                    .stroke(egui::Stroke::new(1.0, p.border_strong)),
+                    .stroke(egui::Stroke::new(1.0_f32, p.border_strong)),
             )
             .show(ctx, |ui| {
                 ui.label(
@@ -275,7 +275,9 @@ impl App {
                 let mut errors = Vec::new();
                 if install_zapret {
                     let parent = std::path::PathBuf::from(&zapret_dir);
-                    match update::get_latest_release(update::ZAPRET_REPO).and_then(|release| {
+                    // Только поддерживаемое ядро 1.x: 2.x и тестовые сборки
+                    // мастер не ставит (см. update::latest_supported_zapret).
+                    match update::latest_supported_zapret().and_then(|(release, _skipped)| {
                         update::install_fresh(&release, &parent, |percent, stage| {
                             let _ = tx.send(Msg::Progress("wizard", percent, stage.to_string()));
                         })

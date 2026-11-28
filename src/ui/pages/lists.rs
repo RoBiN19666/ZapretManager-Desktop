@@ -150,10 +150,10 @@ impl App {
                         .max_height(editor_h + 120.0)
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            egui::Frame::none()
+                            egui::Frame::NONE
                                 .fill(p.editor)
-                                .stroke(egui::Stroke::new(1.0, p.border))
-                                .rounding(egui::Rounding::same(6))
+                                .stroke(egui::Stroke::new(1.0_f32, p.border))
+                                .corner_radius(egui::CornerRadius::same(6))
                                 .inner_margin(egui::Margin::same(4))
                                 .show(ui, |ui| {
                                     for (i, f) in files.iter().enumerate() {
@@ -205,10 +205,10 @@ impl App {
                             .color(p.text_muted),
                         );
                         ui.add_space(4.0);
-                        egui::Frame::none()
+                        egui::Frame::NONE
                             .fill(p.editor)
-                            .stroke(egui::Stroke::new(1.0, p.border))
-                            .rounding(egui::Rounding::same(6))
+                            .stroke(egui::Stroke::new(1.0_f32, p.border))
+                            .corner_radius(egui::CornerRadius::same(6))
                             .inner_margin(egui::Margin::same(6))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());

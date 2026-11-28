@@ -6,7 +6,7 @@ use crate::engine::log::LogLevel;
 use crate::engine::ops::ZapretOps;
 use crate::engine::{backup, paths, sys, tester, tgproxy, uninstall};
 
-use crate::ui::app::App;
+use crate::ui::app::{App, Msg};
 use crate::ui::widgets as w;
 
 impl App {
@@ -239,14 +239,13 @@ impl App {
                         ),
                         "Удалить zapret",
                         true,
-                        move |app| match uninstall::remove_zapret(&app.install, keep) {
-                            Ok(message) => {
-                                app.notify(message, LogLevel::Ok);
-                                app.install = crate::engine::install::ZapretInstall::new("");
-                                app.ops = ZapretOps::new(app.install.clone());
-                                app.refresh_state(true);
-                            }
-                            Err(e) => app.notify(e, LogLevel::Error),
+                        move |app| {
+                            let install = app.install.clone();
+                            app.notify("Удаляю zapret…", LogLevel::Info);
+                            app.spawn_bg(move |tx| {
+                                let result = uninstall::remove_zapret(&install, keep);
+                                let _ = tx.send(Msg::Uninstalled(result));
+                            });
                         },
                     );
                 }
@@ -256,12 +255,17 @@ impl App {
                         "Прокси будет остановлен, его папка, тихий режим, данные в %APPDATA%\\TgWsProxy и автозапуск будут удалены.",
                         "Удалить TG WS Proxy",
                         true,
-                        |app| match uninstall::remove_tg(&mut app.ini) {
-                            Ok(message) => {
-                                app.notify(message, LogLevel::Ok);
-                                app.refresh_tg_state();
-                            }
-                            Err(e) => app.notify(e, LogLevel::Error),
+                        |app| {
+                            let mut ini = app.ini.clone();
+                            app.notify("Удаляю TG WS Proxy…", LogLevel::Info);
+                            app.spawn_bg(move |tx| match uninstall::remove_tg(&mut ini) {
+                                Ok(message) => {
+                                    let _ = tx.send(Msg::Notify(message, LogLevel::Ok));
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Msg::Notify(e, LogLevel::Error));
+                                }
+                            });
                         },
                     );
                 }
@@ -271,12 +275,19 @@ impl App {
                         "Будут удалены настройки, журнал, резервные копии и отчёты. Приложение закроется, чтобы освободить файлы.",
                         "Очистить данные",
                         true,
-                        |app| match uninstall::clean_manager_data() {
-                            Ok(message) => {
-                                app.notify(message, LogLevel::Ok);
-                                app.exit_requested = true;
-                            }
-                            Err(e) => app.notify(e, LogLevel::Error),
+                        |app| {
+                            app.notify("Очищаю данные менеджера…", LogLevel::Info);
+                            app.spawn_bg(move |tx| {
+                                match uninstall::clean_manager_data() {
+                                    Ok(message) => {
+                                        let _ = tx.send(Msg::Notify(message, LogLevel::Ok));
+                                        let _ = tx.send(Msg::ExitRequested);
+                                    }
+                                    Err(e) => {
+                                        let _ = tx.send(Msg::Notify(e, LogLevel::Error));
+                                    }
+                                }
+                            });
                         },
                     );
                 }
@@ -287,14 +298,20 @@ impl App {
                         "Удалить всё",
                         true,
                         |app| {
-                            let result = uninstall::remove_everything(&app.install, &mut app.ini);
-                            match result {
-                                Ok(message) => {
-                                    app.notify(message, LogLevel::Ok);
-                                    app.exit_requested = true;
+                            let install = app.install.clone();
+                            let mut ini = app.ini.clone();
+                            app.notify("Удаляю всё…", LogLevel::Info);
+                            app.spawn_bg(move |tx| {
+                                match uninstall::remove_everything(&install, &mut ini) {
+                                    Ok(message) => {
+                                        let _ = tx.send(Msg::Notify(message, LogLevel::Ok));
+                                        let _ = tx.send(Msg::ExitRequested);
+                                    }
+                                    Err(e) => {
+                                        let _ = tx.send(Msg::Notify(e, LogLevel::Error));
+                                    }
                                 }
-                                Err(e) => app.notify(e, LogLevel::Error),
-                            }
+                            });
                         },
                     );
                 }

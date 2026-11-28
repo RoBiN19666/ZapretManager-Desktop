@@ -21,7 +21,6 @@ const SERVICE_AUTO_START: u32 = 0x00000002;
 const SERVICE_ERROR_NORMAL: u32 = 0x00000001;
 const SERVICE_CONTROL_STOP: u32 = 0x00000001;
 const SERVICE_CONFIG_DESCRIPTION: u32 = 1;
-const SC_STATUS_PROCESS_INFO: u32 = 0;
 
 #[derive(Debug, Clone, Default)]
 pub struct ServiceSnapshot {

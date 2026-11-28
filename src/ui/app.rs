@@ -6,7 +6,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Color32, FontId, RichText, Rounding, Sense, Stroke, Vec2};
+use eframe::egui::{self, Color32, FontId, RichText, CornerRadius, Sense, Stroke, Vec2};
 
 use crate::engine::appprobe::AppEntry;
 use crate::engine::autotune::{ApplyReport, AutoReport};
@@ -186,6 +186,10 @@ pub enum Msg {
     SelfApplyDone(Result<String, String>),
     Releases(Result<Vec<Release>, String>),
     Installed(Box<ZapretInstall>),
+    /// Удаление zapret/Discord-кэша/данных закончилось (выполнялось в фоне).
+    Uninstalled(Result<String, String>),
+    /// Завершить приложение (после разрушительного действия).
+    ExitRequested,
     WizardDone(Result<String, String>),
     Report(Option<LoadedReport>),
     Official(Option<OfficialReport>),
@@ -193,6 +197,10 @@ pub enum Msg {
     HostsChecked(HostsStatus),
     GuardTick,
     GuardHosts(Vec<String>, Vec<String>),
+    /// Ручное «Добавить найденные» завершилось (домены уже в списке).
+    GuardAdded(Vec<String>),
+    /// Состояние задачи автозапуска (считается в фоне: `schtasks` небыстрый).
+    Autostart(bool),
 }
 
 // ---------------------------------------------------------------------------
@@ -352,8 +360,6 @@ pub struct SettingsState {
     pub ipset_info: String,
     pub autostart_enabled: bool,
     pub autostart_checked: Option<Instant>,
-    pub tcp_ts: Option<bool>,
-    pub tcp_ts_checked: Option<Instant>,
 }
 
 impl Default for SettingsState {
@@ -372,8 +378,6 @@ impl Default for SettingsState {
             ipset_info: String::new(),
             autostart_enabled: false,
             autostart_checked: None,
-            tcp_ts: None,
-            tcp_ts_checked: None,
         }
     }
 }
@@ -641,6 +645,8 @@ pub struct App {
     pub progress: HashMap<&'static str, (u32, String)>,
     pub start_hidden: bool,
     hidden_done: bool,
+    /// Трей создаётся на первом кадре, когда уже есть `egui::Context`.
+    tray_init_done: bool,
     window_visible: bool,
     window_visibility_sent: Option<bool>,
     pub autostart_mode: bool,
@@ -724,6 +730,7 @@ impl App {
             progress: HashMap::new(),
             start_hidden,
             hidden_done: !start_hidden,
+            tray_init_done: false,
             window_visible: !start_hidden,
             window_visibility_sent: if start_hidden { None } else { Some(true) },
             autostart_mode,
@@ -756,7 +763,6 @@ impl App {
             });
         }
         app.pages.update.notes.clear();
-        app.init_tray();
         app.load_lists();
         app.load_test_groups();
         app.refresh_state(false);
@@ -802,7 +808,7 @@ impl App {
                 LogLevel::Warn,
             );
         }
-        // Первый запуск: показываем мастер настройки, как в C#-версии. В тихом
+        // Первый запуск: показываем мастер настройки. В тихом
         // автозапуске и в режиме снимков окно не открываем.
         if app.shot.is_none()
             && !start_hidden
@@ -844,9 +850,9 @@ impl App {
         }
     }
 
-    fn init_tray(&mut self) {
+    fn init_tray(&mut self, ctx: &egui::Context) {
         let icon = crate::ui::assets::tray_icon_bytes();
-        let (rx, handle) = super::tray::spawn(icon, self.tray_state.clone());
+        let (rx, handle) = super::tray::spawn(icon, self.tray_state.clone(), ctx.clone());
         self.tray_rx = Some(rx);
         self.tray = Some(handle);
     }
@@ -899,7 +905,11 @@ impl App {
         let ops = ZapretOps::new(self.install.clone());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(Msg::State(ops.get_state()));
+            let mut st = ops.get_state();
+            // `netsh` (TCP timestamps) — сотни миллисекунд, поэтому только здесь,
+            // в фоновом потоке, а не в `get_state` при создании окна.
+            st.tcp_timestamps = ops.tcp_timestamps_enabled();
+            let _ = tx.send(Msg::State(st));
         });
     }
 
@@ -1593,6 +1603,40 @@ impl App {
                     }
                     self.notify(message, LogLevel::Ok);
                 }
+                Msg::Uninstalled(result) => {
+                    match result {
+                        Ok(message) => {
+                            self.install = crate::engine::install::ZapretInstall::new("");
+                            self.ops = ZapretOps::new(self.install.clone());
+                            self.ini.set("Root", "");
+                            let _ = self.ini.save();
+                            self.pages.lists.dirty = false;
+                            self.refresh_state(true);
+                            self.notify(message, LogLevel::Ok);
+                        }
+                        Err(e) => self.notify(e, LogLevel::Error),
+                    }
+                }
+                Msg::Autostart(enabled) => {
+                    self.pages.settings.autostart_enabled = enabled;
+                    self.pages.settings.autostart_checked = Some(Instant::now());
+                }
+                Msg::GuardAdded(found) => {
+                    if found.is_empty() {
+                        self.notify("Сторож: новых доменов не добавлено.", LogLevel::Info);
+                    } else {
+                        self.pages.sites.guard_status =
+                            format!("Сторож: добавлено доменов {}.", found.len());
+                        self.notify(
+                            format!("Сторож: добавлено доменов {}.", found.len()),
+                            LogLevel::Ok,
+                        );
+                        self.restart_after_change("Домены добавлены");
+                    }
+                }
+                Msg::ExitRequested => {
+                    self.exit_requested = true;
+                }
                 Msg::WizardDone(result) => {
                     self.handle_wizard_msg(result);
                 }
@@ -1788,7 +1832,7 @@ impl App {
         ));
         painter.rect_filled(
             ctx.screen_rect(),
-            Rounding::ZERO,
+            CornerRadius::ZERO,
             Color32::from_black_alpha(140),
         );
         let mut go_self = false;
@@ -1807,7 +1851,7 @@ impl App {
             .frame(
                 egui::Frame::window(&ctx.style())
                     .fill(p.surface)
-                    .stroke(Stroke::new(1.0, p.border_strong)),
+                    .stroke(Stroke::new(1.0_f32, p.border_strong)),
             )
             .show(ctx, |ui| {
                 ui.label(
@@ -1817,10 +1861,10 @@ impl App {
                 );
                 ui.add_space(8.0);
                 for (name, current, new) in &items {
-                    egui::Frame::none()
+                    egui::Frame::NONE
                         .fill(p.editor)
-                        .stroke(Stroke::new(1.0, p.border))
-                        .rounding(Rounding::same(8))
+                        .stroke(Stroke::new(1.0_f32, p.border))
+                        .corner_radius(CornerRadius::same(8))
                         .inner_margin(egui::Margin::symmetric(12, 9))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -2023,7 +2067,11 @@ impl App {
         let tx_outer = self.tx.clone();
         std::thread::spawn(move || {
             let (events, _err, _scanned) = guard::new_events(None, true);
-            let hosts: Vec<String> = events.into_iter().map(|e| e.host).collect();
+            let mut hosts: Vec<String> = events.into_iter().map(|e| e.host).collect();
+            // В журнале DNS один домен встречается многократно — в сообщении
+            // он должен быть один раз, иначе строка разрастается.
+            hosts.sort();
+            hosts.dedup();
             let _ = tx_outer.send(Msg::GuardTick);
             if hosts.is_empty() {
                 return;
@@ -2074,7 +2122,7 @@ impl App {
             .frame(
                 egui::Frame::window(&ctx.style())
                     .fill(p.surface)
-                    .stroke(Stroke::new(1.0, p.border_strong)),
+                    .stroke(Stroke::new(1.0_f32, p.border_strong)),
             )
             .show(ctx, |ui| {
                 ui.label(RichText::new(&confirm.body).size(13.0).color(p.text_dim));
@@ -2142,16 +2190,16 @@ impl App {
             .fixed_pos(egui::pos2(screen.right() - width - 20.0, screen.bottom() - 90.0))
             .interactable(false)
             .show(ctx, |ui| {
-                egui::Frame::none()
+                egui::Frame::NONE
                     .fill(p.surface)
-                    .stroke(Stroke::new(1.0, p.border_strong))
-                    .rounding(Rounding::same(10))
+                    .stroke(Stroke::new(1.0_f32, p.border_strong))
+                    .corner_radius(CornerRadius::same(10))
                     .inner_margin(egui::Margin::same(12))
                     .show(ui, |ui| {
                         ui.set_width(width);
                         ui.horizontal(|ui| {
                             let (rect, _) = ui.allocate_exact_size(Vec2::new(3.0, 34.0), Sense::hover());
-                            ui.painter().rect_filled(rect, Rounding::same(2), color);
+                            ui.painter().rect_filled(rect, CornerRadius::same(2), color);
                             ui.label(RichText::new(text).size(12.5).color(p.text));
                         });
                     });
@@ -2164,7 +2212,7 @@ impl App {
         egui::SidePanel::left("sidebar")
             .exact_width(236.0)
             .resizable(false)
-            .frame(egui::Frame::none().fill(p.sidebar).inner_margin(egui::Margin::same(0)))
+            .frame(egui::Frame::NONE.fill(p.sidebar).inner_margin(egui::Margin::same(0)))
             .show(ctx, |ui| {
                 ui.add_space(18.0);
                 ui.horizontal(|ui| {
@@ -2190,7 +2238,7 @@ impl App {
                             Color32::WHITE,
                         );
                     } else {
-                        ui.painter().rect_filled(rect, Rounding::same(9), p.accent);
+                        ui.painter().rect_filled(rect, CornerRadius::same(9), p.accent);
                         ui.painter().text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
@@ -2233,17 +2281,17 @@ impl App {
                     );
                     let rect = rect.translate(Vec2::new(10.0, 0.0));
                     if selected {
-                        ui.painter().rect_filled(rect, Rounding::same(8), p.selection);
+                        ui.painter().rect_filled(rect, CornerRadius::same(8), p.selection);
                         ui.painter().rect_filled(
                             egui::Rect::from_min_size(
                                 rect.left_top(),
                                 Vec2::new(3.0, rect.height()),
                             ),
-                            Rounding::same(2),
+                            CornerRadius::same(2),
                             p.accent,
                         );
                     } else if resp.hovered() {
-                        ui.painter().rect_filled(rect, Rounding::same(8), p.hover);
+                        ui.painter().rect_filled(rect, CornerRadius::same(8), p.hover);
                     }
                     let (glyph, family) = if crate::ui::theme::has_icon_font() {
                         (page.glyph(), egui::FontFamily::Name("icons".into()))
@@ -2297,9 +2345,9 @@ impl App {
         egui::TopBottomPanel::bottom("status")
             .exact_height(30.0)
             .frame(
-                egui::Frame::none()
+                egui::Frame::NONE
                     .fill(p.sidebar)
-                    .stroke(Stroke::new(1.0, p.border))
+                    .stroke(Stroke::new(1.0_f32, p.border))
                     .inner_margin(egui::Margin::symmetric(16, 5)),
             )
             .show(ctx, |ui| {
@@ -2425,6 +2473,29 @@ impl App {
         });
         ui.add_space(6.0);
         ui.separator();
+        self.core_banner(ui);
+    }
+
+    /// Предупреждение о неподдерживаемом ядре (zapret 2.x) на всех страницах.
+    fn core_banner(&self, ui: &mut egui::Ui) {
+        let Some(note) = self.install.unsupported_note() else {
+            return;
+        };
+        let p = self.p;
+        ui.add_space(8.0);
+        egui::Frame::NONE
+            .fill(p.surface_alt)
+            .stroke(egui::Stroke::new(1.0_f32, p.warn))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::symmetric(12, 8))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new("Zapret 2.x — другое ядро, менеджер его не ведёт")
+                        .font(FontId::new(13.5, egui::FontFamily::Name("bold".into())))
+                        .color(p.warn),
+                );
+                ui.label(RichText::new(note).size(12.0).color(p.text_dim));
+            });
     }
 }
 
@@ -2435,6 +2506,12 @@ impl eframe::App for App {
         // работает. Иначе visibility-код спрятал бы окно обратно.
         if super::tray::take_exit_request() {
             self.exit_requested = true;
+        }
+        // Трей создаём на первом кадре: окно уже есть, `egui::Context` доступен,
+        // и ожидание HWND больше не задерживает старт приложения.
+        if !self.tray_init_done {
+            self.tray_init_done = true;
+            self.init_tray(ctx);
         }
         self.poll_tray();
         self.auto_heal_tick();
@@ -2590,7 +2667,7 @@ impl eframe::App for App {
         let side = ((screen_w - 236.0 - 1200.0) * 0.5).max(24.0).min(400.0) as i8;
         egui::CentralPanel::default()
             .frame(
-                egui::Frame::none()
+                egui::Frame::NONE
                     .fill(self.p.bg)
                     .inner_margin(egui::Margin::symmetric(side, 0)),
             )
@@ -2677,7 +2754,7 @@ impl App {
                 let (area, _response) =
                     ui.allocate_exact_size(rect.size(), Sense::click_and_drag());
                 ui.painter()
-                    .rect_filled(area, Rounding::ZERO, Color32::from_black_alpha(140));
+                    .rect_filled(area, CornerRadius::ZERO, Color32::from_black_alpha(140));
             });
     }
 }

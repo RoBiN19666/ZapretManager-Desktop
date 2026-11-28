@@ -150,7 +150,7 @@ pub fn tail(n: usize) -> Vec<LogLine> {
         .collect()
 }
 
-/// Форматирование строки как в C#-версии: "HH:MM:SS  текст".
+/// Форматирование строки журнала: "HH:MM:SS  текст".
 pub fn format_line(line: &LogLine) -> String {
     format!("{}  {}", line.time, line.text)
 }

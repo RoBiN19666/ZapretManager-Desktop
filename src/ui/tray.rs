@@ -21,9 +21,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
     DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, LoadIconW,
     PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow,
-    SetMenuInfo, TrackPopupMenu, TranslateMessage, HICON, MENUINFO, MF_OWNERDRAW, MIM_BACKGROUND,
-    MIM_STYLE, MNS_NOCHECK, MSG, WNDCLASSW, WM_APP, WM_CLOSE, WM_DRAWITEM, WM_LBUTTONDBLCLK,
-    WM_MEASUREITEM, WM_NULL, WM_RBUTTONUP,
+    SetMenuInfo, TrackPopupMenu, TranslateMessage, CS_DBLCLKS, HICON, MENUINFO, MF_OWNERDRAW,
+    MIM_BACKGROUND, MIM_STYLE, MNS_NOCHECK, MSG, WNDCLASSW, WM_APP, WM_CLOSE, WM_DRAWITEM,
+    WM_LBUTTONUP, WM_MEASUREITEM, WM_NULL, WM_RBUTTONUP,
 };
 
 use crate::engine::config::Ini;
@@ -81,11 +81,18 @@ impl TrayHandle {
 }
 
 /// Создать значок в трее в отдельном потоке.
-pub fn spawn(icon: Option<Vec<u8>>, state: Arc<Mutex<TrayState>>) -> (Receiver<TrayEvent>, TrayHandle) {
+///
+/// `ctx` нужен, чтобы по клику разбудить кадр egui: скрытое окно может ждать
+/// перерисовки до 3 секунд, и окно открывалось бы с задержкой.
+pub fn spawn(
+    icon: Option<Vec<u8>>,
+    state: Arc<Mutex<TrayState>>,
+    ctx: eframe::egui::Context,
+) -> (Receiver<TrayEvent>, TrayHandle) {
     let (tx, rx) = mpsc::channel();
     let (hwnd_tx, hwnd_rx) = mpsc::channel::<isize>();
     std::thread::spawn(move || unsafe {
-        run_tray(icon, state, tx, hwnd_tx);
+        run_tray(icon, state, tx, hwnd_tx, ctx);
     });
     let hwnd = hwnd_rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap_or(0);
     (rx, TrayHandle { hwnd })
@@ -95,6 +102,7 @@ struct TrayContext {
     icon: Option<Vec<u8>>,
     state: Arc<Mutex<TrayState>>,
     events: Sender<TrayEvent>,
+    ctx: eframe::egui::Context,
 }
 
 static CONTEXT: Mutex<Option<TrayContext>> = Mutex::new(None);
@@ -103,14 +111,33 @@ fn with_context<T>(f: impl FnOnce(&TrayContext) -> T) -> Option<T> {
     CONTEXT.lock().ok().and_then(|c| c.as_ref().map(f))
 }
 
+/// Показать главное окно из трея.
+///
+/// События `Show` мало: скрытое окно не получает кадров до 3 секунд, поэтому
+/// сначала просим egui показать viewport и разбудить кадр, а затем активируем
+/// нативное окно (иначе `SetForegroundWindow` из фонового потока может быть
+/// отклонён foreground-lock).
+fn show_from_tray() {
+    let ctx = with_context(|c| c.ctx.clone());
+    if let Some(ctx) = ctx {
+        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(true));
+        ctx.request_repaint();
+    }
+    sys::activate_window("Zapret Manager");
+    send_event(TrayEvent::Show);
+}
+
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     // Паника не должна пересекать границу `extern "system"`: это abort всего
     // процесса вместе с несохранёнными настройками.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match msg {
         WM_TRAY => {
             let mouse = lparam as u32;
-            if mouse == WM_LBUTTONDBLCLK {
-                with_context(|c| c.events.send(TrayEvent::Show));
+            // Одиночный клик открывает окно (как в проводнике), правый — меню.
+            // WM_LBUTTONDBLCLK не нужен: без `CS_DBLCLKS` он не приходит, а с
+            // ним дублирует уже обработанный `WM_LBUTTONUP`.
+            if mouse == WM_LBUTTONUP {
+                show_from_tray();
             } else if mouse == WM_RBUTTONUP {
                 show_menu(hwnd);
             }
@@ -640,18 +667,22 @@ unsafe fn run_tray(
     state: Arc<Mutex<TrayState>>,
     events: Sender<TrayEvent>,
     hwnd_tx: Sender<isize>,
+    ctx: eframe::egui::Context,
 ) {
-    if let Ok(mut ctx) = CONTEXT.lock() {
-        *ctx = Some(TrayContext {
+    if let Ok(mut slot) = CONTEXT.lock() {
+        *slot = Some(TrayContext {
             icon,
             state,
             events,
+            ctx,
         });
     }
     let instance = windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(std::ptr::null());
     let class_name = wide("ZapretManagerTrayWindow");
     let wc = WNDCLASSW {
-        style: 0,
+        // `CS_DBLCLKS` не обязателен (открытие идёт по `WM_LBUTTONUP`), но
+        // безвреден: если Windows пришлёт `WM_LBUTTONDBLCLK`, он игнорируется.
+        style: CS_DBLCLKS,
         lpfnWndProc: Some(wndproc),
         cbClsExtra: 0,
         cbWndExtra: 0,

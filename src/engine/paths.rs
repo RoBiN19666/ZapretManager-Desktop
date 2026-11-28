@@ -80,13 +80,27 @@ pub fn config_path() -> PathBuf {
 /// Во `%TEMP%` может писать любой процесс пользователя, поэтому запускать
 /// оттуда исполняемые файлы с правами администратора нельзя.
 pub fn is_temp_path(path: &Path) -> bool {
-    let target = path.to_string_lossy().to_lowercase();
+    let target = canonical_lossy(path);
     if target.is_empty() {
         return false;
     }
-    for dir in [std::env::temp_dir(), PathBuf::from(std::env::var("TEMP").unwrap_or_default())] {
-        let dir = dir.to_string_lossy().to_lowercase();
-        // У `PathBuf::from("")` путь пустой — пропускаем.
+    // `%TEMP%` — не единственное место, куда может писать непривилегированный
+    // процесс: рядом стоят `%LOCALAPPDATA%\Temp`, `%SystemRoot%\Temp`, `C:\Temp`.
+    let mut dirs: Vec<PathBuf> = vec![std::env::temp_dir()];
+    for var in ["TEMP", "LOCALAPPDATA", "SystemRoot"] {
+        let Ok(value) = std::env::var(var) else {
+            continue;
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let base = PathBuf::from(value);
+        dirs.push(if var == "TEMP" { base } else { base.join("Temp") });
+    }
+    dirs.push(PathBuf::from(r"C:\Temp"));
+    for dir in dirs {
+        let dir = canonical_lossy(&dir);
         if dir.is_empty() {
             continue;
         }
@@ -96,6 +110,32 @@ pub fn is_temp_path(path: &Path) -> bool {
         }
     }
     false
+}
+
+/// Путь в нижнем регистре, по возможности канонизированный.
+///
+/// `canonicalize` требует существования объекта, поэтому для ещё не созданного
+/// файла канонизируем ближайшего существующего предка и дописываем хвост.
+/// Без этого `C:\Temp`, `C:\Users\IVAN~1\...` и пути с `..` обходили бы запрет.
+fn canonical_lossy(path: &Path) -> String {
+    let mut current = path.to_path_buf();
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if let Ok(canonical) = std::fs::canonicalize(&current) {
+            let mut out = canonical;
+            for part in tail.iter().rev() {
+                out.push(part);
+            }
+            return out.to_string_lossy().to_lowercase();
+        }
+        match (current.parent(), current.file_name()) {
+            (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => {
+                tail.push(name.to_os_string());
+                current = parent.to_path_buf();
+            }
+            _ => return path.to_string_lossy().to_lowercase(),
+        }
+    }
 }
 
 /// `manager.ini` в «другом» месте: рядом с exe, если работаем из `%APPDATA%`,
