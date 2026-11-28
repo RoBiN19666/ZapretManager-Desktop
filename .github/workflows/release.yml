@@ -196,6 +196,54 @@ jobs:
           $tag = if ($env:REF_TYPE -eq 'tag') { $env:REF_NAME } else { $env:INPUT_TAG }
           "tag=$($tag.Trim())" >> $env:GITHUB_OUTPUT
 
+      # Тело релиза собирается из CHANGELOG.md: раздел «## <версия>».
+      # Раньше здесь был один и тот же шаблон, поэтому у всех релизов
+      # описание изменений отсутствовало.
+      - name: Release notes from CHANGELOG
+        if: ${{ steps.tag.outputs.tag != '' }}
+        shell: pwsh
+        env:
+          RAW_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          $tag = $env:RAW_TAG.Trim()
+          $ver = $tag -replace '^[vV]', ''
+          # Читаем как UTF-8 явно: в Windows PowerShell 5.1 Get-Content по
+          # умолчанию берёт ANSI и кириллица превращается в мусор.
+          $lines = [IO.File]::ReadAllLines((Join-Path $PWD 'CHANGELOG.md'), [Text.Encoding]::UTF8)
+          $start = -1
+          $pattern = '^##\s+(?:v)?' + [regex]::Escape($ver) + '\s*$'
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match $pattern) { $start = $i + 1; break }
+          }
+          if ($start -lt 0) {
+            Write-Host "::warning title=Нет раздела в CHANGELOG::Для версии $ver не найден раздел «## $ver» — заметки будут неполными."
+            $notes = "Изменения для $ver не описаны в CHANGELOG.md."
+          } else {
+            $end = $lines.Count
+            for ($i = $start; $i -lt $lines.Count; $i++) {
+              if ($lines[$i] -match '^##\s') { $end = $i; break }
+            }
+            $notes = (($lines[$start..($end - 1)]) -join "`n").Trim()
+          }
+          $hash = (Get-FileHash -LiteralPath dist/ZapretManager.exe -Algorithm SHA256).Hash.ToLower()
+          $body = @()
+          $body += $notes
+          $body += ''
+          $body += '---'
+          $body += ''
+          $body += ('**SHA-256:** `' + $hash + '` — он же в `checksums.txt`')
+          $body += ''
+          $body += 'Проверка после скачивания:'
+          $body += ''
+          $body += '```powershell'
+          $body += 'Get-FileHash .\ZapretManager.exe -Algorithm SHA256'
+          $body += '```'
+          $body += ''
+          $body += 'Если Windows или антивирус жалуются на файл — см. [SECURITY.md](https://github.com/RoBiN19666/ZapretManager-Desktop/blob/main/SECURITY.md).'
+          $notesPath = Join-Path $PWD 'dist/release-notes.md'
+          [IO.File]::WriteAllText($notesPath, ($body -join "`n"), (New-Object Text.UTF8Encoding($false)))
+          Write-Host "Заметки к релизу: $((Get-Item $notesPath).Length) байт"
+
       - name: Warn about unsigned release
         if: ${{ steps.tag.outputs.tag != '' && steps.signpath.outcome != 'success' && steps.pfx.outcome != 'success' }}
         shell: pwsh
@@ -210,16 +258,7 @@ jobs:
           name: "Zapret Manager ${{ steps.tag.outputs.tag }}"
           draft: false
           prerelease: false
-          body: |
-            **Контрольная сумма** — в `checksums.txt` рядом с `ZapretManager.exe`.
-
-            Проверка после скачивания:
-
-            ```powershell
-            Get-FileHash .\ZapretManager.exe -Algorithm SHA256
-            ```
-
-            Если Windows или антивирус жалуются на файл — см. [SECURITY.md](https://github.com/RoBiN19666/ZapretManager-Desktop/blob/main/SECURITY.md).
+          body_path: dist/release-notes.md
           files: |
             dist/ZapretManager.exe
             dist/checksums.txt
